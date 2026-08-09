@@ -452,6 +452,8 @@ const SYNC_TABLES=[
   {key:'egncrm_items',table:'cfg_items',shape:'blob'},
   {key:'egncrm_sav',table:'sav_tickets',shape:'sav'},
   {key:'egncrm_poseurs',table:'cfg_poseurs',shape:'blob'},
+  {key:'egncrm_coefsu',table:'cfg_uvalues',shape:'blob'},
+  {key:'egncrm_pac',table:'cfg_pac',shape:'blob'},
   {key:'egncrm_settings',table:'cfg_societe',shape:'single'}
 ];
 function save(k,v){
@@ -751,6 +753,37 @@ async function persistDeal(recId){
     });
   }catch(e){console.error('[deal] sauvegarde échouée',e);toast('⚠️ Sauvegarde Supabase échouée : '+e.message,'err');}
 }
+/* ---- Étude technique (déperditions NF EN 12831, solution, stratégie) — protégée comme Deal/Comptabilité ---- */
+let ETUDE_CACHE={};
+function rowToEtude(row){
+  if(!row)return{secteur:'',tempInterieure:20,surfaceMurs:null,typeMur:'',surfaceFenetres:null,typeFenetre:'',surfacePlancherBas:null,typePlancherBas:'',surfacePlancherHaut:null,typePlancherHaut:'',volumeChauffe:null,tauxRenouvAir:0.6,typeEnergieActuelle:'',consommationActuelle:null,pacCatalogueId:'',puissanceTotaleChaufferie:null,mandataireCee:'',soustraitantPose:'',strategie:''};
+  return{secteur:row.secteur||'',tempInterieure:row.temp_interieure!=null?row.temp_interieure:20,surfaceMurs:row.surface_murs,typeMur:row.type_mur||'',surfaceFenetres:row.surface_fenetres,typeFenetre:row.type_fenetre||'',surfacePlancherBas:row.surface_plancher_bas,typePlancherBas:row.type_plancher_bas||'',surfacePlancherHaut:row.surface_plancher_haut,typePlancherHaut:row.type_plancher_haut||'',volumeChauffe:row.volume_chauffe,tauxRenouvAir:row.taux_renouvellement_air!=null?row.taux_renouvellement_air:0.6,typeEnergieActuelle:row.type_energie_actuelle||'',consommationActuelle:row.consommation_actuelle,pacCatalogueId:row.pac_catalogue_id||'',puissanceTotaleChaufferie:row.puissance_totale_chaufferie,mandataireCee:row.mandataire_cee||'',soustraitantPose:row.soustraitant_pose||'',strategie:row.strategie||''};
+}
+function etudeOf(r){if(!ETUDE_CACHE[r.id])ETUDE_CACHE[r.id]=rowToEtude(null);return ETUDE_CACHE[r.id];}
+async function loadEtudeFor(recId){
+  if(ETUDE_CACHE[recId])return ETUDE_CACHE[recId];
+  try{
+    const{data,error}=await SUPA.from('dossier_etude').select('*').eq('dossier_id',recId).maybeSingle();
+    if(error)throw error;
+    ETUDE_CACHE[recId]=rowToEtude(data);
+  }catch(e){console.error('[etude] chargement échoué',e);ETUDE_CACHE[recId]=rowToEtude(null);}
+  return ETUDE_CACHE[recId];
+}
+async function persistEtude(recId){
+  const d=ETUDE_CACHE[recId];if(!d)return;
+  try{
+    await SUPA.from('dossier_etude').upsert({
+      dossier_id:recId,secteur:d.secteur||null,temp_interieure:d.tempInterieure,
+      surface_murs:d.surfaceMurs,type_mur:d.typeMur||null,surface_fenetres:d.surfaceFenetres,type_fenetre:d.typeFenetre||null,
+      surface_plancher_bas:d.surfacePlancherBas,type_plancher_bas:d.typePlancherBas||null,surface_plancher_haut:d.surfacePlancherHaut,type_plancher_haut:d.typePlancherHaut||null,
+      volume_chauffe:d.volumeChauffe,taux_renouvellement_air:d.tauxRenouvAir,
+      type_energie_actuelle:d.typeEnergieActuelle||null,consommation_actuelle:d.consommationActuelle,
+      pac_catalogue_id:d.pacCatalogueId||null,puissance_totale_chaufferie:d.puissanceTotaleChaufferie,
+      mandataire_cee:d.mandataireCee||'',soustraitant_pose:d.soustraitantPose||'',strategie:d.strategie||'',
+      updated_at:new Date().toISOString(),updated_by:ME?ME.id:null
+    });
+  }catch(e){console.error('[etude] sauvegarde échouée',e);toast('⚠️ Sauvegarde Supabase échouée : '+e.message,'err');}
+}
 async function loadFactures(){
   try{
     const{data,error}=await SUPA.from('factures_agents').select('*').order('created_at',{ascending:false});
@@ -808,6 +841,320 @@ function coutEnergieActuel(consommation,typeEnergie){
   const s=getSettings();
   const prix=(s.tarifsEnergie&&s.tarifsEnergie[typeEnergie])||0;
   return (parseFloat(consommation)||0)*prix;
+}
+/* ---- déperditions thermiques — méthode NF EN 12831 simplifiée (estimation) ----
+   Q (kW) = Σ [U (W/m².K) × Surface (m²) × ΔT (K)] / 1000 pour chaque paroi, + ventilation, + majoration ponts thermiques.
+   Réservé Admin/Super Admin. Résultat toujours indicatif ("estimé"), pas un calcul réglementaire certifié. */
+const TBASE_ZONE={H1:-10,H2:-7,H3:-2};
+const PONTS_THERMIQUES_FORFAIT=0.20; // +20%, valeur usuelle par défaut
+const MARGE_SECURITE_DIM=0.20; // +20% sur la puissance dimensionnée
+function coefU(typeId){const list=load('egncrm_coefsu',[]);const c=list.find(x=>x.id===typeId);return c?(parseFloat(c.uValue)||0):0;}
+function computeDeperditions(r){
+  const e=etudeOf(r);
+  const zone=zoneClimatiqueOf(r);
+  const tbase=TBASE_ZONE[zone];
+  if(tbase==null)return null; // zone climatique inconnue (CP manquant/hors table)
+  const ti=e.tempInterieure!=null?e.tempInterieure:20;
+  const dT=ti-tbase;
+  if(dT<=0)return null;
+  const uMur=coefU(e.typeMur),uFen=coefU(e.typeFenetre),uPb=coefU(e.typePlancherBas),uPh=coefU(e.typePlancherHaut);
+  const qMurs=(uMur*(e.surfaceMurs||0)*dT)/1000;
+  const qFenetres=(uFen*(e.surfaceFenetres||0)*dT)/1000;
+  const qPlancherBas=(uPb*(e.surfacePlancherBas||0)*dT)/1000;
+  const qPlancherHaut=(uPh*(e.surfacePlancherHaut||0)*dT)/1000;
+  const qVentilation=(0.34*(e.volumeChauffe||0)*(e.tauxRenouvAir!=null?e.tauxRenouvAir:0.6)*dT)/1000;
+  const sousTotal=qMurs+qFenetres+qPlancherBas+qPlancherHaut+qVentilation;
+  const qPonts=sousTotal*PONTS_THERMIQUES_FORFAIT;
+  const total=sousTotal+qPonts;
+  const puissanceDimensionnee=total*(1+MARGE_SECURITE_DIM);
+  const postes=[
+    {label:'Renouvellement d\'air (ventilation)',kw:qVentilation},
+    {label:'Murs',kw:qMurs},
+    {label:'Fenêtres et portes',kw:qFenetres},
+    {label:'Ponts thermiques (forfait +'+(PONTS_THERMIQUES_FORFAIT*100)+'%)',kw:qPonts},
+    {label:'Plancher bas',kw:qPlancherBas},
+    {label:'Plancher haut / combles',kw:qPlancherHaut}
+  ].map(p=>({...p,part:total>0?(p.kw/total*100):0})).sort((a,b)=>b.kw-a.kw);
+  return{zone,tbase,ti,dT,postes,total,puissanceDimensionnee,margePct:MARGE_SECURITE_DIM*100};
+}
+/* ---- Facteur R (BAT-TH-163 et fiches similaires) = puissance PAC / puissance totale chaufferie (PAC + appoint) ---- */
+function computeFacteurR(r){
+  const e=etudeOf(r);
+  const pac=load('egncrm_pac',[]).find(x=>x.id===e.pacCatalogueId);
+  const puissancePac=pac?(parseFloat(pac.puissance)||0):0;
+  const puissanceTotale=parseFloat(e.puissanceTotaleChaufferie)||0;
+  if(!puissancePac||!puissanceTotale)return null;
+  const pct=puissancePac/puissanceTotale*100;
+  return{puissancePac,puissanceTotale,pct,r:pct>=40?1:0,conforme:pct>=40};
+}
+/* ---- panneau de saisie de l'étude technique (Admin/Super Admin uniquement) ---- */
+const SECTEURS_ETUDE=['Résidentiel individuel','Résidentiel collectif','Tertiaire — Bureaux','Tertiaire — Santé (EHPAD, clinique…)','Tertiaire — Enseignement','Tertiaire — Commerce','Tertiaire — Autre'];
+const ENERGIES_ETUDE=[['propane','Propane'],['fioul','Fioul domestique'],['gaz','Gaz naturel'],['electricite','Électricité'],['bois','Bois / granulés']];
+const CATU_MUR=()=>load('egncrm_coefsu',[]).filter(x=>x.categorie==='mur');
+const CATU_FEN=()=>load('egncrm_coefsu',[]).filter(x=>x.categorie==='fenetre');
+const CATU_PB=()=>load('egncrm_coefsu',[]).filter(x=>x.categorie==='plancher_bas');
+const CATU_PH=()=>load('egncrm_coefsu',[]).filter(x=>x.categorie==='plancher_haut');
+async function openEtudePanel(recId){
+  if(!ME||(ME.role!=='superadmin'&&ME.role!=='admin')){toast('Réservé Admin / Super Admin','err');return;}
+  const r=recById(recId);if(!r)return;
+  await loadEtudeFor(recId);
+  renderEtudePanel(recId);
+}
+function renderEtudePanel(recId){
+  const r=recById(recId);if(!r)return;
+  const e=etudeOf(r);
+  const zone=zoneClimatiqueOf(r);
+  const dateVt=dateVisiteVt(r);
+  const deperd=computeDeperditions(r);
+  const factR=computeFacteurR(r);
+  const eur=n=>(n||0).toLocaleString('fr-FR',{maximumFractionDigits:2})+' €';
+  const coutActuel=coutEnergieActuel(e.consommationActuelle,e.typeEnergieActuelle);
+  let body=`
+  <div class="sectitle">Contexte</div>
+  <div class="fgrid c3">
+    <div class="fld"><label>Secteur</label><select id="et_secteur">${SECTEURS_ETUDE.map(s=>`<option value="${esc(s)}" ${e.secteur===s?'selected':''}>${esc(s)}</option>`).join('')}</select></div>
+    <div class="fld"><label>Zone climatique <span class="muted" style="font-size:.62rem">(auto, via CP)</span></label><input value="${zone||'⚠️ Inconnue — vérifiez le CP'}" disabled></div>
+    <div class="fld"><label>Date de visite <span class="muted" style="font-size:.62rem">(auto, RDV « Visite technique »)</span></label><input value="${dateVt?fmtDateLong(dateVt):'⚠️ Aucun RDV VT trouvé'}" disabled></div>
+    <div class="fld"><label>Température intérieure de consigne (°C)</label><input type="number" step="any" id="et_ti" value="${e.tempInterieure!=null?e.tempInterieure:20}"></div>
+  </div>
+
+  <div class="sectitle" style="margin-top:1.1rem">Consommation & coût actuels</div>
+  <div class="fgrid c3">
+    <div class="fld"><label>Type d'énergie actuelle</label><select id="et_energie">${ENERGIES_ETUDE.map(([k,l])=>`<option value="${k}" ${e.typeEnergieActuelle===k?'selected':''}>${l}</option>`).join('')}</select></div>
+    <div class="fld"><label>Consommation annuelle <span class="muted" style="font-size:.62rem">(L/an ou kWh/an selon énergie)</span></label><input type="number" step="any" id="et_conso" value="${e.consommationActuelle!=null?e.consommationActuelle:''}" placeholder="lue sur les factures"></div>
+    <div class="fld"><label>Coût annuel estimé <span class="muted" style="font-size:.62rem">(auto = conso × tarif configuré)</span></label><input value="${eur(coutActuel)}" disabled></div>
+  </div>
+  ${(!getSettings().tarifsEnergie||!getSettings().tarifsEnergie[e.typeEnergieActuelle])?`<p class="muted" style="font-size:.72rem;color:#E63946">⚠️ Aucun tarif configuré pour cette énergie — va dans Paramètres ▸ Société ▸ Tarifs énergie.</p>`:''}
+
+  <div class="sectitle" style="margin-top:1.1rem">Déperditions thermiques <span style="font-weight:500;text-transform:none;letter-spacing:0;color:var(--text-mut)">(méthode NF EN 12831 simplifiée — estimation)</span></div>
+  <div class="fgrid c3">
+    <div class="fld"><label>Surface murs (m²)</label><input type="number" step="any" id="et_smur" value="${e.surfaceMurs!=null?e.surfaceMurs:''}"></div>
+    <div class="fld"><label>Type de mur</label><select id="et_tmur"><option value="">— Choisir —</option>${CATU_MUR().map(c=>`<option value="${c.id}" ${e.typeMur===c.id?'selected':''}>${esc(c.name)} (U=${c.uValue})</option>`).join('')}</select></div>
+    <div></div>
+    <div class="fld"><label>Surface fenêtres/portes (m²)</label><input type="number" step="any" id="et_sfen" value="${e.surfaceFenetres!=null?e.surfaceFenetres:''}"></div>
+    <div class="fld"><label>Type de fenêtre</label><select id="et_tfen"><option value="">— Choisir —</option>${CATU_FEN().map(c=>`<option value="${c.id}" ${e.typeFenetre===c.id?'selected':''}>${esc(c.name)} (U=${c.uValue})</option>`).join('')}</select></div>
+    <div></div>
+    <div class="fld"><label>Surface plancher bas (m²)</label><input type="number" step="any" id="et_spb" value="${e.surfacePlancherBas!=null?e.surfacePlancherBas:''}"></div>
+    <div class="fld"><label>Type de plancher bas</label><select id="et_tpb"><option value="">— Choisir —</option>${CATU_PB().map(c=>`<option value="${c.id}" ${e.typePlancherBas===c.id?'selected':''}>${esc(c.name)} (U=${c.uValue})</option>`).join('')}</select></div>
+    <div></div>
+    <div class="fld"><label>Surface plancher haut / combles (m²)</label><input type="number" step="any" id="et_sph" value="${e.surfacePlancherHaut!=null?e.surfacePlancherHaut:''}"></div>
+    <div class="fld"><label>Type de plancher haut</label><select id="et_tph"><option value="">— Choisir —</option>${CATU_PH().map(c=>`<option value="${c.id}" ${e.typePlancherHaut===c.id?'selected':''}>${esc(c.name)} (U=${c.uValue})</option>`).join('')}</select></div>
+    <div></div>
+    <div class="fld"><label>Volume chauffé (m³)</label><input type="number" step="any" id="et_vol" value="${e.volumeChauffe!=null?e.volumeChauffe:''}"></div>
+    <div class="fld"><label>Taux de renouvellement d'air (vol/h)</label><input type="number" step="any" id="et_taux" value="${e.tauxRenouvAir!=null?e.tauxRenouvAir:0.6}"></div>
+  </div>
+  <button class="btn btn-ghost btn-sm" style="margin-top:.6rem" onclick="recalcEtudePreview('${recId}')">🔄 Recalculer l'aperçu</button>
+  <div id="et_deperd_preview" style="margin-top:.7rem">${deperditionsPreviewHtml(deperd)}</div>
+
+  <div class="sectitle" style="margin-top:1.1rem">Solution proposée</div>
+  <div class="fgrid c3">
+    <div class="fld"><label>Solution PAC</label><select id="et_pac"><option value="">— Choisir dans le catalogue —</option>${load('egncrm_pac',[]).map(p=>`<option value="${p.id}" ${e.pacCatalogueId===p.id?'selected':''}>${esc(p.name)}</option>`).join('')}</select></div>
+    <div class="fld"><label>Puissance totale chaufferie (kW) <span class="muted" style="font-size:.6rem">(PAC + appoint, pour le Facteur R)</span></label><input type="number" step="any" id="et_ptot" value="${e.puissanceTotaleChaufferie!=null?e.puissanceTotaleChaufferie:''}"></div>
+    <div></div>
+    <div class="fld"><label>Mandataire CEE</label><input id="et_mandataire" value="${esc(e.mandataireCee||'')}" placeholder="ex : DRAPO via INFINITY"></div>
+    <div class="fld"><label>Sous-traitant pose (RGE)</label><input id="et_soustraitant" value="${esc(e.soustraitantPose||'')}" placeholder="ex : FROZONE — Aulnay (93)"></div>
+  </div>
+  <div id="et_factr_preview" style="margin-top:.6rem">${factRPreviewHtml(factR)}</div>
+
+  <div class="sectitle" style="margin-top:1.1rem">Stratégie retenue</div>
+  <textarea id="et_strategie" style="width:100%;min-height:90px;border:1.5px solid var(--border-grey);border-radius:9px;padding:.6rem .8rem;font-size:.86rem;font-family:'Saira',sans-serif" placeholder="Rédigez librement la stratégie de rénovation proposée…">${esc(e.strategie||'')}</textarea>
+  `;
+  openModal('Étude technique — '+esc(recName(r)),body,`<button class="btn btn-ghost" onclick="closeModal()">Fermer</button><button class="btn btn-navy" onclick="saveEtudeForm('${recId}')">💾 Enregistrer</button><button class="btn btn-pri" onclick="saveEtudeForm('${recId}',true)">📄 Enregistrer & Générer le PDF</button>`,'wide');
+}
+function deperditionsPreviewHtml(deperd){
+  if(!deperd)return `<p class="muted" style="font-size:.78rem">Renseignez la zone climatique (CP du dossier) et au moins la température intérieure pour voir l'aperçu du calcul.</p>`;
+  const eur=n=>(n||0).toLocaleString('fr-FR',{maximumFractionDigits:1});
+  return `<div class="tbl-wrap"><table class="tbl"><thead><tr><th>Poste de déperdition</th><th style="text-align:right">Puissance</th><th style="text-align:right">Part</th></tr></thead><tbody>
+    ${deperd.postes.map(p=>`<tr><td>${esc(p.label)}</td><td style="text-align:right">${eur(p.kw)} kW</td><td style="text-align:right">${eur(p.part)} %</td></tr>`).join('')}
+    <tr style="font-weight:700"><td>Déperditions totales</td><td style="text-align:right">${eur(deperd.total)} kW</td><td style="text-align:right">100 %</td></tr>
+    <tr style="font-weight:700;color:var(--green-deep)"><td>Puissance dimensionnée (+${deperd.margePct}%)</td><td style="text-align:right" colspan="2">${eur(deperd.puissanceDimensionnee)} kW</td></tr>
+  </tbody></table></div><p class="muted" style="font-size:.7rem;margin-top:.3rem">ΔT = ${deperd.ti}°C (intérieur) − ${deperd.tbase}°C (Tbase zone ${deperd.zone}) = ${deperd.dT} K · Estimation indicative, pas un calcul réglementaire certifié.</p>`;
+}
+function factRPreviewHtml(factR){
+  if(!factR)return `<p class="muted" style="font-size:.78rem">Choisissez une solution PAC et renseignez la puissance totale de chaufferie pour calculer le Facteur R.</p>`;
+  return `<div class="callout" style="background:${factR.conforme?'rgba(124,194,66,.12)':'rgba(230,57,70,.1)'};padding:.6rem .9rem;border-radius:8px;font-size:.82rem"><b>Facteur R</b> = ${factR.puissancePac} kW (PAC) ÷ ${factR.puissanceTotale} kW (total) = <b>${factR.pct.toFixed(1)}%</b> → R = ${factR.r} — ${factR.conforme?'<span style="color:var(--green-deep);font-weight:700">✓ Conforme (≥ 40%)</span>':'<span style="color:#E63946;font-weight:700">✗ Non conforme (< 40%)</span>'}</div>`;
+}
+function recalcEtudePreview(recId){
+  const r=recById(recId);if(!r)return;
+  const e=etudeOf(r);
+  e.tempInterieure=parseFloat(String(val('et_ti')||'').replace(',','.'));
+  e.surfaceMurs=parseFloat(String(val('et_smur')||'').replace(',','.'))||null;
+  e.typeMur=val('et_tmur')||'';
+  e.surfaceFenetres=parseFloat(String(val('et_sfen')||'').replace(',','.'))||null;
+  e.typeFenetre=val('et_tfen')||'';
+  e.surfacePlancherBas=parseFloat(String(val('et_spb')||'').replace(',','.'))||null;
+  e.typePlancherBas=val('et_tpb')||'';
+  e.surfacePlancherHaut=parseFloat(String(val('et_sph')||'').replace(',','.'))||null;
+  e.typePlancherHaut=val('et_tph')||'';
+  e.volumeChauffe=parseFloat(String(val('et_vol')||'').replace(',','.'))||null;
+  e.tauxRenouvAir=parseFloat(String(val('et_taux')||'').replace(',','.'));
+  e.pacCatalogueId=val('et_pac')||'';
+  e.puissanceTotaleChaufferie=parseFloat(String(val('et_ptot')||'').replace(',','.'))||null;
+  document.getElementById('et_deperd_preview').innerHTML=deperditionsPreviewHtml(computeDeperditions(r));
+  document.getElementById('et_factr_preview').innerHTML=factRPreviewHtml(computeFacteurR(r));
+}
+async function genererEtudePdf(recId){
+  if(!ME||(ME.role!=='superadmin'&&ME.role!=='admin')){toast('Réservé Admin / Super Admin','err');return;}
+  const r=recById(recId);if(!r)return;
+  await Promise.all([loadEtudeFor(recId),loadDealFor(recId),loadComptaFor(recId)]);
+  const e=etudeOf(r),deal=dealOf(r),compta=comptaOf(r);
+  const m=recordComptaMetrics(r);
+  const op=getProducts().find(o=>o.id===r.productId);
+  const deleg=deal.delegataireId?getDelegataires().find(d=>d.id===deal.delegataireId):null;
+  const pac=load('egncrm_pac',[]).find(x=>x.id===e.pacCatalogueId);
+  const deperd=computeDeperditions(r);
+  const factR=computeFacteurR(r);
+  const s=getSettings();
+  const eur=n=>(n||0).toLocaleString('fr-FR',{minimumFractionDigits:2,maximumFractionDigits:2})+' €';
+  const eur0=n=>(n||0).toLocaleString('fr-FR',{maximumFractionDigits:1});
+  const dateVt=dateVisiteVt(r);
+  const coutActuel=coutEnergieActuel(e.consommationActuelle,e.typeEnergieActuelle);
+  const devisTTC=compta.devisTTC||0;
+  const primeCEE=deal.prime||0;
+  const resteAPayer=Math.max(0,devisTTC-primeCEE);
+  const siege=`${r.adresse||''}${r.cp||r.ville?', ':''}${r.cp||''} ${r.ville||''}`.trim();
+  const energieLabel=(ENERGIES_ETUDE.find(x=>x[0]===e.typeEnergieActuelle)||[,'—'])[1];
+  const rowsDeperd=deperd?deperd.postes.map(p=>`<tr><td>${esc(p.label)}</td><td style="text-align:right">${eur0(p.kw)} kW</td><td style="text-align:right">${eur0(p.part)} %</td></tr>`).join(''):`<tr><td colspan="3" style="color:#9aa5b1">Déperditions non calculées (zone climatique ou données manquantes)</td></tr>`;
+  const doc=`<!DOCTYPE html><html lang="fr"><head><meta charset="UTF-8"><title>Étude — ${esc(recName(r))}</title>
+  <style>
+    body{font-family:'Segoe UI',Arial,sans-serif;color:#1A2B3D;margin:0;background:#e8ebe3}
+    .page{width:210mm;min-height:297mm;background:#fff;margin:0 auto 16px;padding:14mm 14mm 18mm;position:relative;page-break-after:always}
+    .page:last-child{page-break-after:auto}
+    @media print{body{background:#fff}.page{margin:0;box-shadow:none}.noprint{display:none}}
+    .cover-logo{text-align:center;margin-bottom:22px}.cover-logo img{height:46px}
+    .bar{color:#fff;font-weight:800;font-size:1.25rem;text-align:center;padding:14px 18px;border-radius:8px 8px 0 0;background:linear-gradient(135deg,#7CC242,#4E8F22)}
+    .bar-sub{color:#fff;font-size:.82rem;text-align:center;padding:9px 18px;background:#5BA82E;border-radius:0 0 8px 8px;margin-bottom:18px}
+    .badge-box{border:1.5px solid #7CC242;color:#2D5F14;font-weight:700;font-size:.85rem;text-align:center;padding:9px;border-radius:8px;margin-bottom:18px}
+    .client-bar{background:linear-gradient(135deg,#4E8F22,#2D5F14);color:#fff;border-radius:8px;padding:12px 18px;display:flex;justify-content:space-between;align-items:center;margin-bottom:2px}
+    .client-bar .cn{font-size:1.15rem;font-weight:800}
+    .addr-bar{background:#7CC242;color:#fff;text-align:center;font-weight:700;font-size:.86rem;padding:8px;border-radius:0 0 8px 8px;margin-bottom:18px}
+    .kpi-row{display:flex;gap:10px;margin-bottom:14px}.kpi-box{flex:1;text-align:center;padding:12px 8px;border-radius:8px}
+    .kpi-box .l{font-size:.62rem;text-transform:uppercase;letter-spacing:.03em;color:#6b7785;font-weight:700}.kpi-box .v{font-size:1.3rem;font-weight:800;margin:4px 0 2px}.kpi-box .s{font-size:.63rem;color:#8a95a0}
+    .kpi-box.orange{background:#FDF1E9}.kpi-box.orange .v{color:#D9822B}.kpi-box.green{background:#EFF7E8}.kpi-box.green .v{color:#4E8F22}.kpi-box.navy{background:#EAF1F5}.kpi-box.navy .v{color:#1A2B3D}
+    .interloc{text-align:center;font-size:.78rem;color:#5A6E82;font-style:italic}
+    .ph{display:flex;justify-content:space-between;font-size:.7rem;color:#5A6E82;border-bottom:2px solid #7CC242;padding-bottom:8px;margin-bottom:16px}
+    h1.pt{font-size:1.05rem;color:#2D5F14;margin:0 0 14px}
+    .box{background:#F4F8EE;border-radius:8px;padding:14px 16px;margin-bottom:16px}.box h2{font-size:.86rem;margin:0 0 8px}.box p{font-size:.82rem;line-height:1.55;margin:0;color:#33414c}
+    .infogrid{display:flex;flex-wrap:wrap;font-size:.82rem;margin-bottom:16px}.infogrid>div{width:47%;margin:2px 1.5% 8px}.infogrid .l{color:#6b7785}.infogrid .v{font-weight:700}
+    table.et{width:100%;border-collapse:collapse;margin-bottom:16px;font-size:.78rem}
+    table.et th{background:#2D5F14;color:#fff;padding:7px 9px;text-align:left;font-weight:600;font-size:.72rem;text-transform:uppercase}
+    table.et td{padding:6px 9px;border-bottom:1px solid #e5e8ec}table.et tr:nth-child(even) td{background:#F7FAF3}
+    .conf{color:#4E8F22;font-weight:700}.warn{color:#D9822B;font-weight:700}
+    .foot{position:absolute;bottom:8mm;left:14mm;right:14mm;font-size:.68rem;color:#8a95a0;border-top:1px solid #e5e8ec;padding-top:6px;display:flex;justify-content:space-between}
+    .finalbox{background:#2D5F14;color:#fff;border-radius:8px;padding:12px 16px;display:flex;justify-content:space-between;align-items:center;font-weight:800;margin-bottom:16px}
+    .finalbox .r{text-align:right;font-size:1.15rem}.finalbox .r .s{font-size:.7rem;font-weight:400;display:block;opacity:.85}
+    .print-btn{margin:16px auto;display:block;padding:10px 18px;background:#7CC242;color:#fff;border:none;border-radius:8px;font-weight:700;cursor:pointer}
+  </style></head><body>
+
+  <div class="page">
+    <div class="cover-logo">${s.logo?`<img src="${s.logo}">`:`<div style="font-weight:800;font-size:1.3rem;color:#1A2B3D">${esc(s.company||'EGN RÉNOVATION')}</div>`}</div>
+    <div class="bar">PROPOSITION — ${esc(op?op.name:'Étude technique')}</div>
+    <div class="bar-sub">${esc(e.strategie?e.strategie.slice(0,110):'')}</div>
+    <div class="badge-box">${esc(op?op.name:'')}${e.secteur?' / '+esc(e.secteur):''}</div>
+    <div class="client-bar"><div class="cn">${esc(clientNameOf(r))}</div></div>
+    <div class="addr-bar">${esc(siege||'—')}</div>
+    <div class="kpi-row">
+      <div class="kpi-box orange"><div class="l">Coût ${esc(energieLabel)} actuel</div><div class="v">${eur(coutActuel)}</div><div class="s">par an (estimé)</div></div>
+      <div class="kpi-box navy"><div class="l">Prime CEE</div><div class="v">${eur(primeCEE)}</div><div class="s">${devisTTC?Math.round(primeCEE/devisTTC*100)+'% du devis TTC':''}</div></div>
+      <div class="kpi-box green"><div class="l">Reste à payer</div><div class="v">${eur(resteAPayer)}</div><div class="s">après prime CEE</div></div>
+    </div>
+    <div class="interloc">${dateVt?'Visite technique réalisée le '+fmtDateLong(dateVt):''}</div>
+    <div class="foot"><span>Document confidentiel — ${esc(s.company||'EGN Rénovation')} © ${new Date().getFullYear()}</span><span>${esc(s.email||'')}</span></div>
+  </div>
+
+  <div class="page">
+    <div class="ph"><span>${esc(r.dossier||'')} — Étude technique</span><span>${esc(s.company||'')}</span></div>
+    <h1 class="pt">Fiche synthèse</h1>
+    <div class="box"><h2>Identification du projet</h2><div class="infogrid">
+      <div><span class="l">Client</span><br><span class="v">${esc(clientNameOf(r))}</span></div>
+      <div><span class="l">Opération</span><br><span class="v">${op?esc(op.name):'—'}</span></div>
+      <div><span class="l">Adresse</span><br><span class="v">${esc(siege||'—')}</span></div>
+      <div><span class="l">Secteur</span><br><span class="v">${esc(e.secteur||'—')}</span></div>
+      <div><span class="l">Zone climatique</span><br><span class="v">${esc(zoneClimatiqueOf(r)||'—')}</span></div>
+      <div><span class="l">Date de visite</span><br><span class="v">${dateVt?fmtDateLong(dateVt):'—'}</span></div>
+    </div></div>
+    <div class="box"><h2>Situation énergétique AVANT travaux</h2><div class="infogrid">
+      <div><span class="l">Énergie actuelle</span><br><span class="v">${esc(energieLabel)}</span></div>
+      <div><span class="l">Consommation (déclarée)</span><br><span class="v">${e.consommationActuelle?e.consommationActuelle.toLocaleString('fr-FR'):'—'}</span></div>
+      <div><span class="l">Coût exploitation /an (estimé)</span><br><span class="v">${eur(coutActuel)}</span></div>
+    </div></div>
+    <div class="box"><h2>Stratégie retenue</h2><p>${esc(e.strategie||'—').replace(/\n/g,'<br>')}</p></div>
+    <div class="foot"><span>${esc(s.company||'EGN Rénovation')} — Étude | ${esc(recName(r))}</span><span>Page 2</span></div>
+  </div>
+
+  <div class="page">
+    <div class="ph"><span>${esc(r.dossier||'')} — Étude technique</span><span>${esc(s.company||'')}</span></div>
+    <h1 class="pt">Déperditions thermiques (estimation NF EN 12831 simplifiée)</h1>
+    <table class="et"><thead><tr><th>Poste de déperdition</th><th style="text-align:right">Puissance</th><th style="text-align:right">Part</th></tr></thead><tbody>
+      ${rowsDeperd}
+      ${deperd?`<tr style="font-weight:700"><td>TOTAL</td><td style="text-align:right">${eur0(deperd.total)} kW</td><td style="text-align:right">100%</td></tr>
+      <tr style="font-weight:700;color:#2D5F14"><td>Puissance dimensionnée (+${deperd.margePct}%)</td><td colspan="2" style="text-align:right">${eur0(deperd.puissanceDimensionnee)} kW</td></tr>`:''}
+    </tbody></table>
+    ${deperd?`<p style="font-size:.76rem;color:#5A6E82">ΔT = ${deperd.ti}°C (intérieur) − ${deperd.tbase}°C (Tbase zone ${deperd.zone}) = ${deperd.dT} K. Estimation indicative.</p>`:''}
+
+    <h1 class="pt" style="margin-top:20px">Solution proposée</h1>
+    <div class="infogrid">
+      <div><span class="l">Solution PAC</span><br><span class="v">${pac?esc(pac.name):'—'}</span></div>
+      <div><span class="l">Puissance chauffage PAC</span><br><span class="v">${pac?pac.puissance+' kW':'—'}</span></div>
+      <div><span class="l">COP / SCOP</span><br><span class="v">${pac?esc(pac.cop||'—')+' / '+esc(pac.scop||'—'):'—'}</span></div>
+      <div><span class="l">Etas</span><br><span class="v">${pac?esc(pac.etas||'—')+' %':'—'}</span></div>
+    </div>
+    ${factR?`<div class="box"><h2>Facteur R</h2><p>${factR.puissancePac} kW (PAC) ÷ ${factR.puissanceTotale} kW (total chaufferie) = <b>${factR.pct.toFixed(1)}%</b> → R = ${factR.r} — ${factR.conforme?'<span class="conf">✓ Conforme (≥ 40%)</span>':'<span class="warn">✗ Non conforme (&lt; 40%)</span>'}</p></div>`:''}
+    <div class="foot"><span>${esc(s.company||'EGN Rénovation')} — Étude | ${esc(recName(r))}</span><span>Page 3</span></div>
+  </div>
+
+  <div class="page">
+    <div class="ph"><span>${esc(r.dossier||'')} — Étude technique</span><span>${esc(s.company||'')}</span></div>
+    <h1 class="pt">Récapitulatif financier</h1>
+    <table class="et"><thead><tr><th>Désignation</th><th style="text-align:right">Montant TTC</th></tr></thead><tbody>
+      <tr><td>Montant du devis</td><td style="text-align:right">${eur(devisTTC)}</td></tr>
+      <tr><td>Prime CEE${deleg?' — '+esc(deleg.name):''}${deal.type?' ('+(deal.type==='precaire'?'Précaire':'Classique')+')':''}</td><td style="text-align:right">− ${eur(primeCEE)}</td></tr>
+    </tbody></table>
+    <div class="finalbox"><div>RESTE À PAYER</div><div class="r">${eur(resteAPayer)}</div></div>
+
+    <h1 class="pt" style="margin-top:20px">Qualification CEE</h1>
+    <table class="et"><thead><tr><th>Critère</th><th>Valeur</th></tr></thead><tbody>
+      <tr><td>Facteur R</td><td>${factR?factR.pct.toFixed(1)+'% → R='+factR.r+(factR.conforme?' (conforme)':' (non conforme)'):'—'}</td></tr>
+      <tr><td>Mandataire CEE</td><td>${esc(e.mandataireCee||'—')}</td></tr>
+      <tr><td>Sous-traitant pose (RGE)</td><td>${esc(e.soustraitantPose||'—')}</td></tr>
+    </tbody></table>
+    <p style="font-size:.72rem;color:#9aa5b1;margin-top:24px">Document confidentiel — ${esc(s.company||'')} — Établi le ${new Date().toLocaleDateString('fr-FR')}. Prime CEE à confirmer auprès du délégataire — dossier à déposer avant signature du devis travaux. Estimations indicatives.</p>
+    <div class="foot"><span>${esc(s.company||'EGN Rénovation')} — Étude | ${esc(recName(r))}</span><span>Page 4</span></div>
+  </div>
+
+  <button class="print-btn noprint" onclick="window.print()">🖨️ Imprimer / Enregistrer en PDF</button>
+  </body></html>`;
+  const w=window.open('','_blank');
+  if(!w){toast('Autorisez les fenêtres pop-up pour générer l\'étude','err');return;}
+  w.document.write(doc);w.document.close();
+  logActivity('action',`📐 Étude PDF générée pour ${r.dossier||recId}`,recId);
+}
+async function saveEtudeForm(recId,thenGenerate){
+  const r=recById(recId);if(!r)return;
+  const e=etudeOf(r);
+  e.secteur=val('et_secteur')||'';
+  e.tempInterieure=parseFloat(String(val('et_ti')||'').replace(',','.'))||20;
+  e.typeEnergieActuelle=val('et_energie')||'';
+  e.consommationActuelle=parseFloat(String(val('et_conso')||'').replace(',','.'))||null;
+  e.surfaceMurs=parseFloat(String(val('et_smur')||'').replace(',','.'))||null;
+  e.typeMur=val('et_tmur')||'';
+  e.surfaceFenetres=parseFloat(String(val('et_sfen')||'').replace(',','.'))||null;
+  e.typeFenetre=val('et_tfen')||'';
+  e.surfacePlancherBas=parseFloat(String(val('et_spb')||'').replace(',','.'))||null;
+  e.typePlancherBas=val('et_tpb')||'';
+  e.surfacePlancherHaut=parseFloat(String(val('et_sph')||'').replace(',','.'))||null;
+  e.typePlancherHaut=val('et_tph')||'';
+  e.volumeChauffe=parseFloat(String(val('et_vol')||'').replace(',','.'))||null;
+  e.tauxRenouvAir=parseFloat(String(val('et_taux')||'').replace(',','.'))||0.6;
+  e.pacCatalogueId=val('et_pac')||'';
+  e.puissanceTotaleChaufferie=parseFloat(String(val('et_ptot')||'').replace(',','.'))||null;
+  e.mandataireCee=val('et_mandataire')||'';
+  e.soustraitantPose=val('et_soustraitant')||'';
+  e.strategie=val('et_strategie')||'';
+  await persistEtude(recId);
+  logActivity('action',`📐 Étude technique enregistrée sur ${r.dossier||recId}`,recId);
+  toast('Étude enregistrée ✓','ok');
+  if(thenGenerate){closeModal();genererEtudePdf(recId);}
 }
 function coordsFor(rec){
   if(rec.lat&&rec.lng)return [rec.lat,rec.lng];
@@ -1379,7 +1726,7 @@ async function openDossier(id){
   document.getElementById('pageActions').innerHTML=`<button class="btn btn-ghost btn-sm" onclick="go(window._dossierBack||'leads')">← Retour à la liste</button>`;
   logActivity('view',`👁️ Consultation du dossier ${r.dossier||''} — ${recName(r)}`,id);
   const isAdminCompta=ME&&(ME.role==='superadmin'||ME.role==='admin');
-  if(isAdminCompta){document.getElementById('content').innerHTML='<div class="empty"><div class="big">⏳</div>Chargement du dossier…</div>';await Promise.all([loadComptaFor(id),loadDealFor(id)]);}
+  if(isAdminCompta){document.getElementById('content').innerHTML='<div class="empty"><div class="big">⏳</div>Chargement du dossier…</div>';await Promise.all([loadComptaFor(id),loadDealFor(id),loadEtudeFor(id)]);}
   renderDossier(r);
 }
 function renderDossier(r){
@@ -1430,7 +1777,7 @@ function renderDossier(r){
   if(!docList.length)docs+=`<div class="muted">Aucune pièce jointe.</div>`;
   else docList.forEach(d=>{docs+=`<div class="cfg-item"><span style="font-size:1.1rem">${/image\//.test(d.mime||'')?'🖼️':'📄'}</span><div style="flex:1;min-width:0"><div class="nm" style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${esc(d.typeName||'Document')} — ${esc(d.filename||'')}</div><div class="muted" style="font-size:.68rem">${esc(d.user||'')} • ${new Date(d.date).toLocaleString('fr-FR')} • ${fmtSize(d.size)}</div></div><span class="sp"><button class="iconbtn" title="Voir / télécharger" onclick="viewDoc('${d.id}','${r.id}')">👁️</button><button class="iconbtn del" onclick="delDoc('${r.id}','${d.id}')">🗑️</button></span></div>`;});
   docs+=`</div>
-    <div class="flex" style="flex-wrap:wrap;gap:.5rem;margin-top:1rem;border-top:1px dashed var(--border-soft);padding-top:.9rem"><button class="btn btn-ghost btn-sm" onclick="toast('Module à configurer prochainement')">📄 Générer l'étude PDF</button><button class="btn btn-ghost btn-sm" onclick="toast('Module à configurer prochainement')">🖊️ Envoyer en signature</button></div>
+    <div class="flex" style="flex-wrap:wrap;gap:.5rem;margin-top:1rem;border-top:1px dashed var(--border-soft);padding-top:.9rem">${(ME&&(ME.role==='superadmin'||ME.role==='admin'))?`<button class="btn btn-navy btn-sm" onclick="openEtudePanel('${r.id}')">📐 Étude technique & PDF</button>`:''}<button class="btn btn-ghost btn-sm" onclick="toast('Module à configurer prochainement')">🖊️ Envoyer en signature</button></div>
   </div></div>`;
   // commentaires
   const cmts=(r.comments||[]).slice().sort((a,b)=>(b.date||0)-(a.date||0));
@@ -3024,7 +3371,7 @@ async function delUser(id){const u=userById(id);if(!u)return;
    ==================================================================== */
 let SETTAB='statuts';
 function renderSettings(){
-  const tabs=[['statuts','Statuts'],['operations','Opérations'],['produits','Produits'],['delegataires','Délégataires'],['sources','Sources / Régies'],['vt','Visite technique'],['poseurs','Poseur'],['auditeurs','Auditeur'],['equipes','Équipes'],['documents','Types de docs'],['mails','Modèles e-mail'],['societe','Société']];
+  const tabs=[['statuts','Statuts'],['operations','Opérations'],['produits','Produits'],['delegataires','Délégataires'],['sources','Sources / Régies'],['vt','Visite technique'],['poseurs','Poseur'],['auditeurs','Auditeur'],['equipes','Équipes'],['documents','Types de docs'],['mails','Modèles e-mail'],['coefsu','Coefficients U'],['pac','Solutions PAC'],['societe','Société']];
   let h=`<div class="tabs">`+tabs.map(t=>`<button class="tab ${SETTAB===t[0]?'act':''}" onclick="SETTAB='${t[0]}';renderSettings()">${t[1]}</button>`).join('')+`</div><div id="setBody"></div>`;
   document.getElementById('content').innerHTML=h;
   document.getElementById('pageActions').innerHTML='';
@@ -3182,27 +3529,74 @@ function saveStatus(){const id=val('st_id');const name=val('st_name');if(!name){
 function delStatus(id){const used=getRecs().some(r=>r.statusId===id);modalConfirm('Supprimer ce statut ?',used?'⚠️ Des dossiers utilisent ce statut — ils n\'auront plus de statut valide.':'Ce statut sera retiré du pipeline.',()=>{save(K.stat,getStatuses().filter(s=>s.id!==id));deleteRemoteRow(K.stat,id);closeModal();renderSettings();buildNav();toast('Statut supprimé','ok');});}
 function moveStatus(i,dir){const sts=getStatuses();const j=i+dir;if(j<0||j>=sts.length)return;const t=sts[i];sts[i]=sts[j];sts[j]=t;save(K.stat,sts);setStatuts();}
 
-const CFGMAP={sources:{key:K.src,label:'source / régie',title:'Sources & régies commerciales'},equipes:{key:K.team,label:'équipe',title:'Équipes'},documents:{key:'egncrm_doctypes',label:'type de document',title:'Types de documents (pièces jointes)'},vt:{key:'egncrm_vt',label:'société de visite technique',title:'Sociétés de visite technique (sous-traitants)'},poseurs:{key:'egncrm_poseurs',label:'famille de poseurs',title:'Familles de poseurs (tarification & accès CRM)'},auditeurs:{key:'egncrm_auditeurs',label:'auditeur',title:'Auditeurs (sous-traitants)'}};
+const CFGMAP={sources:{key:K.src,label:'source / régie',title:'Sources & régies commerciales'},equipes:{key:K.team,label:'équipe',title:'Équipes'},documents:{key:'egncrm_doctypes',label:'type de document',title:'Types de documents (pièces jointes)'},vt:{key:'egncrm_vt',label:'société de visite technique',title:'Sociétés de visite technique (sous-traitants)'},poseurs:{key:'egncrm_poseurs',label:'famille de poseurs',title:'Familles de poseurs (tarification & accès CRM)'},auditeurs:{key:'egncrm_auditeurs',label:'auditeur',title:'Auditeurs (sous-traitants)'},coefsu:{key:'egncrm_coefsu',label:'coefficient U',title:'Coefficients U — étude thermique (Admin/Super Admin)'},pac:{key:'egncrm_pac',label:'solution PAC',title:'Catalogue de solutions PAC — étude (Admin/Super Admin)'}};
 function setSimple(type){
   const cfg=CFGMAP[type];const list=load(cfg.key,[]);
   const isPoseur=type==='poseurs';
   const isSource=type==='sources';
   const isVt=type==='vt';
   const isAud=type==='auditeurs';
+  const isCoefU=type==='coefsu';
+  const isPac=type==='pac';
   const isPriced=isPoseur||isSource||isVt||isAud;
-  let h=`<div class="panel"><div class="panel-h"><h3>${cfg.title}</h3><div class="sp"><button class="btn btn-pri btn-sm" onclick="${isPoseur?'openPoseur()':isSource?'openSource()':isVt?'openVt()':isAud?'openAuditeur()':`openCfg('${type}')`}">+ Ajouter</button></div></div><div class="panel-b">`;
+  let h=`<div class="panel"><div class="panel-h"><h3>${cfg.title}</h3><div class="sp"><button class="btn btn-pri btn-sm" onclick="${isPoseur?'openPoseur()':isSource?'openSource()':isVt?'openVt()':isAud?'openAuditeur()':isCoefU?'openCoefU()':isPac?'openPac()':`openCfg('${type}')`}">+ Ajouter</button></div></div><div class="panel-b">`;
   if(isPoseur)h+=`<p class="muted" style="margin-bottom:.9rem">Une <b>famille de poseurs</b> regroupe une tarification (% du devis, prix fixe, ou tarif journalier — par opération) et un ou plusieurs <b>accès CRM</b> (comptes utilisateurs, rôle Poseur). Plusieurs poseurs peuvent partager la même famille.</p>`;
   if(isSource)h+=`<p class="muted" style="margin-bottom:.9rem">Chaque <b>source / régie</b> peut avoir sa propre tarification « call center » : prix fixe par RDV, au m² selon la surface habitable, ou % du devis. Cette tarification alimente automatiquement la comptabilité et les appels à facturation des dossiers rattachés à cette source.</p>`;
   if(isVt)h+=`<p class="muted" style="margin-bottom:.9rem">Chaque société de visite technique peut avoir un <b>tarif fixe par opération</b>. Le coût s'ajoute automatiquement à la comptabilité du dossier dès que son statut atteint « VT terminé » (ou une étape ultérieure).</p>`;
   if(isAud)h+=`<p class="muted" style="margin-bottom:.9rem">Chaque auditeur peut avoir un <b>tarif fixe par opération</b>. Le coût s'ajoute automatiquement à la comptabilité du dossier dès que son statut atteint « Audit terminé » (ou une étape ultérieure).</p>`;
+  if(isCoefU)h+=`<p class="muted" style="margin-bottom:.9rem">Coefficients de transmission thermique <b>U (W/m².K)</b> utilisés dans le calcul des déperditions (méthode NF EN 12831 simplifiée) des études. Crée une entrée par type de paroi que tes techniciens rencontrent sur le terrain (ex : « Mur béton plein 30cm non isolé », « Fenêtre bois double vitrage »…).</p>`;
+  if(isPac)h+=`<p class="muted" style="margin-bottom:.9rem">Catalogue des solutions PAC proposables dans les études (marque, modèle, puissance, COP/SCOP, Etas). Sélectionnable ensuite depuis la fiche dossier lors de la rédaction de l'étude.</p>`;
   h+=`<div class="cfg-list">`;
   if(!list.length)h+=`<div class="empty"><div class="big">📋</div>Aucun élément.</div>`;
   list.forEach(x=>{
-    const nbTag=isPriced?`<span class="tag" style="background:rgba(124,194,66,.15);color:#5BA82E">${(x.prices||[]).length} tarif${(x.prices||[]).length>1?'s':''}</span>`:'';
-    const editFn=isPoseur?`openPoseur('${x.id}')`:isSource?`openSource('${x.id}')`:isVt?`openVt('${x.id}')`:isAud?`openAuditeur('${x.id}')`:`openCfg('${type}','${x.id}')`;
+    const nbTag=isPriced?`<span class="tag" style="background:rgba(124,194,66,.15);color:#5BA82E">${(x.prices||[]).length} tarif${(x.prices||[]).length>1?'s':''}</span>`:isCoefU?`<span class="tag" style="background:#eef0f2;color:#6b7785">${CATEGORIES_U[x.categorie]||x.categorie||''} — U = ${x.uValue||0}</span>`:isPac?`<span class="tag" style="background:#eef0f2;color:#6b7785">${x.puissance||0} kW · SCOP ${x.scop||'—'}</span>`:'';
+    const editFn=isPoseur?`openPoseur('${x.id}')`:isSource?`openSource('${x.id}')`:isVt?`openVt('${x.id}')`:isAud?`openAuditeur('${x.id}')`:isCoefU?`openCoefU('${x.id}')`:isPac?`openPac('${x.id}')`:`openCfg('${type}','${x.id}')`;
     h+=`<div class="cfg-item"><span class="nm">${esc(x.name)}</span>${nbTag}<span class="sp"><button class="iconbtn" onclick="${editFn}">✏️</button><button class="iconbtn del" onclick="delCfg('${type}','${x.id}')">🗑️</button></span></div>`;
   });
   h+=`</div></div></div>`;document.getElementById('setBody').innerHTML=h;
+}
+const CATEGORIES_U={mur:'Mur',fenetre:'Fenêtre',porte:'Porte',plancher_bas:'Plancher bas',plancher_haut:'Plancher haut / combles'};
+/* -- éditeur Coefficient U (étude thermique) -- */
+function openCoefU(id){
+  const list=load(CFGMAP.coefsu.key,[]);const x=id?list.find(a=>a.id===id):{id:uid(),name:'',categorie:'mur',uValue:0};
+  const d=x||{id:uid(),name:'',categorie:'mur',uValue:0};
+  let body=`<input type="hidden" id="cu_id" value="${d.id}">
+    <div class="fld"><label>Nom (ex : Mur béton plein 30cm non isolé)</label><input id="cu_name" value="${esc(d.name)}"></div>
+    <div class="fld" style="margin-top:.6rem"><label>Catégorie</label><select id="cu_cat">${Object.entries(CATEGORIES_U).map(([k,l])=>`<option value="${k}" ${d.categorie===k?'selected':''}>${l}</option>`).join('')}</select></div>
+    <div class="fld" style="margin-top:.6rem"><label>Coefficient U (W/m².K)</label><input type="number" step="any" id="cu_val" value="${d.uValue||''}" placeholder="ex : 0.8"></div>
+    <p class="muted" style="margin-top:.6rem;font-size:.74rem">💡 Plus U est faible, meilleure est l'isolation. Repères courants : mur non isolé ≈ 2 à 2.5, isolé correctement ≈ 0.3 à 0.5. Fenêtre simple vitrage ≈ 5, double vitrage ≈ 1.5 à 2.8.</p>`;
+  openModal(id?'Coefficient U — '+esc(d.name):'Nouveau coefficient U',body,`<button class="btn btn-ghost" onclick="closeModal()">Annuler</button><button class="btn btn-pri" onclick="saveCoefU()">💾 Enregistrer</button>`);
+}
+function saveCoefU(){
+  const id=val('cu_id');const name=val('cu_name');const categorie=val('cu_cat');const uValue=parseFloat(String(val('cu_val')||'').replace(',','.'))||0;
+  if(!name){toast('Nom requis','err');return;}
+  const list=load(CFGMAP.coefsu.key,[]);
+  let x=list.find(a=>a.id===id);if(!x){x={id};list.push(x);}
+  Object.assign(x,{name,categorie,uValue});
+  save(CFGMAP.coefsu.key,list);closeModal();renderSettings();toast('Coefficient enregistré ✓','ok');
+}
+/* -- éditeur catalogue Solution PAC -- */
+function openPac(id){
+  const list=load(CFGMAP.pac.key,[]);const d=id?list.find(a=>a.id===id):{id:uid(),name:'',marque:'',modele:'',puissance:0,cop:'',scop:'',etas:''};
+  let body=`<input type="hidden" id="pa_id" value="${d.id}">
+    <div class="fgrid">
+      <div class="fld"><label>Nom affiché (ex : PAC Daikin Altherma 45 kW)</label><input id="pa_name" value="${esc(d.name)}"></div>
+      <div class="fld"><label>Marque</label><input id="pa_marque" value="${esc(d.marque||'')}"></div>
+      <div class="fld"><label>Modèle</label><input id="pa_modele" value="${esc(d.modele||'')}"></div>
+      <div class="fld"><label>Puissance chauffage (kW)</label><input type="number" step="any" id="pa_puissance" value="${d.puissance||''}"></div>
+      <div class="fld"><label>COP</label><input id="pa_cop" value="${esc(d.cop||'')}" placeholder="ex : 3,7"></div>
+      <div class="fld"><label>SCOP</label><input id="pa_scop" value="${esc(d.scop||'')}" placeholder="ex : 3,4"></div>
+      <div class="fld"><label>Etas (%)</label><input id="pa_etas" value="${esc(d.etas||'')}" placeholder="ex : 126"></div>
+    </div>`;
+  openModal(id?'Solution PAC — '+esc(d.name):'Nouvelle solution PAC',body,`<button class="btn btn-ghost" onclick="closeModal()">Annuler</button><button class="btn btn-pri" onclick="savePac()">💾 Enregistrer</button>`,'wide');
+}
+function savePac(){
+  const id=val('pa_id');const name=val('pa_name');
+  if(!name){toast('Nom requis','err');return;}
+  const list=load(CFGMAP.pac.key,[]);
+  let x=list.find(a=>a.id===id);if(!x){x={id};list.push(x);}
+  Object.assign(x,{name,marque:val('pa_marque'),modele:val('pa_modele'),puissance:parseFloat(String(val('pa_puissance')||'').replace(',','.'))||0,cop:val('pa_cop'),scop:val('pa_scop'),etas:val('pa_etas')});
+  save(CFGMAP.pac.key,list);closeModal();renderSettings();toast('Solution PAC enregistrée ✓','ok');
 }
 /* -- éditeur société de Visite Technique : tarif FIXE par opération -- */
 let VTDRAFT=null;
