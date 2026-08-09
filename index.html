@@ -907,6 +907,8 @@ const CATU_PH=()=>load('egncrm_coefsu',[]).filter(x=>x.categorie==='plancher_hau
 async function openEtudePanel(recId){
   if(!ME||(ME.role!=='superadmin'&&ME.role!=='admin')){toast('Réservé Admin / Super Admin','err');return;}
   const r=recById(recId);if(!r)return;
+  const op=getProducts().find(p=>p.id===r.productId);
+  if(!op||op.etudeType!=='pac'){toast('Ce module Étude (déperditions + PAC) n\'est activé que pour les opérations de type PAC — vérifiez Paramètres ▸ Opérations','err');return;}
   await loadEtudeFor(recId);
   renderEtudePanel(recId);
 }
@@ -1118,6 +1120,8 @@ async function fetchEtudePhotoDataUrl(path){
 async function genererEtudePdf(recId){
   if(!ME||(ME.role!=='superadmin'&&ME.role!=='admin')){toast('Réservé Admin / Super Admin','err');return;}
   const r=recById(recId);if(!r)return;
+  const opCheck=getProducts().find(p=>p.id===r.productId);
+  if(!opCheck||opCheck.etudeType!=='pac'){toast('Ce module Étude n\'est activé que pour les opérations de type PAC','err');return;}
   await Promise.all([loadEtudeFor(recId),loadDealFor(recId),loadComptaFor(recId)]);
   const e=etudeOf(r),deal=dealOf(r),compta=comptaOf(r);
   const m=recordComptaMetrics(r);
@@ -1941,7 +1945,7 @@ function renderDossier(r){
   if(!docList.length)docs+=`<div class="muted">Aucune pièce jointe.</div>`;
   else docList.forEach(d=>{docs+=`<div class="cfg-item"><span style="font-size:1.1rem">${/image\//.test(d.mime||'')?'🖼️':'📄'}</span><div style="flex:1;min-width:0"><div class="nm" style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${esc(d.typeName||'Document')} — ${esc(d.filename||'')}</div><div class="muted" style="font-size:.68rem">${esc(d.user||'')} • ${new Date(d.date).toLocaleString('fr-FR')} • ${fmtSize(d.size)}</div></div><span class="sp"><button class="iconbtn" title="Voir / télécharger" onclick="viewDoc('${d.id}','${r.id}')">👁️</button><button class="iconbtn del" onclick="delDoc('${r.id}','${d.id}')">🗑️</button></span></div>`;});
   docs+=`</div>
-    <div class="flex" style="flex-wrap:wrap;gap:.5rem;margin-top:1rem;border-top:1px dashed var(--border-soft);padding-top:.9rem">${(ME&&(ME.role==='superadmin'||ME.role==='admin'))?`<button class="btn btn-navy btn-sm" onclick="openEtudePanel('${r.id}')">📐 Étude technique & PDF</button>`:''}<button class="btn btn-ghost btn-sm" onclick="toast('Module à configurer prochainement')">🖊️ Envoyer en signature</button></div>
+    <div class="flex" style="flex-wrap:wrap;gap:.5rem;margin-top:1rem;border-top:1px dashed var(--border-soft);padding-top:.9rem">${(ME&&(ME.role==='superadmin'||ME.role==='admin')&&op&&op.etudeType==='pac')?`<button class="btn btn-navy btn-sm" onclick="openEtudePanel('${r.id}')">📐 Étude technique & PDF</button>`:''}<button class="btn btn-ghost btn-sm" onclick="toast('Module à configurer prochainement')">🖊️ Envoyer en signature</button></div>
   </div></div>`;
   // commentaires
   const cmts=(r.comments||[]).slice().sort((a,b)=>(b.date||0)-(a.date||0));
@@ -4150,6 +4154,7 @@ function openOperation(id){
   if(!OPDRAFT.fields)OPDRAFT.fields=[];
   renderOpEditor();
 }
+const ETUDE_TYPES={'':'Aucune — pas de module Étude pour cette opération','pac':'PAC — Déperditions & solution PAC (type BAT-TH-163 / BAT-TH-179)'};
 function renderOpEditor(){
   const o=OPDRAFT;
   let fl;
@@ -4159,7 +4164,10 @@ function renderOpEditor(){
   <div class="sectitle">Champs du formulaire <span style="font-weight:500;text-transform:none;letter-spacing:0;color:var(--text-mut)">(affichés sur le lead quand cette opération est choisie)</span></div>
   ${fl}
   <button class="btn btn-ghost btn-sm" style="margin-top:.7rem" onclick="opAddField()">+ Ajouter un champ</button>
-  ${cumacEditorHtml()}`;
+  ${cumacEditorHtml()}
+  <div class="sectitle" style="margin-top:1.1rem">Module Étude technique <span style="font-weight:500;text-transform:none;letter-spacing:0;color:var(--text-mut)">(bouton « 📐 Étude technique & PDF » dans la fiche dossier — Admin/Super Admin)</span></div>
+  <div class="fld"><label>Type d'étude</label><select id="op_etudetype">${Object.entries(ETUDE_TYPES).map(([k,l])=>`<option value="${k}" ${(o.etudeType||'')===k?'selected':''}>${l}</option>`).join('')}</select></div>
+  <p class="muted" style="margin-top:.4rem;font-size:.74rem">💡 Le module Étude actuel (déperditions NF EN 12831 + solution PAC + Facteur R) n'est prévu que pour les fiches PAC. D'autres types d'étude pourront être ajoutés ici plus tard pour les autres familles de fiches.</p>`;
   openModal(o.name?'Opération — '+esc(o.name):'Nouvelle opération',body,`<button class="btn btn-ghost" onclick="closeModal()">Annuler</button><button class="btn btn-pri" onclick="saveOperation()">💾 Enregistrer l'opération</button>`,'wide');
 }
 function cumacEditorHtml(){
@@ -4346,6 +4354,7 @@ function saveOperation(){
   opCaptureName();
   if(!OPDRAFT.name){toast("Nom de l'opération requis",'err');return;}
   OPDRAFT.fields=OPDRAFT.fields.filter(f=>f.label&&f.label.trim());
+  OPDRAFT.etudeType=val('op_etudetype')||'';
   const ops=getProducts();const idx=ops.findIndex(o=>o.id===OPDRAFT.id);
   if(idx>=0)ops[idx]=OPDRAFT;else ops.push(OPDRAFT);
   save(K.prod,ops);OPDRAFT=null;closeModal();renderSettings();buildNav();toast('Opération enregistrée ✓','ok');
