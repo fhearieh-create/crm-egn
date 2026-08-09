@@ -893,9 +893,11 @@ function computeThermitube(r){
   const metrage=(e.metrageLineaireManuel!=null&&e.metrageLineaireManuel!=='')?parseFloat(e.metrageLineaireManuel):auto;
   const s=getSettings();
   const prixMl=s.tarifThermitube||0;
-  const devisEstime=metrage*prixMl;
+  const coutCalcule=metrage*prixMl; // coût théorique métrage × tarif — indicatif uniquement, sert de comparaison
   const cumacEstime=surface?Math.round(THERMITUBE_COEF_CUMAC*surface):0;
-  return{surface,auto,metrage,prixMl,devisEstime,cumacEstime,manuel:e.metrageLineaireManuel!=null&&e.metrageLineaireManuel!==''};
+  const primeCEE=(dealOf(r).prime)||0;
+  const devisEstime=primeCEE; // dans l'étude uniquement : le devis présenté = la prime CEE (reste à payer = 0€) — géré manuellement partout ailleurs (Comptabilité)
+  return{surface,auto,metrage,prixMl,coutCalcule,devisEstime,primeCEE,cumacEstime,manuel:e.metrageLineaireManuel!=null&&e.metrageLineaireManuel!==''};
 }
 function bestPacFor(puissanceRequise){
   const list=load('egncrm_pac',[]);
@@ -975,9 +977,10 @@ function thermitubePreviewHtml(t){
   if(!t.surface)return `<p class="muted" style="font-size:.78rem;color:#E63946">⚠️ Renseignez le champ « Surface (m²) » sur la fiche du dossier pour estimer le cumac.</p>`;
   return `<div class="tbl-wrap"><table class="tbl"><tbody>
     <tr><td>Métrage linéaire ${t.manuel?'(saisie manuelle)':'(calculé automatiquement)'}</td><td style="text-align:right;font-weight:700">${t.metrage.toLocaleString('fr-FR')} ml</td></tr>
-    <tr><td>Devis estimé (${t.prixMl} €/ml)</td><td style="text-align:right;font-weight:700">${eur(t.devisEstime)}</td></tr>
+    <tr><td>Coût calculé (${t.prixMl} €/ml) <span class="muted" style="font-size:.62rem">— indicatif, comparaison uniquement</span></td><td style="text-align:right">${eur(t.coutCalcule)}</td></tr>
     <tr><td>kWh cumac estimé (390 × ${t.surface} m²)</td><td style="text-align:right;font-weight:700;color:var(--green-deep)">${t.cumacEstime.toLocaleString('fr-FR')} kWhc</td></tr>
-  </tbody></table></div><p class="muted" style="font-size:.7rem;margin-top:.3rem">Le cumac ci-dessus alimente la prime CEE via le panneau Deal (bouton « ⚡ Calculer le cumac », si l'opération est configurée avec ce coefficient) ou saisissez-le manuellement dans le Deal.</p>`;
+    <tr><td><b>Devis présenté dans l'étude</b> <span class="muted" style="font-size:.62rem">(= Prime CEE saisie dans le Deal — reste à payer 0 €)</span></td><td style="text-align:right;font-weight:800;color:#2D5F14">${eur(t.devisEstime)}</td></tr>
+  </tbody></table></div><p class="muted" style="font-size:.7rem;margin-top:.3rem">💡 Ce devis "présenté" ne sert que dans le document d'étude — la Comptabilité et le reste du dossier restent gérés manuellement comme d'habitude. Pense à renseigner la prime dans le panneau Deal avant de générer le PDF.</p>`;
 }
 function recalcThermitubePreview(recId){
   const r=recById(recId);if(!r)return;
@@ -1303,7 +1306,8 @@ async function genererEtudeThermitubePdf(recId){
 
     <h1 class="pt" style="margin-top:20px">Récapitulatif financier (estimatif)</h1>
     <table class="et"><thead><tr><th>Désignation</th><th style="text-align:right">Montant</th></tr></thead><tbody>
-      <tr><td>Fourniture & pose Thermitube (${t.metrage.toLocaleString('fr-FR')} ml × ${t.prixMl} €/ml)</td><td style="text-align:right">${eur(t.devisEstime)}</td></tr>
+      <tr><td>Coût calculé (${t.metrage.toLocaleString('fr-FR')} ml × ${t.prixMl} €/ml) <span style="color:#9aa5b1;font-size:.7rem">— indicatif</span></td><td style="text-align:right;color:#9aa5b1">${eur(t.coutCalcule)}</td></tr>
+      <tr><td>Devis présenté (= Prime CEE)</td><td style="text-align:right;font-weight:700">${eur(t.devisEstime)}</td></tr>
       <tr><td>Prime CEE${deleg?' — '+esc(deleg.name):''}</td><td style="text-align:right">− ${eur(primeCEE)}</td></tr>
     </tbody></table>
     <div class="finalbox"><div>RESTE À PAYER (estimatif)</div><div class="r">${eur(resteAPayer)}</div></div>
