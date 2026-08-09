@@ -672,8 +672,8 @@ let ME=null;
 /* ---- comptabilité (étape 2) : source de vérité = Supabase, cache local en mémoire pour l'affichage ---- */
 let COMPTA_CACHE={},FACTURES_CACHE=null;
 function rowToCompta(row){
-  if(!row)return{devisTTC:0,poseurUserId:'',jours:0,nbRdv:0,produits:[],fauxFrais:[],facturePoseur:null,factureCallCenter:null,factureVt:null,factureAudit:null};
-  return{devisTTC:row.devis_ttc||0,poseurUserId:row.poseur_user_id||'',jours:row.jours||0,nbRdv:row.nb_rdv||0,produits:row.produits||[],fauxFrais:row.faux_frais||[],facturePoseur:row.facture_poseur||null,factureCallCenter:row.facture_callcenter||null,factureVt:row.facture_vt||null,factureAudit:row.facture_audit||null};
+  if(!row)return{devisTTC:0,poseurUserId:'',jours:0,nbRdv:0,vtSubId:'',auditSubId:'',produits:[],fauxFrais:[],facturePoseur:null,factureCallCenter:null,factureVt:null,factureAudit:null};
+  return{devisTTC:row.devis_ttc||0,poseurUserId:row.poseur_user_id||'',jours:row.jours||0,nbRdv:row.nb_rdv||0,vtSubId:row.vt_sub_id||'',auditSubId:row.audit_sub_id||'',produits:row.produits||[],fauxFrais:row.faux_frais||[],facturePoseur:row.facture_poseur||null,factureCallCenter:row.facture_callcenter||null,factureVt:row.facture_vt||null,factureAudit:row.facture_audit||null};
 }
 async function loadComptaFor(recId){
   if(COMPTA_CACHE[recId])return COMPTA_CACHE[recId];
@@ -697,6 +697,7 @@ async function persistCompta(recId){
   try{
     await SUPA.from('dossier_compta').upsert({
       dossier_id:recId,devis_ttc:c.devisTTC||0,poseur_user_id:c.poseurUserId||null,jours:c.jours||0,nb_rdv:c.nbRdv||0,
+      vt_sub_id:c.vtSubId||null,audit_sub_id:c.auditSubId||null,
       produits:c.produits||[],faux_frais:c.fauxFrais||[],facture_poseur:c.facturePoseur,facture_callcenter:c.factureCallCenter,
       facture_vt:c.factureVt,facture_audit:c.factureAudit,
       updated_at:new Date().toISOString(),updated_by:ME?ME.id:null
@@ -1154,17 +1155,49 @@ function renderRecBulkBar(){
   const bar=document.getElementById('recBulkBar');if(!bar)return;
   const n=REC_SELECTED.size;
   if(!n){bar.innerHTML='';return;}
+  const isAdmin=ME&&(ME.role==='superadmin'||ME.role==='admin');
   const users=getUsers().filter(u=>u.active);
+  const roleGroups=[['telepro','Téléprospecteurs'],['confirmateur','Confirmateurs'],['commercial','Commerciaux / Régies'],['poseur','Poseurs'],['manager','Managers'],['admin','Administrateurs'],['superadmin','Super Admins']];
+  const optHtml=roleGroups.map(([rk,lbl])=>{
+    const list=users.filter(u=>u.role===rk);
+    if(!list.length)return '';
+    return `<optgroup label="${esc(lbl)}">${list.map(u=>`<option value="${u.id}">${esc(u.prenom+' '+u.nom)}</option>`).join('')}</optgroup>`;
+  }).join('');
   bar.innerHTML=`<div class="bulk-bar">
     <span><b>${n}</b> dossier${n>1?'s':''} sélectionné${n>1?'s':''}</span>
     <select id="bulkAssignPick" style="max-width:280px">
-      <option value="">— Affecter à… —</option>
-      ${users.map(u=>`<option value="${u.id}">${esc(u.prenom+' '+u.nom)} (${ROLES[u.role]||u.role})</option>`).join('')}
+      <option value="">— Affecter à… (par rôle) —</option>
+      ${optHtml}
     </select>
     <button class="btn btn-pri btn-sm" onclick="bulkAssign()">✅ Affecter</button>
     <button class="btn btn-ghost btn-sm" onclick="openExportModal()">⬇️ Exporter la sélection</button>
+    ${isAdmin?`<button class="btn btn-ghost btn-sm" style="color:#E63946;border-color:#E63946" onclick="bulkDelete()">🗑️ Supprimer la sélection</button>`:''}
     <button class="btn btn-ghost btn-sm" onclick="REC_SELECTED.clear();renderRecRows(REC_MODE,visibleRecs())">Annuler la sélection</button>
   </div>`;
+}
+async function bulkDelete(){
+  const isAdmin=ME&&(ME.role==='superadmin'||ME.role==='admin');
+  if(!isAdmin){toast('Réservé aux administrateurs','err');return;}
+  const n=REC_SELECTED.size;if(!n)return;
+  modalConfirm(`Supprimer ${n} dossier${n>1?'s':''} ?`,'Cette action est définitive (RDV liés et pièces jointes inclus).',async()=>{
+    const ids=[...REC_SELECTED];
+    let recs=getRecs();let rdvsAll=getRdvs();
+    for(const id of ids){
+      const rec=recs.find(x=>x.id===id);
+      if(rec&&rec.docs)for(const d of rec.docs){try{if(d.path)await SUPA.storage.from(ATTACH_BUCKET).remove([d.path]);}catch(e){console.error('[storage remove]',e);}try{await idbDel(d.id);}catch(e){}}
+      const linkedRdvs=rdvsAll.filter(r=>r.recordId===id);
+      for(const rd of linkedRdvs)await deleteRemoteRow(K.rdv,rd.id);
+      await deleteRemoteRow(K.recs,id);
+    }
+    recs=recs.filter(r=>!ids.includes(r.id));
+    rdvsAll=rdvsAll.filter(r=>!ids.includes(r.recordId));
+    save(K.recs,recs);save(K.rdv,rdvsAll);
+    REC_SELECTED.clear();
+    closeModal();buildNav();
+    CUR==='clients'?applyRecFilter('clients'):applyRecFilter('leads');
+    toast(`${n} dossier${n>1?'s':''} supprimé${n>1?'s':''} ✓`,'ok');
+    logActivity('action',`🗑️ Suppression groupée de ${n} dossier(s)`);
+  });
 }
 function bulkAssign(){
   const uid2=val('bulkAssignPick');
@@ -1481,10 +1514,16 @@ function subCostFor(r,kind){
   const label=kind==='vt'?'VT':'Audit';
   const triggers=kind==='vt'?VT_TRIGGER_STATUSES:AUDIT_TRIGGER_STATUSES;
   const active=triggers.includes(statusNameOf(r));
-  const rdv=subAssignedFor(r,kind);
-  if(!rdv)return{montant:0,active,label:`Aucun ${label==='VT'?'RDV Visite technique':'RDV Audit'} avec sous-traitant assigné`,sub:null};
+  const c=comptaOf(r);
+  const manualSubId=kind==='vt'?c.vtSubId:c.auditSubId;
   const list=load(listKey,[]);
-  const sub=list.find(x=>x.id===rdv.subId);
+  let sub=null;
+  if(manualSubId)sub=list.find(x=>x.id===manualSubId)||null;
+  if(!sub){
+    const rdv=subAssignedFor(r,kind);
+    if(!rdv)return{montant:0,active,label:`Aucun ${label==='VT'?'RDV Visite technique':'RDV Audit'} avec sous-traitant assigné, ni sélection manuelle`,sub:null};
+    sub=list.find(x=>x.id===rdv.subId)||null;
+  }
   if(!sub)return{montant:0,active,label:'Sous-traitant introuvable',sub:null};
   if(!active)return{montant:0,active,label:`${sub.name} — en attente du statut « ${triggers[0]} »`,sub};
   const prices=sub.prices||[];
@@ -1529,6 +1568,8 @@ function renderComptaPanel(r){
   const margePct=recettes>0?(marge/recettes*100):0;
   const poseurLocked=factureActive(r,'poseur');
   const ccLocked=factureActive(r,'callcenter');
+  const vtLocked=factureActive(r,'vt');
+  const auditLocked=factureActive(r,'auditeur');
   const poseurAnnule=c.facturePoseur&&c.facturePoseur.statut==='annule';
   const ccAnnule=c.factureCallCenter&&c.factureCallCenter.statut==='annule';
   const vtAnnule=c.factureVt&&c.factureVt.statut==='annule';
@@ -1556,6 +1597,12 @@ function renderComptaPanel(r){
         <div class="fld"><label>Nombre de RDV à facturer <span class="muted" style="font-size:.62rem">(si tarif au RDV)</span></label><input type="number" step="1" min="0" id="cp_nbrdv" value="${c.nbRdv||''}" placeholder="0" ${ccLocked?'disabled':''}></div>
       </div>
       ${!sourceAssignee?`<p class="muted" style="font-size:.72rem;color:#E63946;margin-top:.3rem">⚠️ Ce dossier n'a pas de source / régie renseignée — aucun coût Call Center ne sera calculé. Modifiez le dossier pour en choisir une.</p>`:(!(sourceAssignee.prices&&sourceAssignee.prices.length)?`<p class="muted" style="font-size:.72rem;color:#E63946;margin-top:.3rem">⚠️ La source « ${esc(sourceAssignee.name)} » n'a aucun tarif configuré (Paramètres ▸ Sources / Régies).</p>`:'')}
+
+      <div class="sectitle" style="margin-top:1.1rem">Visite Technique &amp; Audit <span style="font-weight:500;text-transform:none;letter-spacing:0;color:var(--text-mut)">(sélection manuelle — utilisée si aucun RDV VT/Audit n'est encore créé, ou pour surcharger le RDV)</span></div>
+      <div class="fgrid c3">
+        <div class="fld"><label>Société VT</label><select id="cp_vtsub" ${vtLocked?'disabled':''}><option value="">— Auto (via RDV) —</option>${load('egncrm_vt',[]).map(x=>`<option value="${x.id}" ${c.vtSubId===x.id?'selected':''}>${esc(x.name)}</option>`).join('')}</select></div>
+        <div class="fld"><label>Auditeur</label><select id="cp_audsub" ${auditLocked?'disabled':''}><option value="">— Auto (via RDV) —</option>${load('egncrm_auditeurs',[]).map(x=>`<option value="${x.id}" ${c.auditSubId===x.id?'selected':''}>${esc(x.name)}</option>`).join('')}</select></div>
+      </div>
       <button class="btn btn-pri btn-sm" style="margin-top:.5rem" onclick="saveCompta('${r.id}')">💾 Enregistrer</button>
 
       <div class="sectitle" style="margin-top:1.1rem">Produits installés <span style="font-weight:500;text-transform:none;letter-spacing:0;color:var(--text-mut)">(plusieurs lignes possibles — quantité, marques différentes)</span></div>
@@ -1713,6 +1760,8 @@ async function saveCompta(id){
   c.poseurUserId=val('cp_poseur')||'';
   c.jours=parseFloat(String(val('cp_jours')||'').replace(',','.'))||0;
   c.nbRdv=parseFloat(String(val('cp_nbrdv')||'').replace(',','.'))||0;
+  c.vtSubId=val('cp_vtsub')||'';
+  c.auditSubId=val('cp_audsub')||'';
   await persistCompta(id);openDossier(id);toast('Comptabilité enregistrée ✓','ok');
   logActivity('action',`💼 Comptabilité modifiée sur ${r.dossier||id} — devis ${c.devisTTC} €`,id);
 }
@@ -1777,8 +1826,8 @@ function clientNameOf(r){return (r.raisonSociale||((r.prenom||'')+' '+(r.nom||''
 const AGENT_TYPES={
   poseur:{label:'Poseur',isSource:false,factureField:'facturePoseur',agentIdFn:r=>comptaOf(r).poseurUserId,montantFn:m=>m.aPayerPoseur,getAgent:id=>userById(id),agentName:u=>u?u.prenom+' '+u.nom:'',listAgents:()=>getUsers().filter(u=>u.role==='poseur'),color:'#B96A0A',icon:'🔧'},
   callcenter:{label:'Call Center (Source / Régie)',isSource:true,factureField:'factureCallCenter',agentIdFn:r=>r.sourceId,montantFn:m=>m.aPayerCallCenter,getAgent:id=>getSources().find(s=>s.id===id),agentName:s=>s?s.name:'',listAgents:()=>getSources(),color:'#2D7DD2',icon:'📞'},
-  vt:{label:'Visite Technique',isSource:true,factureField:'factureVt',agentIdFn:r=>(subAssignedFor(r,'vt')||{}).subId||'',montantFn:m=>m.aPayerVt,getAgent:id=>load('egncrm_vt',[]).find(x=>x.id===id),agentName:x=>x?x.name:'',listAgents:()=>load('egncrm_vt',[]),color:'#3D9970',icon:'🧰'},
-  auditeur:{label:'Auditeur',isSource:true,factureField:'factureAudit',agentIdFn:r=>(subAssignedFor(r,'auditeur')||{}).subId||'',montantFn:m=>m.aPayerAudit,getAgent:id=>load('egncrm_auditeurs',[]).find(x=>x.id===id),agentName:x=>x?x.name:'',listAgents:()=>load('egncrm_auditeurs',[]),color:'#8E44AD',icon:'📝'}
+  vt:{label:'Visite Technique',isSource:true,factureField:'factureVt',agentIdFn:r=>comptaOf(r).vtSubId||(subAssignedFor(r,'vt')||{}).subId||'',montantFn:m=>m.aPayerVt,getAgent:id=>load('egncrm_vt',[]).find(x=>x.id===id),agentName:x=>x?x.name:'',listAgents:()=>load('egncrm_vt',[]),color:'#3D9970',icon:'🧰'},
+  auditeur:{label:'Auditeur',isSource:true,factureField:'factureAudit',agentIdFn:r=>comptaOf(r).auditSubId||(subAssignedFor(r,'auditeur')||{}).subId||'',montantFn:m=>m.aPayerAudit,getAgent:id=>load('egncrm_auditeurs',[]).find(x=>x.id===id),agentName:x=>x?x.name:'',listAgents:()=>load('egncrm_auditeurs',[]),color:'#8E44AD',icon:'📝'}
 };
 const STATUT_COMPTA={transmis:'Transmis',recu:'Reçu',valide:'Validé',paye:'Payé',annule:'Annulé'};
 const STATUT_COMPTA_COLOR={transmis:'grey',recu:'blue',valide:'blue',paye:'green',annule:'red'};
@@ -2200,7 +2249,7 @@ async function saveDeal(id){
   await persistDeal(id);
   r.updated=Date.now();
   r.history=r.history||[];
-  r.history.unshift({date:Date.now(),user:(ME.prenom+' '+ME.nom).trim()||ME.code,text:`Deal : ${d?d.name:'—'} • ${type==='precaire'?'Précaire':'Classique'} • ${cumac.toLocaleString('fr-FR')} kWhc • ${prime.toLocaleString('fr-FR')} € TTC`});
+  r.history.unshift({date:Date.now(),user:(ME.prenom+' '+ME.nom).trim()||ME.code,text:'Deal mis à jour'});
   logActivity('action',`💰 Deal enregistré sur ${r.dossier||id} — ${prime.toLocaleString('fr-FR')} € TTC`,id);
   save(K.recs,recs);openDossier(id);toast('Deal enregistré ✓','ok');
 }
