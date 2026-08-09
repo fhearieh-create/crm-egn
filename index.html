@@ -450,7 +450,7 @@ const SYNC_TABLES=[
   {key:'egncrm_delegataires',table:'cfg_delegataires',shape:'blob'},
   {key:'egncrm_mailtpl',table:'cfg_mailtpl',shape:'blob'},
   {key:'egncrm_items',table:'cfg_items',shape:'blob'},
-  {key:'egncrm_sav',table:'cfg_sav',shape:'blob'},
+  {key:'egncrm_sav',table:'sav_tickets',shape:'sav'},
   {key:'egncrm_poseurs',table:'cfg_poseurs',shape:'blob'},
   {key:'egncrm_settings',table:'cfg_societe',shape:'single'}
 ];
@@ -470,6 +470,7 @@ async function pushTable(cfg,v){
     let rows;
     if(cfg.shape==='record')rows=arr.map(r=>({id:r.id,user_id:r.userId||null,dossier:r.dossier||null,data:r,updated_at:new Date().toISOString()}));
     else if(cfg.shape==='rdv')rows=arr.map(r=>({id:r.id,record_id:r.recordId||null,user_id:r.userId||null,data:r}));
+    else if(cfg.shape==='sav')rows=arr.map(x=>({id:x.id,record_id:x.recordId||null,data:x,created_at:x.created?new Date(x.created).toISOString():new Date().toISOString()}));
     else rows=arr.map(x=>({id:x.id,data:x,updated_at:new Date().toISOString()}));
     if(rows.length)await SUPA.from(cfg.table).upsert(rows);
     // NB : les suppressions ne se déduisent jamais d'une comparaison avec le cache local
@@ -988,7 +989,7 @@ function actionBtn(html,fn,cls){return `<button class="btn ${cls||'btn-pri'} btn
    TABLEAU DE BORD
    ==================================================================== */
 function renderDash(){
-  const recs=getRecs(),rdvs=getRdvs(),sts=getStatuses(),users=getUsers();
+  const recs=visibleRecs(),rdvs=getRdvs(),sts=getStatuses(),users=getUsers();
   const wonIds=sts.filter(s=>s.won).map(s=>s.id);
   const won=recs.filter(r=>wonIds.includes(r.statusId)).length;
   const conv=recs.length?Math.round(won/recs.length*100):0;
@@ -2634,7 +2635,7 @@ function renderSav(){
 }
 function openSav(id){
   const s=id?getSav().find(x=>x.id===id):null;const d=s||{};
-  const recs=getRecs();const recSel=`<option value="">— Hors dossier —</option>`+recs.map(r=>`<option value="${r.id}" ${d.recordId===r.id?'selected':''}>${esc(r.dossier)} — ${esc(recName(r))}</option>`).join('');
+  const recs=visibleRecs();const recSel=`<option value="">— Hors dossier —</option>`+recs.map(r=>`<option value="${r.id}" ${d.recordId===r.id?'selected':''}>${esc(r.dossier)} — ${esc(recName(r))}</option>`).join('');
   let body=`<input type="hidden" id="sv_id" value="${id||''}"><div class="fgrid">
     <div class="fld full"><label>Dossier</label><select id="sv_rec" onchange="const r=recById(this.value);if(r)document.getElementById('sv_client').value=recName(r)">${recSel}</select></div>
     <div class="fld full"><label>Client</label><input id="sv_client" value="${esc(d.client)}"></div>
