@@ -1396,7 +1396,8 @@ function renderDossier(r){
   else rdvP+=`<div class="rdv-list">`+rdvs.map(rd=>{const ss=statById(rd.statusId);return `<div class="rdv-card" style="border-left-color:${ss?ss.color:'#7CC242'}" onclick="openRdv('${rd.id}')"><div class="rt"><span class="rn">${esc(rd.type||'RDV')}</span><span class="rtime">${fmtDateLong(rd.date)} ${rd.heure||''}</span></div><div class="rm">${esc(rd.ville||'')}${rdvWho(rd)?' • '+esc(rdvWho(rd)):''}</div></div>`;}).join('')+`</div>`;
   rdvP+=`</div></div>`;
   let hist=`<div class="panel"><div class="panel-h"><h3>Historique</h3></div><div class="panel-b">`;
-  if(r.history&&r.history.length)hist+=`<div class="hist" style="max-height:320px">`+r.history.map(h=>`<div class="hist-item"><div class="hm">${new Date(h.date).toLocaleString('fr-FR')} • ${esc(h.user||'')}</div>${esc(h.text)}</div>`).join('')+`</div>`;
+  const isSuperAdmin=ME&&ME.role==='superadmin';
+  if(r.history&&r.history.length)hist+=`<div class="hist" style="max-height:320px">`+r.history.map((h,i)=>`<div class="hist-item" style="display:flex;justify-content:space-between;align-items:flex-start;gap:.4rem"><div style="flex:1"><div class="hm">${new Date(h.date).toLocaleString('fr-FR')} • ${esc(h.user||'')}</div>${esc(h.text)}</div>${isSuperAdmin?`<button class="iconbtn del" style="width:22px;height:22px;font-size:.65rem;flex-shrink:0" title="Supprimer cette entrée" onclick="delHistoryEntry('${r.id}',${i})">🗑️</button>`:''}</div>`).join('')+`</div>`;
   else hist+=`<div class="muted">Aucun historique.</div>`;
   hist+=`</div></div>`;
   // documents / pièces jointes
@@ -1420,7 +1421,7 @@ function renderDossier(r){
     <button class="btn btn-pri btn-sm" style="margin-top:.5rem" onclick="addComment('${r.id}')">+ Ajouter le commentaire</button>
     <div style="margin-top:1rem;display:flex;flex-direction:column;gap:.55rem">`;
   if(!cmts.length)comm+=`<div class="muted">Aucun commentaire pour l'instant.</div>`;
-  else cmts.forEach(c=>{comm+=`<div class="cmt"><div class="cmt-txt">${esc(c.text).replace(/\n/g,'<br>')}</div><div class="cmt-meta"><span>${esc(c.user||'')} · ${new Date(c.date).toLocaleString('fr-FR')}</span><button class="iconbtn del" style="width:24px;height:24px;font-size:.7rem" onclick="delComment('${r.id}','${c.id}')">🗑️</button></div></div>`;});
+  else cmts.forEach(c=>{comm+=`<div class="cmt"><div class="cmt-txt">${esc(c.text).replace(/\n/g,'<br>')}</div><div class="cmt-meta"><span>${esc(c.user||'')} · ${new Date(c.date).toLocaleString('fr-FR')}</span>${ME&&ME.role==='superadmin'?`<button class="iconbtn del" style="width:24px;height:24px;font-size:.7rem" onclick="delComment('${r.id}','${c.id}')">🗑️</button>`:''}</div></div>`;});
   comm+=`</div></div></div>`;
   // panneau DEAL (compact, placé en bas à côté des commentaires) — réservé Admin / Super Admin, comme la Comptabilité
   const isAdminCompta=ME&&(ME.role==='superadmin'||ME.role==='admin');
@@ -2088,6 +2089,14 @@ function delFacture(id){
   });
 }
 /* ---- commentaires ---- */
+function delHistoryEntry(recId,idx){
+  if(!ME||ME.role!=='superadmin'){toast('Seul le Super Admin peut supprimer une entrée de l\'historique','err');return;}
+  const recs=getRecs();const r=recs.find(x=>x.id===recId);if(!r||!r.history)return;
+  r.history.splice(idx,1);
+  save(K.recs,recs);
+  if(DOSSIER_OPEN===recId)openDossier(recId);
+  toast('Entrée supprimée','ok');
+}
 function addComment(id){
   const el=document.getElementById('cmt_input');const txt=el?el.value.trim():'';
   if(!txt){toast('Commentaire vide','err');return;}
@@ -2098,6 +2107,7 @@ function addComment(id){
   logActivity('action',`💬 Commentaire ajouté sur ${r.dossier||id} : « ${txt.slice(0,80)}${txt.length>80?'…':''} »`,id);
 }
 function delComment(recId,cid){
+  if(!ME||ME.role!=='superadmin'){toast('Seul le Super Admin peut supprimer un commentaire','err');return;}
   const recs=getRecs();const r=recs.find(x=>x.id===recId);if(!r)return;
   r.comments=(r.comments||[]).filter(c=>c.id!==cid);save(K.recs,recs);
   if(DOSSIER_OPEN===recId)openDossier(recId);else refreshCommentsModal(recId);
@@ -2114,7 +2124,7 @@ function refreshCommentsModalContent(r){
     <button class="btn btn-pri btn-sm" style="margin-top:.45rem" onclick="addCommentFromModal('${r.id}')">+ Ajouter</button>
     <div style="margin-top:.9rem;display:flex;flex-direction:column;gap:.5rem;max-height:340px;overflow:auto">`;
   if(!cmts.length)b+=`<div class="muted">Aucun commentaire.</div>`;
-  else cmts.forEach(c=>{b+=`<div class="cmt"><div class="cmt-txt">${esc(c.text).replace(/\n/g,'<br>')}</div><div class="cmt-meta"><span>${esc(c.user||'')} · ${new Date(c.date).toLocaleString('fr-FR')}</span><button class="iconbtn del" style="width:24px;height:24px;font-size:.7rem" onclick="delComment('${r.id}','${c.id}')">🗑️</button></div></div>`;});
+  else cmts.forEach(c=>{b+=`<div class="cmt"><div class="cmt-txt">${esc(c.text).replace(/\n/g,'<br>')}</div><div class="cmt-meta"><span>${esc(c.user||'')} · ${new Date(c.date).toLocaleString('fr-FR')}</span>${ME&&ME.role==='superadmin'?`<button class="iconbtn del" style="width:24px;height:24px;font-size:.7rem" onclick="delComment('${r.id}','${c.id}')">🗑️</button>`:''}</div></div>`;});
   b+=`</div></div>`;
   openModal(`Commentaires — ${esc(recName(r))}`,b,`<button class="btn btn-ghost" onclick="closeModal()">Fermer</button>${can('leads_view')?`<button class="btn btn-pri" onclick="openDossier('${r.id}');closeModal()">Ouvrir le dossier</button>`:''}`);
 }
