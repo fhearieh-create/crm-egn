@@ -1299,7 +1299,6 @@ async function genererEtudeThermitubePdf(recId){
       <tr><td>Mandataire CEE</td><td>${esc(mandataire?mandataire.name:'—')}</td></tr>
       <tr><td>Sous-traitant pose (RGE)</td><td>${esc(soustraitant?soustraitant.name:'—')}</td></tr>
     </tbody></table>
-    <div class="box warn"><h2>⚠️ Point de vigilance</h2><p>La fiche AGRI-EQ-108 fait l'objet d'un usage frauduleux signalé par plusieurs acteurs de la filière (matériel non conforme présenté comme éligible). L'accord CEE doit impérativement être sécurisé <b>avant le début des travaux</b>.</p></div>
 
     <h1 class="pt" style="margin-top:20px">Stratégie retenue</h1>
     <div class="box"><p>${esc(e.strategie||'—').replace(/\n/g,'<br>')}</p></div>
