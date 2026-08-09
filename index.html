@@ -1472,7 +1472,26 @@ async function checkUpcomingRdvReminders(){
     const label=rec?recName(rec):(rd.client||'RDV');
     await createNotification(ME.id,'rdv_upcoming',`📅 RDV aujourd'hui avec ${label}${rd.heure?' à '+rd.heure:''}`,rd.recordId);
   }
-  if(myRdvs.length)await loadNotifications();
+  const myRappels=visibleRecs().filter(r=>r.rappelDate===todayStr&&r.userId===ME.id);
+  for(const rec of myRappels){
+    await createNotification(ME.id,'rappel',`⏰ Rappel aujourd'hui — ${recName(rec)}${rec.rappelHeure?' à '+rec.rappelHeure:''}${rec.rappelNote?' : '+rec.rappelNote:''}`,rec.id);
+  }
+  if(myRdvs.length||myRappels.length)await loadNotifications();
+}
+function saveRappel(id){
+  const recs=getRecs();const r=recs.find(x=>x.id===id);if(!r)return;
+  const d=val('rp_date');
+  if(!d){toast('Date requise','err');return;}
+  r.rappelDate=d;r.rappelHeure=val('rp_heure')||'';r.rappelNote=val('rp_note')||'';
+  r.history=r.history||[];r.history.unshift({date:Date.now(),user:(ME.prenom+' '+ME.nom).trim()||ME.code,text:`Rappel fixé le ${fmtDateLong(d)}${r.rappelHeure?' à '+r.rappelHeure:''}`});
+  save(K.recs,recs);
+  logActivity('action',`⏰ Rappel fixé sur ${r.dossier||id} — ${fmtDateLong(d)}${r.rappelHeure?' à '+r.rappelHeure:''}`,id);
+  openDossier(id);toast('Rappel fixé ✓','ok');
+}
+function delRappel(id){
+  const recs=getRecs();const r=recs.find(x=>x.id===id);if(!r)return;
+  r.rappelDate='';r.rappelHeure='';r.rappelNote='';
+  save(K.recs,recs);openDossier(id);toast('Rappel annulé','ok');
 }
 
 /* ---- helpers UI ---- */
@@ -1877,7 +1896,7 @@ function renderDossier(r){
     +(r.adresseTravauxDiff?row('Adresse des travaux',[r.adresseTravaux,r.cpTravaux,r.villeTravaux].filter(Boolean).join(', ')):'')
     +`</div></div>`;
   let suivi=`<div class="panel"><div class="panel-h"><h3>Suivi commercial</h3></div><div class="panel-b">`
-    +`<div class="info-row"><span class="il">Statut</span><span class="iv">${badge(r.statusId)}</span></div>`
+    +`<div class="info-row"><span class="il">Statut</span><span class="iv">${statusInline(r)}</span></div>`
     +row('Opération',op?op.name:'')+row('Source',src?src.name:'')+row('Intervenant',u?u.prenom+' '+u.nom:'')
     +row('Créé le',r.created?new Date(r.created).toLocaleString('fr-FR'):'')
     +row('Modifié le',r.updated?new Date(r.updated).toLocaleString('fr-FR'):'')
@@ -1887,6 +1906,20 @@ function renderDossier(r){
     const rows=op.fields.filter(f=>!CANON_KEYS[f.key]&&f.key!=='adresse_travaux_diff').map(f=>{const v=(r.opFields&&r.opFields[f.id])||'';return v?row(f.label,v):'';}).join('');
     if(rows)opf=`<div class="panel"><div class="panel-h"><h3>Informations — ${esc(op.name)}</h3></div><div class="panel-b">${rows}</div></div>`;
   }
+  let rappelP=`<div class="panel"><div class="panel-h"><h3>⏰ Rappel</h3></div><div class="panel-b">`;
+  if(r.rappelDate){
+    rappelP+=`<div class="info-row"><span class="il">Prévu le</span><span class="iv">${fmtDateLong(r.rappelDate)}${r.rappelHeure?' à '+r.rappelHeure:''}</span></div>`
+      +(r.rappelNote?`<div class="info-row"><span class="il">Note</span><span class="iv">${esc(r.rappelNote)}</span></div>`:'')
+      +`<button class="btn btn-ghost btn-sm" style="margin-top:.5rem" onclick="delRappel('${r.id}')">🗑️ Annuler le rappel</button>`;
+  } else {
+    rappelP+=`<div class="fgrid c3">
+      <div class="fld"><label>Date</label><input type="date" id="rp_date"></div>
+      <div class="fld"><label>Heure</label><input type="time" id="rp_heure"></div>
+      <div class="fld"><label>Note (optionnel)</label><input id="rp_note" placeholder="ex : rappeler pour signature"></div>
+    </div>
+    <button class="btn btn-pri btn-sm" style="margin-top:.5rem" onclick="saveRappel('${r.id}')">💾 Fixer le rappel</button>`;
+  }
+  rappelP+=`</div></div>`;
   let rdvP=`<div class="panel"><div class="panel-h"><h3>Rendez-vous liés</h3>${can('rdv_manage')?`<div class="sp"><button class="btn btn-pri btn-sm" onclick="openRdv(null,'${r.id}')">+ RDV</button></div>`:''}</div><div class="panel-b">`;
   if(!rdvs.length)rdvP+=`<div class="muted">Aucun rendez-vous lié à ce dossier.</div>`;
   else rdvP+=`<div class="rdv-list">`+rdvs.map(rd=>{const ss=statById(rd.statusId);return `<div class="rdv-card" style="border-left-color:${ss?ss.color:'#7CC242'}" onclick="openRdv('${rd.id}')"><div class="rt"><span class="rn">${esc(rd.type||'RDV')}</span><span class="rtime">${fmtDateLong(rd.date)} ${rd.heure||''}</span></div><div class="rm">${esc(rd.ville||'')}${rdvWho(rd)?' • '+esc(rdvWho(rd)):''}</div></div>`;}).join('')+`</div>`;
@@ -1945,7 +1978,7 @@ function renderDossier(r){
     +(can('sav_view')?`<button class="btn btn-ghost" onclick="openSav()">🔧 Nouveau ticket SAV</button>`:'')
     +`</div>`;
   const comptaP=isAdminCompta?renderComptaPanel(r):'';
-  document.getElementById('content').innerHTML=acts+zoneBadge+`<div class="grid2"><div>${coord}${opf}${docs}</div><div>${suivi}${rdvP}${hist}</div></div><div class="grid-bottom">${comm}${dealP}${comptaP}</div>`;
+  document.getElementById('content').innerHTML=acts+zoneBadge+`<div class="grid2"><div>${coord}${opf}${docs}</div><div>${suivi}${rappelP}${rdvP}${hist}</div></div><div class="grid-bottom">${comm}${dealP}${comptaP}</div>`;
   dealRecalc();
 }
 /* ---- comptabilité du dossier (Super Admin / Admin) : faux frais & rentabilité ---- */
@@ -2769,7 +2802,10 @@ function quickStatus(id,sid){
   r.statusId=sid;r.updated=Date.now();
   r.history=r.history||[];r.history.unshift({date:Date.now(),user:ME.prenom,text:`Statut : ${old?old.name:'—'} → ${nw?nw.name:'—'}`});
   logActivity('action',`🔄 Statut du dossier ${r.dossier||id} : ${old?old.name:'—'} → ${nw?nw.name:'—'}`,id);
-  save(K.recs,recs);buildNav();applyRecFilter(CUR==='clients'?'clients':'leads');toast('Statut mis à jour','ok');
+  save(K.recs,recs);buildNav();
+  if(DOSSIER_OPEN===id)openDossier(id);
+  else applyRecFilter(CUR==='clients'?'clients':'leads');
+  toast('Statut mis à jour','ok');
 }
 function delRec(id){
   modalConfirm('Supprimer ce dossier ?','Cette action est définitive (RDV liés et pièces jointes inclus).',async()=>{
