@@ -878,6 +878,15 @@ function computeDeperditions(r){
   return{zone,tbase,ti,dT,postes,total,puissanceDimensionnee,margePct:MARGE_SECURITE_DIM*100};
 }
 /* ---- Facteur R (BAT-TH-163 et fiches similaires) = puissance PAC / puissance totale chaufferie (PAC + appoint) ---- */
+/* ---- sélection automatique de la PAC la plus adaptée à la puissance requise ----
+   Choisit la plus petite PAC du catalogue qui couvre le besoin ; à défaut, la plus puissante disponible. */
+function bestPacFor(puissanceRequise){
+  const list=load('egncrm_pac',[]);
+  if(!list.length||!puissanceRequise)return null;
+  const suffisantes=list.filter(p=>(parseFloat(p.puissance)||0)>=puissanceRequise).sort((a,b)=>(parseFloat(a.puissance)||0)-(parseFloat(b.puissance)||0));
+  if(suffisantes.length)return suffisantes[0];
+  return list.slice().sort((a,b)=>(parseFloat(b.puissance)||0)-(parseFloat(a.puissance)||0))[0];
+}
 function computeFacteurR(r){
   const e=etudeOf(r);
   const pac=load('egncrm_pac',[]).find(x=>x.id===e.pacCatalogueId);
@@ -909,6 +918,11 @@ function renderEtudePanel(recId){
   const factR=computeFacteurR(r);
   const eur=n=>(n||0).toLocaleString('fr-FR',{maximumFractionDigits:2})+' €';
   const coutActuel=coutEnergieActuel(e.consommationActuelle,e.typeEnergieActuelle);
+  let pacSuggestNote='';
+  if(!e.pacCatalogueId&&deperd&&deperd.puissanceDimensionnee){
+    const suggested=bestPacFor(deperd.puissanceDimensionnee);
+    if(suggested){e.pacCatalogueId=suggested.id;pacSuggestNote=`<p class="muted" style="font-size:.72rem;color:var(--green-deep)">✓ PAC suggérée automatiquement : ${esc(suggested.name)} (${suggested.puissance} kW ≥ besoin de ${deperd.puissanceDimensionnee.toFixed(1)} kW)</p>`;}
+  }
   let body=`
   <div class="sectitle">Contexte</div>
   <div class="fgrid c3">
@@ -948,12 +962,13 @@ function renderEtudePanel(recId){
 
   <div class="sectitle" style="margin-top:1.1rem">Solution proposée</div>
   <div class="fgrid c3">
-    <div class="fld"><label>Solution PAC</label><select id="et_pac"><option value="">— Choisir dans le catalogue —</option>${load('egncrm_pac',[]).map(p=>`<option value="${p.id}" ${e.pacCatalogueId===p.id?'selected':''}>${esc(p.name)}</option>`).join('')}</select></div>
+    <div class="fld"><label>Solution PAC</label><select id="et_pac"><option value="">— Choisir dans le catalogue —</option>${load('egncrm_pac',[]).map(p=>`<option value="${p.id}" ${e.pacCatalogueId===p.id?'selected':''}>${esc(p.name)} (${p.puissance} kW)</option>`).join('')}</select></div>
     <div class="fld"><label>Puissance totale chaufferie (kW) <span class="muted" style="font-size:.6rem">(PAC + appoint, pour le Facteur R)</span></label><input type="number" step="any" id="et_ptot" value="${e.puissanceTotaleChaufferie!=null?e.puissanceTotaleChaufferie:''}"></div>
-    <div></div>
+    <div style="display:flex;align-items:flex-end"><button class="btn btn-ghost btn-sm" onclick="suggestPac('${recId}')">🎯 Suggérer automatiquement</button></div>
     <div class="fld"><label>Mandataire CEE</label><input id="et_mandataire" value="${esc(e.mandataireCee||'')}" placeholder="ex : DRAPO via INFINITY"></div>
     <div class="fld"><label>Sous-traitant pose (RGE)</label><input id="et_soustraitant" value="${esc(e.soustraitantPose||'')}" placeholder="ex : FROZONE — Aulnay (93)"></div>
   </div>
+  <div id="et_pac_note">${pacSuggestNote}</div>
   <div id="et_factr_preview" style="margin-top:.6rem">${factRPreviewHtml(factR)}</div>
 
   <div class="sectitle" style="margin-top:1.1rem">Stratégie retenue</div>
@@ -992,6 +1007,33 @@ function recalcEtudePreview(recId){
   e.puissanceTotaleChaufferie=parseFloat(String(val('et_ptot')||'').replace(',','.'))||null;
   document.getElementById('et_deperd_preview').innerHTML=deperditionsPreviewHtml(computeDeperditions(r));
   document.getElementById('et_factr_preview').innerHTML=factRPreviewHtml(computeFacteurR(r));
+}
+function suggestPac(recId){
+  const r=recById(recId);if(!r)return;
+  const e=etudeOf(r);
+  // recapture les champs de déperditions actuellement saisis dans le formulaire
+  e.tempInterieure=parseFloat(String(val('et_ti')||'').replace(',','.'));
+  e.surfaceMurs=parseFloat(String(val('et_smur')||'').replace(',','.'))||null;
+  e.typeMur=val('et_tmur')||'';
+  e.surfaceFenetres=parseFloat(String(val('et_sfen')||'').replace(',','.'))||null;
+  e.typeFenetre=val('et_tfen')||'';
+  e.surfacePlancherBas=parseFloat(String(val('et_spb')||'').replace(',','.'))||null;
+  e.typePlancherBas=val('et_tpb')||'';
+  e.surfacePlancherHaut=parseFloat(String(val('et_sph')||'').replace(',','.'))||null;
+  e.typePlancherHaut=val('et_tph')||'';
+  e.volumeChauffe=parseFloat(String(val('et_vol')||'').replace(',','.'))||null;
+  e.tauxRenouvAir=parseFloat(String(val('et_taux')||'').replace(',','.'));
+  const deperd=computeDeperditions(r);
+  if(!deperd||!deperd.puissanceDimensionnee){toast('Renseignez d\'abord les surfaces / zone climatique pour calculer le besoin','err');return;}
+  const suggested=bestPacFor(deperd.puissanceDimensionnee);
+  if(!suggested){toast('Aucune PAC dans le catalogue — ajoutez-en dans Paramètres ▸ Solutions PAC','err');return;}
+  e.pacCatalogueId=suggested.id;
+  const sel=document.getElementById('et_pac');if(sel)sel.value=suggested.id;
+  const note=document.getElementById('et_pac_note');
+  if(note)note.innerHTML=`<p class="muted" style="font-size:.72rem;color:var(--green-deep)">✓ PAC suggérée automatiquement : ${esc(suggested.name)} (${suggested.puissance} kW ≥ besoin de ${deperd.puissanceDimensionnee.toFixed(1)} kW)</p>`;
+  document.getElementById('et_deperd_preview').innerHTML=deperditionsPreviewHtml(deperd);
+  document.getElementById('et_factr_preview').innerHTML=factRPreviewHtml(computeFacteurR(r));
+  toast('PAC suggérée : '+suggested.name,'ok');
 }
 async function genererEtudePdf(recId){
   if(!ME||(ME.role!=='superadmin'&&ME.role!=='admin')){toast('Réservé Admin / Super Admin','err');return;}
