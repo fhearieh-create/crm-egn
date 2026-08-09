@@ -965,8 +965,8 @@ function renderEtudePanel(recId){
     <div class="fld"><label>Solution PAC</label><select id="et_pac"><option value="">— Choisir dans le catalogue —</option>${load('egncrm_pac',[]).map(p=>`<option value="${p.id}" ${e.pacCatalogueId===p.id?'selected':''}>${esc(p.name)} (${p.puissance} kW)</option>`).join('')}</select></div>
     <div class="fld"><label>Puissance totale chaufferie (kW) <span class="muted" style="font-size:.6rem">(PAC + appoint, pour le Facteur R)</span></label><input type="number" step="any" id="et_ptot" value="${e.puissanceTotaleChaufferie!=null?e.puissanceTotaleChaufferie:''}"></div>
     <div style="display:flex;align-items:flex-end"><button class="btn btn-ghost btn-sm" onclick="suggestPac('${recId}')">🎯 Suggérer automatiquement</button></div>
-    <div class="fld"><label>Mandataire CEE</label><input id="et_mandataire" value="${esc(e.mandataireCee||'')}" placeholder="ex : DRAPO via INFINITY"></div>
-    <div class="fld"><label>Sous-traitant pose (RGE)</label><input id="et_soustraitant" value="${esc(e.soustraitantPose||'')}" placeholder="ex : FROZONE — Aulnay (93)"></div>
+    <div class="fld"><label>Mandataire CEE</label><select id="et_mandataire"><option value="">— Choisir un délégataire —</option>${getDelegataires().map(d=>`<option value="${d.id}" ${e.mandataireCee===d.id?'selected':''}>${esc(d.name)}</option>`).join('')}</select></div>
+    <div class="fld"><label>Sous-traitant pose (RGE)</label><select id="et_soustraitant"><option value="">— Choisir une famille de poseurs —</option>${load('egncrm_poseurs',[]).map(p=>`<option value="${p.id}" ${e.soustraitantPose===p.id?'selected':''}>${esc(p.name)}</option>`).join('')}</select></div>
   </div>
   <div id="et_pac_note">${pacSuggestNote}</div>
   <div id="et_factr_preview" style="margin-top:.6rem">${factRPreviewHtml(factR)}</div>
@@ -1157,8 +1157,8 @@ async function genererEtudePdf(recId){
     <h1 class="pt" style="margin-top:20px">Qualification CEE</h1>
     <table class="et"><thead><tr><th>Critère</th><th>Valeur</th></tr></thead><tbody>
       <tr><td>Facteur R</td><td>${factR?factR.pct.toFixed(1)+'% → R='+factR.r+(factR.conforme?' (conforme)':' (non conforme)'):'—'}</td></tr>
-      <tr><td>Mandataire CEE</td><td>${esc(e.mandataireCee||'—')}</td></tr>
-      <tr><td>Sous-traitant pose (RGE)</td><td>${esc(e.soustraitantPose||'—')}</td></tr>
+      <tr><td>Mandataire CEE</td><td>${esc((getDelegataires().find(d=>d.id===e.mandataireCee)||{}).name||'—')}</td></tr>
+      <tr><td>Sous-traitant pose (RGE)</td><td>${esc((load('egncrm_poseurs',[]).find(p=>p.id===e.soustraitantPose)||{}).name||'—')}</td></tr>
     </tbody></table>
     <p style="font-size:.72rem;color:#9aa5b1;margin-top:24px">Document confidentiel — ${esc(s.company||'')} — Établi le ${new Date().toLocaleDateString('fr-FR')}. Prime CEE à confirmer auprès du délégataire — dossier à déposer avant signature du devis travaux. Estimations indicatives.</p>
     <div class="foot"><span>${esc(s.company||'EGN Rénovation')} — Étude | ${esc(recName(r))}</span><span>Page 4</span></div>
