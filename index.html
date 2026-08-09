@@ -756,8 +756,8 @@ async function persistDeal(recId){
 /* ---- Étude technique (déperditions NF EN 12831, solution, stratégie) — protégée comme Deal/Comptabilité ---- */
 let ETUDE_CACHE={};
 function rowToEtude(row){
-  if(!row)return{secteur:'',tempInterieure:20,surfaceMurs:null,typeMur:'',surfaceFenetres:null,typeFenetre:'',surfacePlancherBas:null,typePlancherBas:'',surfacePlancherHaut:null,typePlancherHaut:'',volumeChauffe:null,tauxRenouvAir:0.6,typeEnergieActuelle:'',consommationActuelle:null,pacCatalogueId:'',puissanceTotaleChaufferie:null,mandataireCee:'',soustraitantPose:'',strategie:'',photoChaufferieGrande:'',photoChaufferie:'',photoPlaque:'',photoEcs:'',photoRegulation:''};
-  return{secteur:row.secteur||'',tempInterieure:row.temp_interieure!=null?row.temp_interieure:20,surfaceMurs:row.surface_murs,typeMur:row.type_mur||'',surfaceFenetres:row.surface_fenetres,typeFenetre:row.type_fenetre||'',surfacePlancherBas:row.surface_plancher_bas,typePlancherBas:row.type_plancher_bas||'',surfacePlancherHaut:row.surface_plancher_haut,typePlancherHaut:row.type_plancher_haut||'',volumeChauffe:row.volume_chauffe,tauxRenouvAir:row.taux_renouvellement_air!=null?row.taux_renouvellement_air:0.6,typeEnergieActuelle:row.type_energie_actuelle||'',consommationActuelle:row.consommation_actuelle,pacCatalogueId:row.pac_catalogue_id||'',puissanceTotaleChaufferie:row.puissance_totale_chaufferie,mandataireCee:row.mandataire_cee||'',soustraitantPose:row.soustraitant_pose||'',strategie:row.strategie||'',photoChaufferieGrande:row.photo_chaufferie_grande||'',photoChaufferie:row.photo_chaufferie||'',photoPlaque:row.photo_plaque||'',photoEcs:row.photo_ecs||'',photoRegulation:row.photo_regulation||''};
+  if(!row)return{secteur:'',tempInterieure:20,surfaceMurs:null,typeMur:'',surfaceFenetres:null,typeFenetre:'',surfacePlancherBas:null,typePlancherBas:'',surfacePlancherHaut:null,typePlancherHaut:'',volumeChauffe:null,tauxRenouvAir:0.6,typeEnergieActuelle:'',consommationActuelle:null,pacCatalogueId:'',puissanceTotaleChaufferie:null,mandataireCee:'',soustraitantPose:'',strategie:'',photoChaufferieGrande:'',photoChaufferie:'',photoPlaque:'',photoEcs:'',photoRegulation:'',longueurSerre:null,nbRangsChapelle:null,nbChapelles:null,metrageLineaireManuel:null};
+  return{secteur:row.secteur||'',tempInterieure:row.temp_interieure!=null?row.temp_interieure:20,surfaceMurs:row.surface_murs,typeMur:row.type_mur||'',surfaceFenetres:row.surface_fenetres,typeFenetre:row.type_fenetre||'',surfacePlancherBas:row.surface_plancher_bas,typePlancherBas:row.type_plancher_bas||'',surfacePlancherHaut:row.surface_plancher_haut,typePlancherHaut:row.type_plancher_haut||'',volumeChauffe:row.volume_chauffe,tauxRenouvAir:row.taux_renouvellement_air!=null?row.taux_renouvellement_air:0.6,typeEnergieActuelle:row.type_energie_actuelle||'',consommationActuelle:row.consommation_actuelle,pacCatalogueId:row.pac_catalogue_id||'',puissanceTotaleChaufferie:row.puissance_totale_chaufferie,mandataireCee:row.mandataire_cee||'',soustraitantPose:row.soustraitant_pose||'',strategie:row.strategie||'',photoChaufferieGrande:row.photo_chaufferie_grande||'',photoChaufferie:row.photo_chaufferie||'',photoPlaque:row.photo_plaque||'',photoEcs:row.photo_ecs||'',photoRegulation:row.photo_regulation||'',longueurSerre:row.longueur_serre,nbRangsChapelle:row.nb_rangs_chapelle,nbChapelles:row.nb_chapelles,metrageLineaireManuel:row.metrage_lineaire_manuel};
 }
 function etudeOf(r){if(!ETUDE_CACHE[r.id])ETUDE_CACHE[r.id]=rowToEtude(null);return ETUDE_CACHE[r.id];}
 async function loadEtudeFor(recId){
@@ -781,6 +781,7 @@ async function persistEtude(recId){
       pac_catalogue_id:d.pacCatalogueId||null,puissance_totale_chaufferie:d.puissanceTotaleChaufferie,
       mandataire_cee:d.mandataireCee||'',soustraitant_pose:d.soustraitantPose||'',strategie:d.strategie||'',
       photo_chaufferie_grande:d.photoChaufferieGrande||null,photo_chaufferie:d.photoChaufferie||null,photo_plaque:d.photoPlaque||null,photo_ecs:d.photoEcs||null,photo_regulation:d.photoRegulation||null,
+      longueur_serre:d.longueurSerre,nb_rangs_chapelle:d.nbRangsChapelle,nb_chapelles:d.nbChapelles,metrage_lineaire_manuel:d.metrageLineaireManuel,
       updated_at:new Date().toISOString(),updated_by:ME?ME.id:null
     });
   }catch(e){console.error('[etude] sauvegarde échouée',e);toast('⚠️ Sauvegarde Supabase échouée : '+e.message,'err');}
@@ -881,6 +882,21 @@ function computeDeperditions(r){
 /* ---- Facteur R (BAT-TH-163 et fiches similaires) = puissance PAC / puissance totale chaufferie (PAC + appoint) ---- */
 /* ---- sélection automatique de la PAC la plus adaptée à la puissance requise ----
    Choisit la plus petite PAC du catalogue qui couvre le besoin ; à défaut, la plus puissante disponible. */
+/* ---- Thermitube / AGRI-EQ-108 : métrage linéaire, devis estimé, cumac indicatif ----
+   Métrage linéaire = Longueur de la serre × Nb rangs par chapelle × Nb chapelles (sauf saisie manuelle qui prévaut).
+   kWh cumac (indicatif) = 390 × Surface de la serre (m²) — coefficient fourni par l'utilisateur pour AGRI-EQ-108. */
+const THERMITUBE_COEF_CUMAC=390;
+function computeThermitube(r){
+  const e=etudeOf(r);
+  const surface=surfaceFieldValue(r);
+  const auto=(e.longueurSerre||0)*(e.nbRangsChapelle||0)*(e.nbChapelles||0);
+  const metrage=(e.metrageLineaireManuel!=null&&e.metrageLineaireManuel!=='')?parseFloat(e.metrageLineaireManuel):auto;
+  const s=getSettings();
+  const prixMl=s.tarifThermitube||0;
+  const devisEstime=metrage*prixMl;
+  const cumacEstime=surface?Math.round(THERMITUBE_COEF_CUMAC*surface):0;
+  return{surface,auto,metrage,prixMl,devisEstime,cumacEstime,manuel:e.metrageLineaireManuel!=null&&e.metrageLineaireManuel!==''};
+}
 function bestPacFor(puissanceRequise){
   const list=load('egncrm_pac',[]);
   if(!list.length||!puissanceRequise)return null;
@@ -908,9 +924,86 @@ async function openEtudePanel(recId){
   if(!ME||(ME.role!=='superadmin'&&ME.role!=='admin')){toast('Réservé Admin / Super Admin','err');return;}
   const r=recById(recId);if(!r)return;
   const op=getProducts().find(p=>p.id===r.productId);
-  if(!op||op.etudeType!=='pac'){toast('Ce module Étude (déperditions + PAC) n\'est activé que pour les opérations de type PAC — vérifiez Paramètres ▸ Opérations','err');return;}
+  if(!op||!ETUDE_TYPES[op.etudeType]||!op.etudeType){toast('Le module Étude n\'est activé que pour les opérations qui en ont un type configuré — vérifiez Paramètres ▸ Opérations','err');return;}
   await loadEtudeFor(recId);
-  renderEtudePanel(recId);
+  if(op.etudeType==='thermitube')renderEtudePanelThermitube(recId);
+  else renderEtudePanel(recId);
+}
+function renderEtudePanelThermitube(recId){
+  const r=recById(recId);if(!r)return;
+  const e=etudeOf(r);
+  const t=computeThermitube(r);
+  const dateVt=dateVisiteVt(r);
+  const eur=n=>(n||0).toLocaleString('fr-FR',{maximumFractionDigits:2})+' €';
+  let body=`
+  <div class="sectitle">Contexte</div>
+  <div class="fgrid c3">
+    <div class="fld"><label>Date de visite <span class="muted" style="font-size:.62rem">(auto, RDV « Visite technique »)</span></label><input value="${dateVt?fmtDateLong(dateVt):'⚠️ Aucun RDV VT trouvé'}" disabled></div>
+    <div class="fld"><label>Surface de la serre (m²) <span class="muted" style="font-size:.62rem">(champ « Surface (m²) » de la fiche)</span></label><input value="${t.surface||'⚠️ Non renseignée sur le dossier'}" disabled></div>
+  </div>
+
+  <div class="sectitle" style="margin-top:1.1rem">Dimensionnement de la serre</div>
+  <div class="fgrid c3">
+    <div class="fld"><label>Longueur de la serre (m)</label><input type="number" step="any" id="th_longueur" value="${e.longueurSerre!=null?e.longueurSerre:''}"></div>
+    <div class="fld"><label>Nombre de rangs par chapelle</label><input type="number" step="1" id="th_rangs" value="${e.nbRangsChapelle!=null?e.nbRangsChapelle:''}"></div>
+    <div class="fld"><label>Nombre de chapelles</label><input type="number" step="1" id="th_chapelles" value="${e.nbChapelles!=null?e.nbChapelles:''}"></div>
+  </div>
+  <button class="btn btn-ghost btn-sm" style="margin-top:.5rem" onclick="recalcThermitubePreview('${recId}')">🔄 Recalculer l'aperçu</button>
+  <div class="fld" style="margin-top:.7rem"><label>Métrage linéaire — surcharge manuelle <span class="muted" style="font-size:.62rem">(laisser vide pour garder le calcul automatique)</span></label><input type="number" step="any" id="th_manuel" value="${e.metrageLineaireManuel!=null?e.metrageLineaireManuel:''}" placeholder="ex : 480"></div>
+  <div id="th_preview" style="margin-top:.7rem">${thermitubePreviewHtml(t)}</div>
+
+  <div class="sectitle" style="margin-top:1.1rem">Mandataire & sous-traitant</div>
+  <div class="fgrid c3">
+    <div class="fld"><label>Mandataire CEE</label><select id="et_mandataire"><option value="">— Choisir un délégataire —</option>${getDelegataires().map(d=>`<option value="${d.id}" ${e.mandataireCee===d.id?'selected':''}>${esc(d.name)}</option>`).join('')}</select></div>
+    <div class="fld"><label>Sous-traitant pose (RGE)</label><select id="et_soustraitant"><option value="">— Choisir une famille de poseurs —</option>${load('egncrm_poseurs',[]).map(p=>`<option value="${p.id}" ${e.soustraitantPose===p.id?'selected':''}>${esc(p.name)}</option>`).join('')}</select></div>
+  </div>
+
+  <div class="sectitle" style="margin-top:1.1rem">Photos</div>
+  <div class="fgrid c3">
+    ${etudePhotoFieldHtml(recId,'chaufferieGrande',e.photoChaufferieGrande)}
+    ${etudePhotoFieldHtml(recId,'chaufferie',e.photoChaufferie)}
+  </div>
+
+  <div class="sectitle" style="margin-top:1.1rem">Stratégie retenue</div>
+  <textarea id="et_strategie" style="width:100%;min-height:90px;border:1.5px solid var(--border-grey);border-radius:9px;padding:.6rem .8rem;font-size:.86rem;font-family:'Saira',sans-serif" placeholder="Rédigez librement la stratégie proposée…">${esc(e.strategie||'')}</textarea>
+  `;
+  openModal('Étude Thermitube — '+esc(recName(r)),body,`<button class="btn btn-ghost" onclick="closeModal()">Fermer</button><button class="btn btn-navy" onclick="saveEtudeThermitubeForm('${recId}')">💾 Enregistrer</button><button class="btn btn-pri" onclick="saveEtudeThermitubeForm('${recId}',true)">📄 Enregistrer & Générer le PDF</button>`,'wide');
+  loadEtudePhotoThumbs(recId);
+}
+function thermitubePreviewHtml(t){
+  const eur=n=>(n||0).toLocaleString('fr-FR',{maximumFractionDigits:2})+' €';
+  if(!t.surface)return `<p class="muted" style="font-size:.78rem;color:#E63946">⚠️ Renseignez le champ « Surface (m²) » sur la fiche du dossier pour estimer le cumac.</p>`;
+  return `<div class="tbl-wrap"><table class="tbl"><tbody>
+    <tr><td>Métrage linéaire ${t.manuel?'(saisie manuelle)':'(calculé automatiquement)'}</td><td style="text-align:right;font-weight:700">${t.metrage.toLocaleString('fr-FR')} ml</td></tr>
+    <tr><td>Devis estimé (${t.prixMl} €/ml)</td><td style="text-align:right;font-weight:700">${eur(t.devisEstime)}</td></tr>
+    <tr><td>kWh cumac estimé (390 × ${t.surface} m²)</td><td style="text-align:right;font-weight:700;color:var(--green-deep)">${t.cumacEstime.toLocaleString('fr-FR')} kWhc</td></tr>
+  </tbody></table></div><p class="muted" style="font-size:.7rem;margin-top:.3rem">Le cumac ci-dessus alimente la prime CEE via le panneau Deal (bouton « ⚡ Calculer le cumac », si l'opération est configurée avec ce coefficient) ou saisissez-le manuellement dans le Deal.</p>`;
+}
+function recalcThermitubePreview(recId){
+  const r=recById(recId);if(!r)return;
+  const e=etudeOf(r);
+  e.longueurSerre=parseFloat(String(val('th_longueur')||'').replace(',','.'))||null;
+  e.nbRangsChapelle=parseFloat(String(val('th_rangs')||'').replace(',','.'))||null;
+  e.nbChapelles=parseFloat(String(val('th_chapelles')||'').replace(',','.'))||null;
+  const manuelVal=val('th_manuel');
+  e.metrageLineaireManuel=(manuelVal!=null&&manuelVal!=='')?parseFloat(String(manuelVal).replace(',','.')):null;
+  document.getElementById('th_preview').innerHTML=thermitubePreviewHtml(computeThermitube(r));
+}
+async function saveEtudeThermitubeForm(recId,thenGenerate){
+  const r=recById(recId);if(!r)return;
+  const e=etudeOf(r);
+  e.longueurSerre=parseFloat(String(val('th_longueur')||'').replace(',','.'))||null;
+  e.nbRangsChapelle=parseFloat(String(val('th_rangs')||'').replace(',','.'))||null;
+  e.nbChapelles=parseFloat(String(val('th_chapelles')||'').replace(',','.'))||null;
+  const manuelVal=val('th_manuel');
+  e.metrageLineaireManuel=(manuelVal!=null&&manuelVal!=='')?parseFloat(String(manuelVal).replace(',','.')):null;
+  e.mandataireCee=val('et_mandataire')||'';
+  e.soustraitantPose=val('et_soustraitant')||'';
+  e.strategie=val('et_strategie')||'';
+  await persistEtude(recId);
+  logActivity('action',`🌱 Étude Thermitube enregistrée sur ${r.dossier||recId}`,recId);
+  toast('Étude enregistrée ✓','ok');
+  if(thenGenerate){closeModal();genererEtudeThermitubePdf(recId);}
 }
 function renderEtudePanel(recId){
   const r=recById(recId);if(!r)return;
@@ -1116,6 +1209,114 @@ async function fetchEtudePhotoDataUrl(path){
     if(error)throw error;
     return await new Promise((res,rej)=>{const fr=new FileReader();fr.onload=()=>res(fr.result);fr.onerror=rej;fr.readAsDataURL(data);});
   }catch(e){console.error('[fetchEtudePhotoDataUrl]',path,e);return '';}
+}
+async function genererEtudeThermitubePdf(recId){
+  if(!ME||(ME.role!=='superadmin'&&ME.role!=='admin')){toast('Réservé Admin / Super Admin','err');return;}
+  const r=recById(recId);if(!r)return;
+  const opCheck=getProducts().find(p=>p.id===r.productId);
+  if(!opCheck||opCheck.etudeType!=='thermitube'){toast('Ce module Étude n\'est activé que pour les opérations de type Thermitube','err');return;}
+  await Promise.all([loadEtudeFor(recId),loadDealFor(recId)]);
+  const e=etudeOf(r),deal=dealOf(r);
+  const t=computeThermitube(r);
+  const op=getProducts().find(o=>o.id===r.productId);
+  const deleg=deal.delegataireId?getDelegataires().find(d=>d.id===deal.delegataireId):null;
+  const mandataire=getDelegataires().find(d=>d.id===e.mandataireCee);
+  const soustraitant=load('egncrm_poseurs',[]).find(p=>p.id===e.soustraitantPose);
+  const s=getSettings();
+  const eur=n=>(n||0).toLocaleString('fr-FR',{minimumFractionDigits:2,maximumFractionDigits:2})+' €';
+  const dateVt=dateVisiteVt(r);
+  const primeCEE=deal.prime||0;
+  const resteAPayer=Math.max(0,t.devisEstime-primeCEE);
+  const siege=`${r.adresse||''}${r.cp||r.ville?', ':''}${r.cp||''} ${r.ville||''}`.trim();
+  const [photoGrande,photoServe]=await Promise.all([fetchEtudePhotoDataUrl(e.photoChaufferieGrande),fetchEtudePhotoDataUrl(e.photoChaufferie)]);
+  const photoGrandeHtml=photoGrande?`<img src="${photoGrande}" style="width:100%;height:210px;object-fit:cover;border-radius:8px;margin-bottom:18px">`:'';
+  const doc=`<!DOCTYPE html><html lang="fr"><head><meta charset="UTF-8"><title>Audit Thermitube — ${esc(recName(r))}</title>
+  <style>
+    body{font-family:'Segoe UI',Arial,sans-serif;color:#1A2B3D;margin:0;background:#e8ebe3}
+    .page{width:210mm;min-height:297mm;background:#fff;margin:0 auto 16px;padding:14mm 14mm 18mm;position:relative;page-break-after:always}
+    .page:last-child{page-break-after:auto}
+    @media print{body{background:#fff}.page{margin:0;box-shadow:none}.noprint{display:none}}
+    .cover-logo{text-align:center;margin-bottom:22px}.cover-logo img{height:46px}
+    .bar{color:#fff;font-weight:800;font-size:1.2rem;text-align:center;padding:14px 18px;border-radius:8px 8px 0 0;background:linear-gradient(135deg,#7CC242,#4E8F22)}
+    .bar-sub{color:#fff;font-size:.82rem;text-align:center;padding:9px 18px;background:#5BA82E;border-radius:0 0 8px 8px;margin-bottom:18px}
+    .badge-box{border:1.5px solid #7CC242;color:#2D5F14;font-weight:700;font-size:.85rem;text-align:center;padding:9px;border-radius:8px;margin-bottom:18px}
+    .client-bar{background:linear-gradient(135deg,#4E8F22,#2D5F14);color:#fff;border-radius:8px;padding:12px 18px;margin-bottom:2px}
+    .client-bar .cn{font-size:1.1rem;font-weight:800}
+    .addr-bar{background:#7CC242;color:#fff;text-align:center;font-weight:700;font-size:.86rem;padding:8px;border-radius:0 0 8px 8px;margin-bottom:18px}
+    .kpi-row{display:flex;gap:10px;margin-bottom:14px}.kpi-box{flex:1;text-align:center;padding:12px 8px;border-radius:8px}
+    .kpi-box .l{font-size:.6rem;text-transform:uppercase;letter-spacing:.03em;color:#6b7785;font-weight:700}.kpi-box .v{font-size:1.15rem;font-weight:800;margin:4px 0 2px}.kpi-box .s{font-size:.6rem;color:#8a95a0}
+    .kpi-box.orange{background:#FDF1E9}.kpi-box.orange .v{color:#D9822B}.kpi-box.green{background:#EFF7E8}.kpi-box.green .v{color:#4E8F22}.kpi-box.navy{background:#EAF1F5}.kpi-box.navy .v{color:#1A2B3D}
+    .ph{display:flex;justify-content:space-between;font-size:.7rem;color:#5A6E82;border-bottom:2px solid #7CC242;padding-bottom:8px;margin-bottom:16px}
+    h1.pt{font-size:1.05rem;color:#2D5F14;margin:0 0 14px}
+    .box{background:#F4F8EE;border-radius:8px;padding:14px 16px;margin-bottom:16px}.box h2{font-size:.86rem;margin:0 0 8px}.box p{font-size:.82rem;line-height:1.55;margin:0;color:#33414c}
+    .box.warn{background:#FDF2EE;border-left:4px solid #E63946}
+    .infogrid{display:flex;flex-wrap:wrap;font-size:.82rem;margin-bottom:16px}.infogrid>div{width:47%;margin:2px 1.5% 8px}.infogrid .l{color:#6b7785}.infogrid .v{font-weight:700}
+    table.et{width:100%;border-collapse:collapse;margin-bottom:16px;font-size:.78rem}
+    table.et th{background:#2D5F14;color:#fff;padding:7px 9px;text-align:left;font-weight:600;font-size:.72rem;text-transform:uppercase}
+    table.et td{padding:6px 9px;border-bottom:1px solid #e5e8ec}table.et tr:nth-child(even) td{background:#F7FAF3}
+    .conf{color:#4E8F22;font-weight:700}.warn{color:#D9822B;font-weight:700}
+    .foot{position:absolute;bottom:8mm;left:14mm;right:14mm;font-size:.68rem;color:#8a95a0;border-top:1px solid #e5e8ec;padding-top:6px;display:flex;justify-content:space-between}
+    .finalbox{background:#2D5F14;color:#fff;border-radius:8px;padding:12px 16px;display:flex;justify-content:space-between;align-items:center;font-weight:800;margin-bottom:16px}
+    .finalbox .r{text-align:right;font-size:1.05rem}.finalbox .r .s{font-size:.68rem;font-weight:400;display:block;opacity:.85}
+    .print-btn{margin:16px auto;display:block;padding:10px 18px;background:#7CC242;color:#fff;border:none;border-radius:8px;font-weight:700;cursor:pointer}
+  </style></head><body>
+
+  <div class="page">
+    <div class="cover-logo">${s.logo?`<img src="${s.logo}">`:`<div style="font-weight:800;font-size:1.3rem;color:#1A2B3D">${esc(s.company||'EGN RÉNOVATION')}</div>`}</div>
+    <div class="bar">AUDIT TECHNIQUE — SERRE BIOCLIMATIQUE</div>
+    <div class="bar-sub">Installation de gaines Thermitube — stockage passif d'eau</div>
+    <div class="badge-box">AGRI-EQ-108 — Dispositif de stockage d'eau pour serre bioclimatique</div>
+    <div class="client-bar"><div class="cn">${esc(clientNameOf(r))}</div></div>
+    <div class="addr-bar">${esc(siege||'—')}</div>
+    ${photoGrandeHtml}
+    <div class="kpi-row">
+      <div class="kpi-box navy"><div class="l">Surface de serre</div><div class="v">${t.surface||'—'} m²</div><div class="s">${op?esc(op.name):''}</div></div>
+      <div class="kpi-box orange"><div class="l">Investissement estimé</div><div class="v">${eur(t.devisEstime)}</div><div class="s">${t.metrage.toLocaleString('fr-FR')} ml × ${t.prixMl} €/ml</div></div>
+      <div class="kpi-box green"><div class="l">Prime CEE</div><div class="v">${eur(primeCEE)}</div><div class="s">${t.devisEstime?Math.round(primeCEE/t.devisEstime*100)+'% du devis':''}</div></div>
+    </div>
+    <p style="text-align:center;font-size:.78rem;color:#5A6E82;font-style:italic">${dateVt?'Visite technique réalisée le '+fmtDateLong(dateVt):''}</p>
+    <div class="foot"><span>Document confidentiel — ${esc(s.company||'EGN Rénovation')} © ${new Date().getFullYear()}</span><span>${esc(s.email||'')}</span></div>
+  </div>
+
+  <div class="page">
+    <div class="ph"><span>${esc(r.dossier||'')} — Audit AGRI-EQ-108</span><span>${esc(s.company||'')}</span></div>
+    <h1 class="pt">Dimensionnement de la serre</h1>
+    ${photoServe?`<img src="${photoServe}" style="width:100%;height:180px;object-fit:cover;border-radius:8px;margin-bottom:16px">`:''}
+    <table class="et"><thead><tr><th>Paramètre</th><th style="text-align:right">Valeur</th></tr></thead><tbody>
+      <tr><td>Longueur de la serre</td><td style="text-align:right">${e.longueurSerre||'—'} m</td></tr>
+      <tr><td>Nombre de rangs par chapelle</td><td style="text-align:right">${e.nbRangsChapelle||'—'}</td></tr>
+      <tr><td>Nombre de chapelles</td><td style="text-align:right">${e.nbChapelles||'—'}</td></tr>
+      <tr style="font-weight:700"><td>Métrage linéaire total ${t.manuel?'(ajusté manuellement)':'(calculé)'}</td><td style="text-align:right">${t.metrage.toLocaleString('fr-FR')} ml</td></tr>
+      <tr><td>Surface de la serre</td><td style="text-align:right">${t.surface||'—'} m²</td></tr>
+    </tbody></table>
+
+    <h1 class="pt" style="margin-top:20px">Qualification CEE — AGRI-EQ-108</h1>
+    <table class="et"><thead><tr><th>Critère</th><th>Valeur</th></tr></thead><tbody>
+      <tr><td>kWh cumac estimé (390 × surface)</td><td>${t.cumacEstime.toLocaleString('fr-FR')} kWhc</td></tr>
+      <tr><td>Mandataire CEE</td><td>${esc(mandataire?mandataire.name:'—')}</td></tr>
+      <tr><td>Sous-traitant pose (RGE)</td><td>${esc(soustraitant?soustraitant.name:'—')}</td></tr>
+    </tbody></table>
+    <div class="box warn"><h2>⚠️ Point de vigilance</h2><p>La fiche AGRI-EQ-108 fait l'objet d'un usage frauduleux signalé par plusieurs acteurs de la filière (matériel non conforme présenté comme éligible). L'accord CEE doit impérativement être sécurisé <b>avant le début des travaux</b>.</p></div>
+
+    <h1 class="pt" style="margin-top:20px">Stratégie retenue</h1>
+    <div class="box"><p>${esc(e.strategie||'—').replace(/\n/g,'<br>')}</p></div>
+
+    <h1 class="pt" style="margin-top:20px">Récapitulatif financier (estimatif)</h1>
+    <table class="et"><thead><tr><th>Désignation</th><th style="text-align:right">Montant</th></tr></thead><tbody>
+      <tr><td>Fourniture & pose Thermitube (${t.metrage.toLocaleString('fr-FR')} ml × ${t.prixMl} €/ml)</td><td style="text-align:right">${eur(t.devisEstime)}</td></tr>
+      <tr><td>Prime CEE${deleg?' — '+esc(deleg.name):''}</td><td style="text-align:right">− ${eur(primeCEE)}</td></tr>
+    </tbody></table>
+    <div class="finalbox"><div>RESTE À PAYER (estimatif)</div><div class="r">${eur(resteAPayer)}</div></div>
+    <p style="font-size:.72rem;color:#9aa5b1;margin-top:20px">Document confidentiel — ${esc(s.company||'')} — Établi le ${new Date().toLocaleDateString('fr-FR')}. Estimation indicative. Prime CEE à confirmer auprès du mandataire — accord à sécuriser avant tout début de travaux.</p>
+    <div class="foot"><span>${esc(s.company||'EGN Rénovation')} — Audit Thermitube | ${esc(recName(r))}</span><span>Page 2</span></div>
+  </div>
+
+  <button class="print-btn noprint" onclick="window.print()">🖨️ Imprimer / Enregistrer en PDF</button>
+  </body></html>`;
+  const w=window.open('','_blank');
+  if(!w){toast('Autorisez les fenêtres pop-up pour générer l\'audit','err');return;}
+  w.document.write(doc);w.document.close();
+  logActivity('action',`🌱 Audit Thermitube PDF généré pour ${r.dossier||recId}`,recId);
 }
 async function genererEtudePdf(recId){
   if(!ME||(ME.role!=='superadmin'&&ME.role!=='admin')){toast('Réservé Admin / Super Admin','err');return;}
@@ -1945,7 +2146,7 @@ function renderDossier(r){
   if(!docList.length)docs+=`<div class="muted">Aucune pièce jointe.</div>`;
   else docList.forEach(d=>{docs+=`<div class="cfg-item"><span style="font-size:1.1rem">${/image\//.test(d.mime||'')?'🖼️':'📄'}</span><div style="flex:1;min-width:0"><div class="nm" style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${esc(d.typeName||'Document')} — ${esc(d.filename||'')}</div><div class="muted" style="font-size:.68rem">${esc(d.user||'')} • ${new Date(d.date).toLocaleString('fr-FR')} • ${fmtSize(d.size)}</div></div><span class="sp"><button class="iconbtn" title="Voir / télécharger" onclick="viewDoc('${d.id}','${r.id}')">👁️</button><button class="iconbtn del" onclick="delDoc('${r.id}','${d.id}')">🗑️</button></span></div>`;});
   docs+=`</div>
-    <div class="flex" style="flex-wrap:wrap;gap:.5rem;margin-top:1rem;border-top:1px dashed var(--border-soft);padding-top:.9rem">${(ME&&(ME.role==='superadmin'||ME.role==='admin')&&op&&op.etudeType==='pac')?`<button class="btn btn-navy btn-sm" onclick="openEtudePanel('${r.id}')">📐 Étude technique & PDF</button>`:''}<button class="btn btn-ghost btn-sm" onclick="toast('Module à configurer prochainement')">🖊️ Envoyer en signature</button></div>
+    <div class="flex" style="flex-wrap:wrap;gap:.5rem;margin-top:1rem;border-top:1px dashed var(--border-soft);padding-top:.9rem">${(ME&&(ME.role==='superadmin'||ME.role==='admin')&&op&&op.etudeType)?`<button class="btn btn-navy btn-sm" onclick="openEtudePanel('${r.id}')">📐 Étude technique & PDF</button>`:''}<button class="btn btn-ghost btn-sm" onclick="toast('Module à configurer prochainement')">🖊️ Envoyer en signature</button></div>
   </div></div>`;
   // commentaires
   const cmts=(r.comments||[]).slice().sort((a,b)=>(b.date||0)-(a.date||0));
@@ -4010,8 +4211,18 @@ function setSociete(){
       ${energies.map(([k,l,u])=>`<div class="fld"><label>${esc(l)} <span class="muted" style="font-size:.66rem">(${u})</span></label><input type="number" step="any" id="tarif_${k}" value="${tarifs[k]||''}" placeholder="0"></div>`).join('')}
     </div>
     <button class="btn btn-pri btn-sm" style="margin-top:.8rem" onclick="saveTarifsEnergie()">💾 Enregistrer les tarifs</button>
+  </div></div>
+  <div class="panel" style="margin-top:1.2rem"><div class="panel-h"><h3>Tarif Thermitube</h3></div><div class="panel-b">
+    <p class="muted" style="margin-bottom:.8rem;font-size:.82rem">Prix au mètre linéaire de gaine Thermitube — utilisé pour estimer automatiquement le devis dans les études AGRI-EQ-108.</p>
+    <div class="fgrid c3"><div class="fld"><label>Prix Thermitube <span class="muted" style="font-size:.66rem">(€/ml)</span></label><input type="number" step="any" id="tarif_thermitube" value="${s.tarifThermitube||''}" placeholder="ex : 20"></div></div>
+    <button class="btn btn-pri btn-sm" style="margin-top:.8rem" onclick="saveTarifThermitube()">💾 Enregistrer</button>
   </div></div>`;
   document.getElementById('setBody').innerHTML=h;
+}
+function saveTarifThermitube(){
+  const s=getSettings();
+  s.tarifThermitube=parseFloat(String(val('tarif_thermitube')||'').replace(',','.'))||0;
+  save(K.set,s);toast('Tarif Thermitube enregistré ✓','ok');
 }
 function saveTarifsEnergie(){
   const s=getSettings();
@@ -4154,7 +4365,7 @@ function openOperation(id){
   if(!OPDRAFT.fields)OPDRAFT.fields=[];
   renderOpEditor();
 }
-const ETUDE_TYPES={'':'Aucune — pas de module Étude pour cette opération','pac':'PAC — Déperditions & solution PAC (type BAT-TH-163 / BAT-TH-179)'};
+const ETUDE_TYPES={'':'Aucune — pas de module Étude pour cette opération','pac':'PAC — Déperditions & solution PAC (type BAT-TH-163 / BAT-TH-179)','thermitube':'Thermitube — Serre bioclimatique (AGRI-EQ-108)'};
 function renderOpEditor(){
   const o=OPDRAFT;
   let fl;
