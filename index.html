@@ -756,8 +756,8 @@ async function persistDeal(recId){
 /* ---- Étude technique (déperditions NF EN 12831, solution, stratégie) — protégée comme Deal/Comptabilité ---- */
 let ETUDE_CACHE={};
 function rowToEtude(row){
-  if(!row)return{secteur:'',tempInterieure:20,surfaceMurs:null,typeMur:'',surfaceFenetres:null,typeFenetre:'',surfacePlancherBas:null,typePlancherBas:'',surfacePlancherHaut:null,typePlancherHaut:'',volumeChauffe:null,tauxRenouvAir:0.6,typeEnergieActuelle:'',consommationActuelle:null,pacCatalogueId:'',puissanceTotaleChaufferie:null,mandataireCee:'',soustraitantPose:'',strategie:''};
-  return{secteur:row.secteur||'',tempInterieure:row.temp_interieure!=null?row.temp_interieure:20,surfaceMurs:row.surface_murs,typeMur:row.type_mur||'',surfaceFenetres:row.surface_fenetres,typeFenetre:row.type_fenetre||'',surfacePlancherBas:row.surface_plancher_bas,typePlancherBas:row.type_plancher_bas||'',surfacePlancherHaut:row.surface_plancher_haut,typePlancherHaut:row.type_plancher_haut||'',volumeChauffe:row.volume_chauffe,tauxRenouvAir:row.taux_renouvellement_air!=null?row.taux_renouvellement_air:0.6,typeEnergieActuelle:row.type_energie_actuelle||'',consommationActuelle:row.consommation_actuelle,pacCatalogueId:row.pac_catalogue_id||'',puissanceTotaleChaufferie:row.puissance_totale_chaufferie,mandataireCee:row.mandataire_cee||'',soustraitantPose:row.soustraitant_pose||'',strategie:row.strategie||''};
+  if(!row)return{secteur:'',tempInterieure:20,surfaceMurs:null,typeMur:'',surfaceFenetres:null,typeFenetre:'',surfacePlancherBas:null,typePlancherBas:'',surfacePlancherHaut:null,typePlancherHaut:'',volumeChauffe:null,tauxRenouvAir:0.6,typeEnergieActuelle:'',consommationActuelle:null,pacCatalogueId:'',puissanceTotaleChaufferie:null,mandataireCee:'',soustraitantPose:'',strategie:'',photoChaufferieGrande:'',photoChaufferie:'',photoPlaque:'',photoEcs:'',photoRegulation:''};
+  return{secteur:row.secteur||'',tempInterieure:row.temp_interieure!=null?row.temp_interieure:20,surfaceMurs:row.surface_murs,typeMur:row.type_mur||'',surfaceFenetres:row.surface_fenetres,typeFenetre:row.type_fenetre||'',surfacePlancherBas:row.surface_plancher_bas,typePlancherBas:row.type_plancher_bas||'',surfacePlancherHaut:row.surface_plancher_haut,typePlancherHaut:row.type_plancher_haut||'',volumeChauffe:row.volume_chauffe,tauxRenouvAir:row.taux_renouvellement_air!=null?row.taux_renouvellement_air:0.6,typeEnergieActuelle:row.type_energie_actuelle||'',consommationActuelle:row.consommation_actuelle,pacCatalogueId:row.pac_catalogue_id||'',puissanceTotaleChaufferie:row.puissance_totale_chaufferie,mandataireCee:row.mandataire_cee||'',soustraitantPose:row.soustraitant_pose||'',strategie:row.strategie||'',photoChaufferieGrande:row.photo_chaufferie_grande||'',photoChaufferie:row.photo_chaufferie||'',photoPlaque:row.photo_plaque||'',photoEcs:row.photo_ecs||'',photoRegulation:row.photo_regulation||''};
 }
 function etudeOf(r){if(!ETUDE_CACHE[r.id])ETUDE_CACHE[r.id]=rowToEtude(null);return ETUDE_CACHE[r.id];}
 async function loadEtudeFor(recId){
@@ -780,6 +780,7 @@ async function persistEtude(recId){
       type_energie_actuelle:d.typeEnergieActuelle||null,consommation_actuelle:d.consommationActuelle,
       pac_catalogue_id:d.pacCatalogueId||null,puissance_totale_chaufferie:d.puissanceTotaleChaufferie,
       mandataire_cee:d.mandataireCee||'',soustraitant_pose:d.soustraitantPose||'',strategie:d.strategie||'',
+      photo_chaufferie_grande:d.photoChaufferieGrande||null,photo_chaufferie:d.photoChaufferie||null,photo_plaque:d.photoPlaque||null,photo_ecs:d.photoEcs||null,photo_regulation:d.photoRegulation||null,
       updated_at:new Date().toISOString(),updated_by:ME?ME.id:null
     });
   }catch(e){console.error('[etude] sauvegarde échouée',e);toast('⚠️ Sauvegarde Supabase échouée : '+e.message,'err');}
@@ -971,10 +972,20 @@ function renderEtudePanel(recId){
   <div id="et_pac_note">${pacSuggestNote}</div>
   <div id="et_factr_preview" style="margin-top:.6rem">${factRPreviewHtml(factR)}</div>
 
+  <div class="sectitle" style="margin-top:1.1rem">Photos de la chaufferie</div>
+  <div class="fgrid c3">
+    ${etudePhotoFieldHtml(recId,'chaufferieGrande',e.photoChaufferieGrande)}
+    ${etudePhotoFieldHtml(recId,'chaufferie',e.photoChaufferie)}
+    ${etudePhotoFieldHtml(recId,'plaque',e.photoPlaque)}
+    ${etudePhotoFieldHtml(recId,'ecs',e.photoEcs)}
+    ${etudePhotoFieldHtml(recId,'regulation',e.photoRegulation)}
+  </div>
+
   <div class="sectitle" style="margin-top:1.1rem">Stratégie retenue</div>
   <textarea id="et_strategie" style="width:100%;min-height:90px;border:1.5px solid var(--border-grey);border-radius:9px;padding:.6rem .8rem;font-size:.86rem;font-family:'Saira',sans-serif" placeholder="Rédigez librement la stratégie de rénovation proposée…">${esc(e.strategie||'')}</textarea>
   `;
   openModal('Étude technique — '+esc(recName(r)),body,`<button class="btn btn-ghost" onclick="closeModal()">Fermer</button><button class="btn btn-navy" onclick="saveEtudeForm('${recId}')">💾 Enregistrer</button><button class="btn btn-pri" onclick="saveEtudeForm('${recId}',true)">📄 Enregistrer & Générer le PDF</button>`,'wide');
+  loadEtudePhotoThumbs(recId);
 }
 function deperditionsPreviewHtml(deperd){
   if(!deperd)return `<p class="muted" style="font-size:.78rem">Renseignez la zone climatique (CP du dossier) et au moins la température intérieure pour voir l'aperçu du calcul.</p>`;
@@ -1008,6 +1019,67 @@ function recalcEtudePreview(recId){
   document.getElementById('et_deperd_preview').innerHTML=deperditionsPreviewHtml(computeDeperditions(r));
   document.getElementById('et_factr_preview').innerHTML=factRPreviewHtml(computeFacteurR(r));
 }
+/* ---- photos de chaufferie de l'étude (stockées dans le même bucket protégé que les documents) ---- */
+const ETUDE_PHOTO_FIELDS={
+  chaufferieGrande:{col:'photoChaufferieGrande',label:'Photo de la chaufferie (grand format, couverture)'},
+  chaufferie:{col:'photoChaufferie',label:'Photo de la chaufferie'},
+  plaque:{col:'photoPlaque',label:'Photo de la plaque signalétique'},
+  ecs:{col:'photoEcs',label:'Photo du préparateur ECS'},
+  regulation:{col:'photoRegulation',label:'Photo de la régulation et du raccordement'}
+};
+async function uploadEtudePhoto(recId,key,file){
+  if(!file)return;
+  const cfg=ETUDE_PHOTO_FIELDS[key];if(!cfg)return;
+  const r=recById(recId);if(!r)return;
+  const e=etudeOf(r);
+  const path=`${recId}/etude-${key}-${uid()}-${file.name}`.replace(/[^a-zA-Z0-9/_.\-]/g,'_');
+  try{
+    const{error}=await SUPA.storage.from(ATTACH_BUCKET).upload(path,file,{contentType:file.type||undefined});
+    if(error)throw error;
+    const oldPath=e[cfg.col];
+    e[cfg.col]=path;
+    await persistEtude(recId);
+    if(oldPath)try{await SUPA.storage.from(ATTACH_BUCKET).remove([oldPath]);}catch(err){}
+    toast('Photo ajoutée ✓','ok');
+    renderEtudePanel(recId);
+  }catch(err){console.error('[uploadEtudePhoto]',err);toast('Échec de l\'envoi de la photo : '+(err.message||err),'err');}
+}
+async function removeEtudePhoto(recId,key){
+  const cfg=ETUDE_PHOTO_FIELDS[key];if(!cfg)return;
+  const r=recById(recId);if(!r)return;
+  const e=etudeOf(r);
+  const path=e[cfg.col];
+  if(path)try{await SUPA.storage.from(ATTACH_BUCKET).remove([path]);}catch(err){}
+  e[cfg.col]='';
+  await persistEtude(recId);
+  renderEtudePanel(recId);
+}
+async function etudePhotoThumbUrl(path){
+  if(!path)return '';
+  try{const{data,error}=await SUPA.storage.from(ATTACH_BUCKET).createSignedUrl(path,300);if(error)throw error;return data.signedUrl;}
+  catch(e){console.error('[etudePhotoThumbUrl]',e);return '';}
+}
+function etudePhotoFieldHtml(recId,key,path){
+  const cfg=ETUDE_PHOTO_FIELDS[key];
+  const inputId='etph_'+key;
+  return `<div class="fld">
+    <label>${cfg.label}</label>
+    ${path?`<div style="margin-bottom:.4rem" id="${inputId}_thumb"><span class="muted" style="font-size:.72rem">⏳ Chargement de l'aperçu…</span></div>`:''}
+    <input type="file" accept="image/*" id="${inputId}" onchange="uploadEtudePhoto('${recId}','${key}',this.files[0])">
+    ${path?`<button class="btn btn-ghost btn-sm" style="margin-top:.3rem" onclick="removeEtudePhoto('${recId}','${key}')">🗑️ Retirer la photo</button>`:''}
+  </div>`;
+}
+async function loadEtudePhotoThumbs(recId){
+  const r=recById(recId);if(!r)return;
+  const e=etudeOf(r);
+  for(const key in ETUDE_PHOTO_FIELDS){
+    const cfg=ETUDE_PHOTO_FIELDS[key];const path=e[cfg.col];
+    const el=document.getElementById('etph_'+key+'_thumb');
+    if(!path||!el)continue;
+    const url=await etudePhotoThumbUrl(path);
+    if(el)el.innerHTML=url?`<img src="${url}" style="max-height:90px;border-radius:6px;border:1px solid var(--border-grey)">`:`<span class="muted" style="font-size:.72rem">Aperçu indisponible</span>`;
+  }
+}
 function suggestPac(recId){
   const r=recById(recId);if(!r)return;
   const e=etudeOf(r);
@@ -1035,6 +1107,14 @@ function suggestPac(recId){
   document.getElementById('et_factr_preview').innerHTML=factRPreviewHtml(computeFacteurR(r));
   toast('PAC suggérée : '+suggested.name,'ok');
 }
+async function fetchEtudePhotoDataUrl(path){
+  if(!path)return '';
+  try{
+    const{data,error}=await SUPA.storage.from(ATTACH_BUCKET).download(path);
+    if(error)throw error;
+    return await new Promise((res,rej)=>{const fr=new FileReader();fr.onload=()=>res(fr.result);fr.onerror=rej;fr.readAsDataURL(data);});
+  }catch(e){console.error('[fetchEtudePhotoDataUrl]',path,e);return '';}
+}
 async function genererEtudePdf(recId){
   if(!ME||(ME.role!=='superadmin'&&ME.role!=='admin')){toast('Réservé Admin / Super Admin','err');return;}
   const r=recById(recId);if(!r)return;
@@ -1057,6 +1137,13 @@ async function genererEtudePdf(recId){
   const siege=`${r.adresse||''}${r.cp||r.ville?', ':''}${r.cp||''} ${r.ville||''}`.trim();
   const energieLabel=(ENERGIES_ETUDE.find(x=>x[0]===e.typeEnergieActuelle)||[,'—'])[1];
   const rowsDeperd=deperd?deperd.postes.map(p=>`<tr><td>${esc(p.label)}</td><td style="text-align:right">${eur0(p.kw)} kW</td><td style="text-align:right">${eur0(p.part)} %</td></tr>`).join(''):`<tr><td colspan="3" style="color:#9aa5b1">Déperditions non calculées (zone climatique ou données manquantes)</td></tr>`;
+  const [photoGrande,photoChauf,photoPlaque,photoEcs,photoRegul]=await Promise.all([
+    fetchEtudePhotoDataUrl(e.photoChaufferieGrande),fetchEtudePhotoDataUrl(e.photoChaufferie),
+    fetchEtudePhotoDataUrl(e.photoPlaque),fetchEtudePhotoDataUrl(e.photoEcs),fetchEtudePhotoDataUrl(e.photoRegulation)
+  ]);
+  const photoGrandeHtml=photoGrande?`<img src="${photoGrande}" style="width:100%;height:230px;object-fit:cover;border-radius:8px;margin-bottom:18px">`:'';
+  const photoBox=(url,label)=>`<div style="background:#2b3a44;border-radius:6px;height:90px;overflow:hidden;position:relative">${url?`<img src="${url}" style="width:100%;height:100%;object-fit:cover">`:`<div style="width:100%;height:100%;display:flex;align-items:center;justify-content:center;color:#8fa0ad;font-size:.6rem">Aucune photo</div>`}<div style="position:absolute;bottom:0;left:0;right:0;background:rgba(0,0,0,.55);color:#fff;font-size:.6rem;text-align:center;padding:2px 4px">${esc(label)}</div></div>`;
+  const photoGridHtml=(photoChauf||photoPlaque||photoEcs||photoRegul)?`<div style="display:flex;gap:8px;margin:12px 0 18px">${photoBox(photoChauf,'Chaufferie')}${photoBox(photoPlaque,'Plaque signalétique')}${photoBox(photoEcs,'Préparateur ECS')}${photoBox(photoRegul,'Régulation & raccordement')}</div>`:'';
   const doc=`<!DOCTYPE html><html lang="fr"><head><meta charset="UTF-8"><title>Étude — ${esc(recName(r))}</title>
   <style>
     body{font-family:'Segoe UI',Arial,sans-serif;color:#1A2B3D;margin:0;background:#e8ebe3}
@@ -1095,6 +1182,7 @@ async function genererEtudePdf(recId){
     <div class="badge-box">${esc(op?op.name:'')}${e.secteur?' / '+esc(e.secteur):''}</div>
     <div class="client-bar"><div class="cn">${esc(clientNameOf(r))}</div></div>
     <div class="addr-bar">${esc(siege||'—')}</div>
+    ${photoGrandeHtml}
     <div class="kpi-row">
       <div class="kpi-box orange"><div class="l">Coût ${esc(energieLabel)} actuel</div><div class="v">${eur(coutActuel)}</div><div class="s">par an (estimé)</div></div>
       <div class="kpi-box navy"><div class="l">Prime CEE</div><div class="v">${eur(primeCEE)}</div><div class="s">${devisTTC?Math.round(primeCEE/devisTTC*100)+'% du devis TTC':''}</div></div>
@@ -1127,6 +1215,7 @@ async function genererEtudePdf(recId){
   <div class="page">
     <div class="ph"><span>${esc(r.dossier||'')} — Étude technique</span><span>${esc(s.company||'')}</span></div>
     <h1 class="pt">Déperditions thermiques (estimation NF EN 12831 simplifiée)</h1>
+    ${photoGridHtml}
     <table class="et"><thead><tr><th>Poste de déperdition</th><th style="text-align:right">Puissance</th><th style="text-align:right">Part</th></tr></thead><tbody>
       ${rowsDeperd}
       ${deperd?`<tr style="font-weight:700"><td>TOTAL</td><td style="text-align:right">${eur0(deperd.total)} kW</td><td style="text-align:right">100%</td></tr>
