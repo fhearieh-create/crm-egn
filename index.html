@@ -791,6 +791,24 @@ async function logout(){await SUPA.auth.signOut();ME=null;location.reload();}
 /* ---- département (centroïdes approximatifs) ---- */
 const DEPT={'01':[46.10,5.35],'02':[49.55,3.55],'03':[46.40,3.20],'04':[44.10,6.25],'05':[44.65,6.25],'06':[43.95,7.20],'07':[44.75,4.40],'08':[49.65,4.65],'09':[42.95,1.50],'10':[48.30,4.15],'11':[43.05,2.55],'12':[44.30,2.55],'13':[43.55,5.05],'14':[49.10,-0.35],'15':[45.05,2.65],'16':[45.70,0.15],'17':[45.75,-0.80],'18':[47.10,2.50],'19':[45.35,1.85],'2A':[41.80,8.95],'2B':[42.40,9.20],'21':[47.45,4.75],'22':[48.45,-2.80],'23':[46.05,2.05],'24':[45.10,0.75],'25':[47.15,6.35],'26':[44.70,5.15],'27':[49.05,1.00],'28':[48.40,1.40],'29':[48.25,-4.05],'30':[44.00,4.20],'31':[43.40,1.30],'32':[43.65,0.55],'33':[44.85,-0.55],'34':[43.60,3.40],'35':[48.15,-1.70],'36':[46.80,1.55],'37':[47.25,0.70],'38':[45.25,5.65],'39':[46.70,5.75],'40':[43.95,-0.75],'41':[47.60,1.35],'42':[45.70,4.25],'43':[45.10,3.85],'44':[47.35,-1.65],'45':[47.90,2.35],'46':[44.60,1.65],'47':[44.35,0.45],'48':[44.55,3.50],'49':[47.40,-0.55],'50':[49.10,-1.30],'51':[48.95,4.30],'52':[48.10,5.20],'53':[48.30,-0.65],'54':[48.85,6.15],'55':[49.00,5.40],'56':[47.85,-2.80],'57':[49.05,6.65],'58':[47.10,3.55],'59':[50.50,3.25],'60':[49.40,2.40],'61':[48.60,0.10],'62':[50.50,2.30],'63':[45.75,3.15],'64':[43.30,-0.75],'65':[43.10,0.15],'66':[42.60,2.55],'67':[48.60,7.55],'68':[47.85,7.30],'69':[45.85,4.55],'70':[47.65,6.10],'71':[46.65,4.55],'72':[47.95,0.20],'73':[45.50,6.45],'74':[46.05,6.40],'75':[48.86,2.35],'76':[49.65,1.00],'77':[48.60,2.95],'78':[48.80,1.90],'79':[46.50,-0.30],'80':[49.90,2.30],'81':[43.80,2.15],'82':[44.10,1.30],'83':[43.45,6.20],'84':[44.00,5.15],'85':[46.70,-1.40],'86':[46.55,0.45],'87':[45.90,1.25],'88':[48.15,6.40],'89':[47.85,3.55],'90':[47.65,6.85],'91':[48.50,2.25],'92':[48.85,2.25],'93':[48.90,2.50],'94':[48.78,2.45],'95':[49.05,2.15],'971':[16.25,-61.55],'972':[14.65,-61.00],'973':[4.00,-53.00],'974':[-21.10,55.55],'976':[-12.80,45.15]};
 function deptFromCP(cp){if(!cp)return '';cp=String(cp).trim();if(cp.length>=2){let d=cp.slice(0,2);if(d==='20')return cp<'20200'?'2A':'2B';if(['97','98'].includes(d))return cp.slice(0,3);return d;}return '';}
+/* ---- zone climatique (RT2012, simplifiée H1/H2/H3) déduite automatiquement du département ---- */
+const ZONE_CLIMATIQUE={
+  '02':'H1','08':'H1','10':'H1','14':'H1','21':'H1','25':'H1','27':'H1','28':'H1','39':'H1','45':'H1','50':'H1','51':'H1','52':'H1','54':'H1','55':'H1','57':'H1','58':'H1','59':'H1','60':'H1','61':'H1','62':'H1','67':'H1','68':'H1','70':'H1','71':'H1','72':'H1','75':'H1','76':'H1','77':'H1','78':'H1','80':'H1','88':'H1','89':'H1','90':'H1','91':'H1','92':'H1','93':'H1','94':'H1','95':'H1','03':'H1','15':'H1','18':'H1','36':'H1','41':'H1','43':'H1','63':'H1','90b':'H1',
+  '16':'H2','17':'H2','19':'H2','22':'H2','23':'H2','24':'H2','29':'H2','33':'H2','35':'H2','37':'H2','40':'H2','44':'H2','47':'H2','49':'H2','53':'H2','56':'H2','64':'H2','69':'H2','79':'H2','81':'H2','82':'H2','85':'H2','86':'H2','87':'H2','12':'H2','46':'H2','48':'H2','07':'H2','26':'H2','42':'H2','01':'H2','73':'H2','74':'H2','09':'H2','31':'H2','32':'H2','65':'H2',
+  '04':'H3','05':'H3','06':'H3','11':'H3','13':'H3','20':'H3','2A':'H3','2B':'H3','30':'H3','34':'H3','38':'H3','66':'H3','83':'H3','84':'H3'
+};
+function zoneClimatiqueOf(r){const d=deptFromCP(r.cp);return ZONE_CLIMATIQUE[d]||'';}
+/* ---- date de la visite technique = date du dernier RDV "Visite technique" du dossier ---- */
+function dateVisiteVt(r){
+  const rdv=subAssignedFor(r,'vt');
+  return rdv?rdv.date:'';
+}
+/* ---- coût énergie actuel estimé = consommation saisie (manuelle) × tarif configuré ---- */
+function coutEnergieActuel(consommation,typeEnergie){
+  const s=getSettings();
+  const prix=(s.tarifsEnergie&&s.tarifsEnergie[typeEnergie])||0;
+  return (parseFloat(consommation)||0)*prix;
+}
 function coordsFor(rec){
   if(rec.lat&&rec.lng)return [rec.lat,rec.lng];
   let d=rec.dept||deptFromCP(rec.cp);
@@ -3412,14 +3430,30 @@ function saveCfg(){const type=val('cf_type');const cfg=CFGMAP[type];const id=val
 function delCfg(type,id){const cfg=CFGMAP[type];modalConfirm('Supprimer cet élément ?','',()=>{save(cfg.key,load(cfg.key,[]).filter(a=>a.id!==id));deleteRemoteRow(cfg.key,id);closeModal();renderSettings();toast('Supprimé','ok');});}
 function setSociete(){
   const s=getSettings();
+  const tarifs=s.tarifsEnergie||{};
+  const energies=[['propane','Propane','€/L'],['fioul','Fioul domestique','€/L'],['gaz','Gaz naturel','€/kWh'],['electricite','Électricité','€/kWh'],['bois','Bois / granulés','€/kWh']];
   let h=`<div class="panel"><div class="panel-h"><h3>Informations société</h3></div><div class="panel-b"><div class="fgrid">
     <div class="fld"><label>Nom de la société</label><input id="co_name" value="${esc(s.company)}"></div>
     <div class="fld"><label>Email de contact</label><input id="co_email" value="${esc(s.email)}"></div>
     <div class="fld"><label>Téléphone</label><input id="co_phone" value="${esc(s.phone)}"></div>
     <div class="fld"><label>Logo (PNG / JPG)</label><input type="file" accept="image/*" onchange="uploadLogo(this.files[0])"></div>
     <div class="fld full" style="margin-top:.3rem">${s.logo?`<img src="${s.logo}" style="max-height:70px;border-radius:8px;background:#1A2B3D;padding:.5rem">`:'<span class="muted">Aucun logo importé</span>'}</div>
-  </div><button class="btn btn-pri" style="margin-top:1.1rem" onclick="saveSociete()">💾 Enregistrer</button></div></div>`;
+  </div><button class="btn btn-pri" style="margin-top:1.1rem" onclick="saveSociete()">💾 Enregistrer</button></div></div>
+  <div class="panel" style="margin-top:1.2rem"><div class="panel-h"><h3>Tarifs énergie</h3></div><div class="panel-b">
+    <p class="muted" style="margin-bottom:.8rem;font-size:.82rem">Prix unitaire moyen par énergie — utilisé pour estimer automatiquement le <b>coût annuel actuel</b> dans les études (consommation saisie × prix ci-dessous).</p>
+    <div class="fgrid c3">
+      ${energies.map(([k,l,u])=>`<div class="fld"><label>${esc(l)} <span class="muted" style="font-size:.66rem">(${u})</span></label><input type="number" step="any" id="tarif_${k}" value="${tarifs[k]||''}" placeholder="0"></div>`).join('')}
+    </div>
+    <button class="btn btn-pri btn-sm" style="margin-top:.8rem" onclick="saveTarifsEnergie()">💾 Enregistrer les tarifs</button>
+  </div></div>`;
   document.getElementById('setBody').innerHTML=h;
+}
+function saveTarifsEnergie(){
+  const s=getSettings();
+  const energies=['propane','fioul','gaz','electricite','bois'];
+  s.tarifsEnergie=s.tarifsEnergie||{};
+  energies.forEach(k=>{s.tarifsEnergie[k]=parseFloat(String(val('tarif_'+k)||'').replace(',','.'))||0;});
+  save(K.set,s);toast('Tarifs énergie enregistrés ✓','ok');
 }
 function uploadLogo(f){if(!f)return;const r=new FileReader();r.onload=e=>{const s=getSettings();s.logo=e.target.result;save(K.set,s);renderSettings();toast('Logo enregistré ✓','ok');};r.readAsDataURL(f);}
 function saveSociete(){const s=getSettings();s.company=val('co_name');s.email=val('co_email');s.phone=val('co_phone');save(K.set,s);toast('Société enregistrée ✓','ok');}
@@ -3564,7 +3598,8 @@ function renderOpEditor(){
   <div class="sectitle">Champs du formulaire <span style="font-weight:500;text-transform:none;letter-spacing:0;color:var(--text-mut)">(affichés sur le lead quand cette opération est choisie)</span></div>
   ${fl}
   <button class="btn btn-ghost btn-sm" style="margin-top:.7rem" onclick="opAddField()">+ Ajouter un champ</button>
-  ${cumacEditorHtml()}`;
+  ${cumacEditorHtml()}
+  ${etudeEditorHtml()}`;
   openModal(o.name?'Opération — '+esc(o.name):'Nouvelle opération',body,`<button class="btn btn-ghost" onclick="closeModal()">Annuler</button><button class="btn btn-pri" onclick="saveOperation()">💾 Enregistrer l'opération</button>`,'wide');
 }
 function cumacEditorHtml(){
