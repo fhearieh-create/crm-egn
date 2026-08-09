@@ -3598,8 +3598,7 @@ function renderOpEditor(){
   <div class="sectitle">Champs du formulaire <span style="font-weight:500;text-transform:none;letter-spacing:0;color:var(--text-mut)">(affichés sur le lead quand cette opération est choisie)</span></div>
   ${fl}
   <button class="btn btn-ghost btn-sm" style="margin-top:.7rem" onclick="opAddField()">+ Ajouter un champ</button>
-  ${cumacEditorHtml()}
-  ${etudeEditorHtml()}`;
+  ${cumacEditorHtml()}`;
   openModal(o.name?'Opération — '+esc(o.name):'Nouvelle opération',body,`<button class="btn btn-ghost" onclick="closeModal()">Annuler</button><button class="btn btn-pri" onclick="saveOperation()">💾 Enregistrer l'opération</button>`,'wide');
 }
 function cumacEditorHtml(){
