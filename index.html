@@ -1516,6 +1516,7 @@ const NAV=[
   {sec:'Principal'},
   {id:'dash',ic:'📊',label:'Tableau de bord',perm:'dashboard'},
   {id:'planning',ic:'📅',label:'Planning',perm:'planning_view'},
+  {id:'rappels',ic:'⏰',label:'Rappels',perm:'planning_view'},
   {id:'import',ic:'📥',label:'Import des leads',perm:'import_data'},
   {sec:'Leads & Clients'},
   {id:'leads',ic:'👥',label:'Leads',perm:'leads_view'},
@@ -1529,6 +1530,7 @@ const NAV=[
 const PAGES={
   dash:{t:'Tableau de bord',s:"Vue d'ensemble de l'activité",r:renderDash},
   planning:{t:'Planning',s:'Calendrier & carte des rendez-vous',r:renderPlanning},
+  rappels:{t:'Rappels',s:'Tous vos rappels planifiés',r:renderRappels},
   import:{t:'Import des leads',s:'Importez votre base client Excel / CSV',r:renderImport},
   leads:{t:'Leads',s:'Tous vos prospects et dossiers',r:renderLeads},
   clients:{t:'Clients',s:'Dossiers transmis & installés',r:renderClients},
@@ -3188,6 +3190,29 @@ document.getElementById('modalBg').addEventListener('click',e=>{if(e.target.id==
    ==================================================================== */
 let CAL={view:'mois',y:new Date().getFullYear(),m:new Date().getMonth(),sel:null,filterUser:'',filterDept:''};
 let MAP=null,MARKERS=null;
+function renderRappels(){
+  const today=new Date().toISOString().slice(0,10);
+  const list=visibleRecs().filter(r=>r.rappelDate).sort((a,b)=>((a.rappelDate||'')+(a.rappelHeure||'')).localeCompare((b.rappelDate||'')+(b.rappelHeure||'')));
+  const passes=list.filter(r=>r.rappelDate<today);
+  const avenir=list.filter(r=>r.rappelDate>=today);
+  const row=r=>{
+    const isPast=r.rappelDate<today;
+    const isToday=r.rappelDate===today;
+    return `<div class="cfg-item" style="align-items:flex-start;${isPast?'opacity:.6':''}">
+      <span class="nm" style="cursor:pointer" onclick="openDossier('${r.id}')">${esc(recName(r))} <span class="muted" style="font-weight:400">— ${esc(r.dossier||'')}</span></span>
+      <span class="tag" style="background:${isToday?'rgba(230,148,57,.15)':'rgba(45,125,210,.12)'};color:${isToday?'#B96A0A':'#2D7DD2'}">${fmtDateLong(r.rappelDate)}${r.rappelHeure?' à '+r.rappelHeure:''}</span>
+      ${r.rappelNote?`<span class="muted" style="font-size:.78rem">${esc(r.rappelNote)}</span>`:''}
+      <span class="sp"><button class="iconbtn" title="Ouvrir le dossier" onclick="openDossier('${r.id}')">📁</button><button class="iconbtn del" title="Annuler le rappel" onclick="delRappel('${r.id}')">🗑️</button></span>
+    </div>`;
+  };
+  let h=`<div class="panel"><div class="panel-h"><h3>À venir <span class="muted" style="font-weight:400">(${avenir.length})</span></h3></div><div class="panel-b">`;
+  h+=avenir.length?`<div class="cfg-list">${avenir.map(row).join('')}</div>`:`<div class="empty"><div class="big">⏰</div>Aucun rappel à venir. Fixez-en un depuis la fiche d'un dossier.</div>`;
+  h+=`</div></div>`;
+  if(passes.length){
+    h+=`<div class="panel" style="margin-top:1.2rem"><div class="panel-h"><h3>Passés <span class="muted" style="font-weight:400">(${passes.length})</span></h3></div><div class="panel-b"><div class="cfg-list">${passes.map(row).join('')}</div></div></div>`;
+  }
+  document.getElementById('content').innerHTML=h;
+}
 function renderPlanning(){
   if(can('rdv_manage'))document.getElementById('pageActions').innerHTML=actionBtn('+ Nouveau RDV','openRdv()','btn-pri');
   const users=getUsers().filter(u=>u.active&&(can('planning_view_all')||ownScope().includes(u.id)));
