@@ -660,8 +660,16 @@ const getSettings=()=>load(K.set,{});
 const statById=id=>getStatuses().find(s=>s.id===id);
 const userById=id=>getUsers().find(u=>u.id===id);
 const recById=id=>getRecs().find(r=>r.id===id);
-function nextDossier(){let c=load(K.cnt,0)+1;save(K.cnt,c);return 'ND-'+new Date().getFullYear()+'-'+String(c).padStart(4,'0');}
-function nextApfNum(){let c=load('egncrm_apf_counter',0)+1;save('egncrm_apf_counter',c);return 'APF-'+new Date().getFullYear()+'-'+String(c).padStart(3,'0');}
+async function nextDossier(){
+  try{const{data,error}=await SUPA.rpc('next_dossier_number');if(error)throw error;if(data)return data;}
+  catch(e){console.error('[nextDossier] centralisé indisponible, repli local',e);}
+  let c=load(K.cnt,0)+1;save(K.cnt,c);return 'ND-'+new Date().getFullYear()+'-'+String(c).padStart(4,'0')+'-LOC';
+}
+async function nextApfNum(){
+  try{const{data,error}=await SUPA.rpc('next_apf_number');if(error)throw error;if(data)return data;}
+  catch(e){console.error('[nextApfNum] centralisé indisponible, repli local',e);}
+  let c=load('egncrm_apf_counter',0)+1;save('egncrm_apf_counter',c);return 'APF-'+new Date().getFullYear()+'-'+String(c).padStart(3,'0')+'-LOC';
+}
 
 /* ---- Supabase (authentification réelle — étape 1) ---- */
 const SUPA_URL='https://gfxgvapoqicorismbvwt.supabase.co';
@@ -2715,6 +2723,7 @@ function renderComptaFacturation(){
   </div></div>`;
   if(FACT_AGENT){
     const at=AGENT_TYPES[FACT_TYPE];
+    const agentInfo=at.getAgent(FACT_AGENT);
     const recs=getRecs().filter(r=>at.agentIdFn(r)===FACT_AGENT);
     const rows=recs.map(r=>({r,m:recordComptaMetrics(r)})).filter(x=>at.montantFn(x.m)>0&&!factureActive(x.r,FACT_TYPE));
     h+=`<div class="panel"><div class="panel-h"><h3>Dossiers à facturer</h3><div class="sp"><span class="muted">${rows.length} dossier${rows.length>1?'s':''}</span></div></div><div class="panel-b">`;
@@ -2726,6 +2735,7 @@ function renderComptaFacturation(){
         const already='';
         return `<div class="cfg-item"><input type="checkbox" class="fact_chk" data-rid="${r.id}" data-montant="${at.montantFn(m)}" checked style="margin-right:.3rem"><span class="nm"><span class="dossier-tag" style="margin-right:.4rem">${esc(r.dossier||'—')}</span>${esc(clientNameOf(r))}<span class="muted" style="font-weight:400"> — ${op?esc(op.name):''}</span></span>${already}<span class="tag" style="background:rgba(45,125,210,.12);color:#2D7DD2">${eur(at.montantFn(m))}</span></div>`;
       }).join('')+`</div>
+      <label style="display:flex;align-items:center;gap:.5rem;margin-top:1rem;cursor:${agentInfo&&agentInfo.email?'pointer':'not-allowed'}"><input type="checkbox" id="fact_sendmail" ${agentInfo&&agentInfo.email?'':'disabled'}> Envoyer aussi par e-mail à ${agentInfo&&agentInfo.email?esc(agentInfo.email):'(aucun email renseigné pour ce partenaire)'}</label>
       <button class="btn btn-pri" style="margin-top:1rem" onclick="genererFactureAgent()">📄 Générer le document d'appel à facturation</button>`;
     }
     h+=`</div></div>`;
@@ -2737,7 +2747,7 @@ async function genererFactureAgent(){
   const checks=[...document.querySelectorAll('.fact_chk')].filter(c=>c.checked);
   if(!checks.length){toast('Sélectionnez au moins un dossier','err');return;}
   const agent=at.getAgent(agentId);const agentName=at.agentName(agent);const s=getSettings();
-  const apfNum=nextApfNum();
+  const apfNum=await nextApfNum();
   const lignes=checks.map(c=>{const r=recById(c.dataset.rid);return{r,montant:parseFloat(c.dataset.montant)||0};});
   const total=lignes.reduce((s,l)=>s+l.montant,0);
   const eur=n=>(n||0).toLocaleString('fr-FR',{minimumFractionDigits:2,maximumFractionDigits:2})+' €';
@@ -2777,6 +2787,13 @@ async function genererFactureAgent(){
   const w=window.open('','_blank');
   if(!w){toast('Autorisez les fenêtres pop-up pour générer le document','err');return;}
   w.document.write(doc);w.document.close();
+  const wantsSend=(document.getElementById('fact_sendmail')||{}).checked;
+  if(wantsSend&&agent&&agent.email){
+    try{
+      await callSendEmail({to:agent.email,subject:`${apfNum} — Appel à facturation ${esc(at.label)}`,html:doc});
+      toast('Document envoyé par e-mail à '+agent.email+' ✓','ok');
+    }catch(e){console.error('[genererFactureAgent] envoi mail',e);toast('Document généré, mais l\'envoi par e-mail a échoué : '+(e.message||e),'err');}
+  }
   // enregistrement de la facture (Supabase, protégé par RLS)
   const factureId=uid();
   const factureObj={id:factureId,apfNum,type,date:Date.now(),poseurId:agentId,poseurName:agentName,
@@ -3131,7 +3148,7 @@ async function lookupSiret(fieldId){
     toast('Entreprise trouvée ✓','ok');
   }catch(e){toast('Service SIRET indisponible — saisie manuelle','err');}
 }
-function saveLead(){
+async function saveLead(){
   const id=val('lf_id');
   const opId=val('lf_op');
   const op=getProducts().find(p=>p.id===opId);
@@ -3140,7 +3157,7 @@ function saveLead(){
   const recs=getRecs();
   let r=id?recs.find(x=>x.id===id):null;
   const isNew=!r;
-  if(isNew){r={id:uid(),dossier:nextDossier(),created:Date.now(),history:[]};recs.push(r);}
+  if(isNew){r={id:uid(),dossier:await nextDossier(),created:Date.now(),history:[]};recs.push(r);}
   const prevStatus=r.statusId;
   r.productId=opId;r.statusId=val('lf_status');r.sourceId=val('lf_src');r.userId=val('lf_user');r.updated=Date.now();
   // champs personnalisés de l'opération + synchronisation des données canoniques (par clé)
@@ -3549,7 +3566,7 @@ function previewImport(rows){
   h+=`</tbody></table></div>${rows.length>50?'<p class="muted" style="margin-top:.5rem">Aperçu limité à 50 lignes. Tout sera importé.</p>':''}</div></div>`;
   document.getElementById('importPreview').innerHTML=h;
 }
-function doImport(){
+async function doImport(){
   if(!IMPORTED.length)return;
   const recs=getRecs();const sts=getStatuses();
   const defStatus=(sts.find(s=>s.name==='Nouveau')||sts[0]||{}).id;
@@ -3557,16 +3574,17 @@ function doImport(){
   const opId=val('imp_op');const op=opId?getProducts().find(o=>o.id===opId):null;
   const srcId=val('imp_src');const src=srcId?getSources().find(s=>s.id===srcId):null;
   let n=0;
-  IMPORTED.forEach(row=>{
+  document.getElementById('importPreview').innerHTML=`<div class="panel" style="margin-top:1.2rem"><div class="panel-b"><div class="empty"><div class="big">⏳</div>Import en cours… (numérotation des dossiers)</div></div></div>`;
+  for(const row of IMPORTED){
     const r=mapRow(row);
-    if(!r.raisonSociale&&!r.nom&&!r.tel)return;
-    recs.push({id:uid(),dossier:nextDossier(),created:Date.now(),
+    if(!r.raisonSociale&&!r.nom&&!r.tel)continue;
+    recs.push({id:uid(),dossier:await nextDossier(),created:Date.now(),
       raisonSociale:r.raisonSociale,nom:r.nom,tel:r.tel,email:r.email,adresse:r.adresse,cp:r.cp,ville:r.ville,
       dept:deptFromCP(r.cp),
       productId:opId||'',sourceId:srcId||'',statusId:defStatus,userId:assignId||'',
       history:[{date:Date.now(),user:(ME.prenom+' '+ME.nom).trim()||ME.code,text:'Importé depuis fichier'+(assignUser?' — attribué à '+assignUser.prenom+' '+assignUser.nom:'')+(op?' — opération : '+op.name:'')+(src?' — source : '+src.name:'')}]});
     n++;
-  });
+  }
   save(K.recs,recs);IMPORTED=[];buildNav();
   document.getElementById('importPreview').innerHTML=`<div class="panel" style="margin-top:1.2rem"><div class="panel-b"><div class="empty"><div class="big">✅</div><b>${n} lead(s) importé(s) avec succès !</b>${assignUser?`<br><span class="muted">Attribués à ${esc(assignUser.prenom+' '+assignUser.nom)}</span>`:''}<br><button class="btn btn-pri" style="margin-top:1rem" onclick="go('leads')">Voir les leads →</button></div></div></div>`;
   toast(n+' lead(s) importé(s) ✓','ok');
@@ -3709,6 +3727,21 @@ async function callAdminManageUser(payload){
   if(error)throw error;
   if(data&&data.error)throw new Error(data.error);
   return data;
+}
+/* ---- envoi réel d'e-mail (Gmail via Edge Function "send-email") ---- */
+async function callSendEmail(payload){
+  const{data:{session}}=await SUPA.auth.getSession();
+  if(!session)throw new Error('Session Supabase expirée — reconnectez-vous.');
+  const{data,error}=await SUPA.functions.invoke('send-email',{
+    body:payload,
+    headers:{Authorization:'Bearer '+session.access_token}
+  });
+  if(error)throw error;
+  if(data&&data.error)throw new Error(data.error);
+  return data;
+}
+async function blobToBase64(blob){
+  return await new Promise((res,rej)=>{const fr=new FileReader();fr.onload=()=>res(String(fr.result).split(',')[1]);fr.onerror=rej;fr.readAsDataURL(blob);});
 }
 async function saveUser(){
   const id=val('us_id');const code=val('us_code').toUpperCase();const pwd=val('us_pwd');
@@ -3872,13 +3905,17 @@ function openMailSend(recId){
   const r=recById(recId);if(!r)return;
   const ts=getMailTpl();
   const tplOpts=`<option value="">— Message vierge —</option>`+ts.map(t=>`<option value="${t.id}">${esc(t.name)}</option>`).join('');
+  const docs=r.docs||[];
+  const docsHtml=docs.length?docs.map(d=>`<label style="display:flex;align-items:center;gap:.5rem;padding:.3rem 0;cursor:pointer"><input type="checkbox" class="ms_doc_chk" value="${d.id}"> ${esc(d.typeName||'Document')} — ${esc(d.filename||'')}</label>`).join(''):`<p class="muted" style="font-size:.78rem">Aucun document sur ce dossier — ajoutez-en depuis le panneau Documents.</p>`;
   const body=`<input type="hidden" id="ms_rec" value="${recId}">
     <div class="fld"><label>Modèle</label><select id="ms_tpl" onchange="mailFillFromTpl()">${tplOpts}</select></div>
     <div class="fld" style="margin-top:.6rem"><label>Destinataire</label><input id="ms_to" value="${esc(r.email||'')}" placeholder="email@client.fr"></div>
     <div class="fld" style="margin-top:.6rem"><label>Objet</label><input id="ms_subject" value=""></div>
-    <div class="fld" style="margin-top:.6rem"><label>Message</label><textarea id="ms_body" style="min-height:220px"></textarea></div>
-    <p class="muted" style="margin-top:.6rem;font-size:.74rem">« Ouvrir dans Gmail » ouvre la fenêtre de rédaction de votre compte Google Workspace (expéditeur = votre adresse @egnrenovation.fr), déjà pré-remplie. Vous validez l'envoi dans Gmail.</p>`;
-  openModal(`Envoyer un e-mail — ${esc(recName(r))}`,body,`<button class="btn btn-ghost" onclick="closeModal()">Fermer</button><button class="btn btn-ghost" onclick="copyMail()">📋 Copier</button><button class="btn btn-navy" onclick="sendMailto('${recId}')">✉️ Messagerie</button><button class="btn btn-pri" onclick="sendGmail('${recId}')">📧 Ouvrir dans Gmail</button>`,'wide');
+    <div class="fld" style="margin-top:.6rem"><label>Message</label><textarea id="ms_body" style="min-height:200px"></textarea></div>
+    <div class="sectitle" style="margin-top:.8rem">Pièces jointes</div>
+    <div style="border:1px solid var(--border-grey);border-radius:9px;padding:.5rem .8rem;max-height:150px;overflow:auto">${docsHtml}</div>
+    <p class="muted" style="margin-top:.6rem;font-size:.74rem">💌 « Envoyer maintenant » envoie réellement l'e-mail depuis la boîte connectée au CRM. Les autres boutons restent disponibles en secours (ouvrir dans votre propre messagerie).</p>`;
+  openModal(`Envoyer un e-mail — ${esc(recName(r))}`,body,`<button class="btn btn-ghost" onclick="closeModal()">Fermer</button><button class="btn btn-ghost" onclick="copyMail()">📋 Copier</button><button class="btn btn-navy" onclick="sendMailto('${recId}')">✉️ Messagerie</button><button class="btn btn-pri" onclick="sendRealEmail('${recId}')">🚀 Envoyer maintenant</button>`,'wide');
 }
 function mailFillFromTpl(){
   const r=recById(val('ms_rec'));if(!r)return;
@@ -3887,6 +3924,31 @@ function mailFillFromTpl(){
   document.getElementById('ms_body').value=t?fillTemplate(t.body,r):'';
 }
 function mailLog(recId,to,subject){const recs=getRecs();const r=recs.find(x=>x.id===recId);if(!r)return;r.history=r.history||[];r.history.unshift({date:Date.now(),user:(ME.prenom+' '+ME.nom).trim()||ME.code,text:`E-mail préparé pour ${to||'—'} : « ${subject||''} »`});save(K.recs,recs);logActivity('action',`✉️ E-mail préparé sur ${r.dossier||recId} pour ${to||'—'} : « ${subject||''} »`,recId);}
+function mailSentLog(recId,to,subject,nbAttach){const recs=getRecs();const r=recs.find(x=>x.id===recId);if(!r)return;r.history=r.history||[];r.history.unshift({date:Date.now(),user:(ME.prenom+' '+ME.nom).trim()||ME.code,text:`E-mail envoyé à ${to||'—'} : « ${subject||''} »${nbAttach?` (${nbAttach} pièce${nbAttach>1?'s':''} jointe${nbAttach>1?'s':''})`:''}`});save(K.recs,recs);logActivity('action',`🚀 E-mail envoyé sur ${r.dossier||recId} à ${to||'—'} : « ${subject||''} »`,recId);}
+async function sendRealEmail(recId){
+  const r=recById(recId);if(!r)return;
+  const to=val('ms_to');const subject=document.getElementById('ms_subject').value;const bodyTxt=document.getElementById('ms_body').value;
+  if(!to){toast('Destinataire requis','err');return;}
+  if(!subject){toast('Objet requis','err');return;}
+  const btns=document.querySelectorAll('#modalBox .modal-f button');btns.forEach(b=>b.disabled=true);
+  toast('Envoi en cours…','ok');
+  try{
+    const checked=[...document.querySelectorAll('.ms_doc_chk:checked')].map(c=>c.value);
+    const docs=(r.docs||[]).filter(d=>checked.includes(d.id));
+    const attachments=[];
+    for(const d of docs){
+      if(!d.path)continue;
+      const{data,error}=await SUPA.storage.from(ATTACH_BUCKET).download(d.path);
+      if(error){console.error('[sendRealEmail] download',d.path,error);continue;}
+      attachments.push({filename:d.filename||'document',content:await blobToBase64(data),contentType:d.mime||'application/octet-stream'});
+    }
+    const html=esc(bodyTxt).replace(/\n/g,'<br>');
+    await callSendEmail({to,subject,html,attachments});
+    mailSentLog(recId,to,subject,attachments.length);
+    closeModal();toast('E-mail envoyé ✓','ok');
+  }catch(e){console.error('[sendRealEmail]',e);toast('Échec de l\'envoi : '+(e.message||e),'err');}
+  finally{btns.forEach(b=>b.disabled=false);}
+}
 function sendGmail(recId){
   const to=val('ms_to');const su=document.getElementById('ms_subject').value;const bo=document.getElementById('ms_body').value;
   const url='https://mail.google.com/mail/?view=cm&fs=1&tf=1&to='+encodeURIComponent(to)+'&su='+encodeURIComponent(su)+'&body='+encodeURIComponent(bo);
@@ -4002,11 +4064,11 @@ function savePac(){
 let VTDRAFT=null;
 function openVt(id){
   const list=load(CFGMAP.vt.key,[]);const x=id?list.find(a=>a.id===id):null;
-  VTDRAFT=x?JSON.parse(JSON.stringify(x)):{id:uid(),name:'',prices:[]};
+  VTDRAFT=x?JSON.parse(JSON.stringify(x)):{id:uid(),name:'',email:'',prices:[]};
   if(!VTDRAFT.prices)VTDRAFT.prices=[];
   renderVtEditor();
 }
-function vtCaptureName(){const e=document.getElementById('vt_name');if(e)VTDRAFT.name=e.value.trim();}
+function vtCaptureName(){const e=document.getElementById('vt_name');if(e)VTDRAFT.name=e.value.trim();const em=document.getElementById('vt_email');if(em)VTDRAFT.email=em.value.trim();}
 function vtCaptureRows(){
   document.querySelectorAll('#vt_rows [data-vtrow]').forEach(row=>{
     const i=+row.dataset.vtrow;const p=VTDRAFT.prices[i];if(!p)return;
@@ -4028,7 +4090,10 @@ function renderVtEditor(){
       </div>
       <button class="iconbtn del" title="Supprimer" onclick="vtCaptureRows();vtDelPrice(${i})">🗑️</button>
     </div>`).join(''):`<div class="muted" style="font-size:.82rem;padding:.5rem 0">Aucun tarif configuré. Ajoutez une ligne par opération.</div>`;
-  let body=`<div class="fld"><label>Nom de la société</label><input id="vt_name" value="${esc(o.name)}" placeholder="Ex : Bureau de contrôle XYZ"></div>
+  let body=`<div class="fgrid">
+    <div class="fld"><label>Nom de la société</label><input id="vt_name" value="${esc(o.name)}" placeholder="Ex : Bureau de contrôle XYZ"></div>
+    <div class="fld"><label>Email de contact <span class="muted" style="font-size:.62rem">(pour l'envoi des appels à facturation)</span></label><input id="vt_email" value="${esc(o.email||'')}" placeholder="contact@bureau-controle.fr"></div>
+  </div>
     <div class="sectitle" style="margin-top:.8rem">Tarification <span style="font-weight:500;text-transform:none;letter-spacing:0;color:var(--text-mut)">(montant fixe par opération)</span></div>
     <div id="vt_rows">${rows}</div>
     <button class="btn btn-ghost btn-sm" style="margin-top:.7rem" onclick="vtCaptureRows();vtAddPrice()">+ Ajouter un tarif</button>
@@ -4049,11 +4114,11 @@ function saveVt(){
 let AUDDRAFT=null;
 function openAuditeur(id){
   const list=load(CFGMAP.auditeurs.key,[]);const x=id?list.find(a=>a.id===id):null;
-  AUDDRAFT=x?JSON.parse(JSON.stringify(x)):{id:uid(),name:'',prices:[]};
+  AUDDRAFT=x?JSON.parse(JSON.stringify(x)):{id:uid(),name:'',email:'',prices:[]};
   if(!AUDDRAFT.prices)AUDDRAFT.prices=[];
   renderAudEditor();
 }
-function audCaptureName(){const e=document.getElementById('aud_name');if(e)AUDDRAFT.name=e.value.trim();}
+function audCaptureName(){const e=document.getElementById('aud_name');if(e)AUDDRAFT.name=e.value.trim();const em=document.getElementById('aud_email');if(em)AUDDRAFT.email=em.value.trim();}
 function audCaptureRows(){
   document.querySelectorAll('#aud_rows [data-audrow]').forEach(row=>{
     const i=+row.dataset.audrow;const p=AUDDRAFT.prices[i];if(!p)return;
@@ -4075,7 +4140,10 @@ function renderAudEditor(){
       </div>
       <button class="iconbtn del" title="Supprimer" onclick="audCaptureRows();audDelPrice(${i})">🗑️</button>
     </div>`).join(''):`<div class="muted" style="font-size:.82rem;padding:.5rem 0">Aucun tarif configuré. Ajoutez une ligne par opération.</div>`;
-  let body=`<div class="fld"><label>Nom de l'auditeur</label><input id="aud_name" value="${esc(o.name)}" placeholder="Ex : Jean Dupont Audit"></div>
+  let body=`<div class="fgrid">
+    <div class="fld"><label>Nom de l'auditeur</label><input id="aud_name" value="${esc(o.name)}" placeholder="Ex : Jean Dupont Audit"></div>
+    <div class="fld"><label>Email de contact <span class="muted" style="font-size:.62rem">(pour l'envoi des appels à facturation)</span></label><input id="aud_email" value="${esc(o.email||'')}" placeholder="jean.dupont@audit.fr"></div>
+  </div>
     <div class="sectitle" style="margin-top:.8rem">Tarification <span style="font-weight:500;text-transform:none;letter-spacing:0;color:var(--text-mut)">(montant fixe par opération)</span></div>
     <div id="aud_rows">${rows}</div>
     <button class="btn btn-ghost btn-sm" style="margin-top:.7rem" onclick="audCaptureRows();audAddPrice()">+ Ajouter un tarif</button>
