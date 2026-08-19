@@ -454,6 +454,7 @@ const SYNC_TABLES=[
   {key:'egncrm_poseurs',table:'cfg_poseurs',shape:'blob'},
   {key:'egncrm_coefsu',table:'cfg_uvalues',shape:'blob'},
   {key:'egncrm_pac',table:'cfg_pac',shape:'blob'},
+  {key:'egncrm_doctemplates',table:'cfg_doc_templates',shape:'blob'},
   {key:'egncrm_settings',table:'cfg_societe',shape:'single'}
 ];
 function save(k,v){
@@ -813,7 +814,7 @@ async function deleteFactureRemote(id){
   try{await SUPA.from('factures_agents').delete().eq('id',id);}
   catch(e){console.error('[facture] suppression échouée',e);toast('⚠️ Suppression Supabase échouée : '+e.message,'err');}
 }
-function can(p){if(p==='compta_global')return ME&&(ME.role==='superadmin'||ME.role==='admin');return ME&&(ME.role==='superadmin'||(ME.perms&&ME.perms[p]));}
+function can(p){if(p==='compta_global')return ME&&(ME.role==='superadmin'||ME.role==='admin');if(p==='docs_manage')return ME&&ME.role==='superadmin';return ME&&(ME.role==='superadmin'||(ME.perms&&ME.perms[p]));}
 async function doLogin(){
   const code=document.getElementById('loginCode').value.trim().toUpperCase();
   const pwd=document.getElementById('loginPwd').value;
@@ -1532,6 +1533,7 @@ const NAV=[
   {id:'sav',ic:'🔧',label:'SAV',perm:'sav_view'},
   {sec:'Administration'},
   {id:'compta',ic:'💼',label:'Comptabilité',perm:'compta_global'},
+  {id:'docs',ic:'📄',label:'Documents',perm:'docs_manage'},
   {id:'users',ic:'🔑',label:'Utilisateurs',perm:'users_manage'},
   {id:'settings',ic:'⚙️',label:'Paramètres',perm:'settings_access'}
 ];
@@ -1542,6 +1544,7 @@ const PAGES={
   import:{t:'Import des leads',s:'Importez votre base client Excel / CSV',r:renderImport},
   leads:{t:'Leads',s:'Tous vos prospects et dossiers',r:renderLeads},
   clients:{t:'Clients',s:'Dossiers transmis & installés',r:renderClients},
+  docs:{t:'Documents',s:'Modèles de documents générables depuis les fiches client',r:renderDocsTab},
   rdvs:{t:'RDVs',s:'Liste des rendez-vous',r:renderRdvs},
   sav:{t:'SAV',s:'Service après-vente',r:renderSav},
   compta:{t:'Comptabilité',s:'Rentabilité globale & appels à facturation poseurs',r:renderComptaGlobal},
@@ -3860,6 +3863,134 @@ const MAIL_VARS=[
  ['date_rdv','Date du RDV'],['heure_rdv','Heure du RDV'],['type_rdv','Type du RDV'],['intervenant_rdv','Intervenant du RDV'],
  ['moi','Mon nom'],['ma_societe','Ma société'],['mon_email','Mon email'],['date_jour','Date du jour']
 ];
+/* ============================================================
+   MODÈLES DE DOCUMENTS (onglet Administration ▸ Documents)
+   Réservé Super Admin. Éditeur type Word avec pages + placeholders {{...}}.
+   ============================================================ */
+const getDocTemplates=()=>load('egncrm_doctemplates',[]);
+const DOC_PLACEHOLDER_LABELS={
+  raison_sociale:'Raison sociale',signataire:'Nom du signataire',nom:'Nom',prenom:'Prénom',fonction:'Fonction',
+  tel:'Téléphone',email:'Email',nom_site:'Nom du site',
+  adresse:'Adresse',cp:'Code postal',ville:'Ville',adresse_travaux:'Adresse des travaux',
+  dossier:'N° Dossier',operation:'Opération',zone:'Zone climatique',
+  delegataire:'Délégataire',type_prime:'Type de prime',cumac:'Cumac (kWhc)',prime:'Prime CEE',
+  date_rdv:'Date du prochain RDV',heure_rdv:'Heure du RDV',type_rdv:'Type de RDV',intervenant_rdv:'Intervenant RDV',
+  moi:'Mon nom (utilisateur connecté)',ma_societe:'Nom de la société',mon_email:'Email de la société',date_jour:'Date du jour'
+};
+function renderDocsTab(){
+  const ts=getDocTemplates();
+  let h=`<div class="panel"><div class="panel-h"><h3>Modèles de documents</h3><div class="sp"><button class="btn btn-pri btn-sm" onclick="openDocTemplate()">+ Nouveau modèle</button></div></div><div class="panel-b">
+    <p class="muted" style="margin-bottom:.9rem;font-size:.84rem">Crée des modèles de documents (attestations, courriers, contrats…) avec des variables comme <code>{{nom_client}}</code>, remplacées automatiquement par les infos du dossier. Générables ensuite depuis chaque fiche client.</p>
+    <div class="cfg-list">`;
+  if(!ts.length)h+=`<div class="empty"><div class="big">📄</div>Aucun modèle pour l'instant.</div>`;
+  else h+=ts.map(t=>{
+    const ops=(t.operationIds&&t.operationIds.length)?t.operationIds.map(id=>{const o=getProducts().find(x=>x.id===id);return o?o.name:null;}).filter(Boolean).join(', '):'Toutes opérations';
+    return `<div class="cfg-item"><div style="flex:1;min-width:0"><div class="nm">${esc(t.name)}</div><div class="muted" style="font-size:.72rem;margin-top:.15rem">${esc(ops)} · ${(t.pages||[]).length} page${(t.pages||[]).length>1?'s':''}</div></div><span class="sp"><button class="iconbtn" onclick="openDocTemplate('${t.id}')">✏️</button><button class="iconbtn del" onclick="delDocTemplate('${t.id}')">🗑️</button></span></div>`;
+  }).join('');
+  h+=`</div></div></div>`;
+  document.getElementById('content').innerHTML=h;
+}
+let DOCDRAFT=null,DOC_PAGE_IDX=0;
+function openDocTemplate(id){
+  const ts=getDocTemplates();const x=id?ts.find(t=>t.id===id):null;
+  DOCDRAFT=x?JSON.parse(JSON.stringify(x)):{id:uid(),name:'',operationIds:[],pages:[{id:uid(),html:''}]};
+  if(!DOCDRAFT.pages||!DOCDRAFT.pages.length)DOCDRAFT.pages=[{id:uid(),html:''}];
+  DOC_PAGE_IDX=0;
+  renderDocEditor();
+}
+function docCaptureName(){const e=document.getElementById('doc_name');if(e)DOCDRAFT.name=e.value.trim();}
+function docCapturePage(){const el=document.getElementById('doc_page_content');if(el&&DOCDRAFT.pages[DOC_PAGE_IDX])DOCDRAFT.pages[DOC_PAGE_IDX].html=el.innerHTML;}
+function renderDocEditor(){
+  const o=DOCDRAFT;const ops=getProducts();
+  const opChips=(o.operationIds||[]).map(id=>{const op2=ops.find(x=>x.id===id);return op2?`<span class="tag" style="background:#EAF1F5;color:#0C447C;cursor:pointer" onclick="docRemoveOp('${id}')">${esc(op2.name)} ✕</span>`:'';}).join('');
+  const opSelectRemaining=ops.filter(op2=>!(o.operationIds||[]).includes(op2.id));
+  const page=o.pages[DOC_PAGE_IDX]||{html:''};
+  let body=`<input type="hidden" id="doc_id" value="${o.id}">
+    <div class="fld"><label>Nom du modèle</label><input id="doc_name" value="${esc(o.name)}" placeholder="Ex : Attestation de fin de travaux" onchange="docCaptureName()"></div>
+    <div class="fld" style="margin-top:.6rem"><label>Applicable aux opérations <span class="muted" style="font-size:.62rem">(laisser vide = toutes)</span></label>
+      <div style="display:flex;gap:.4rem;flex-wrap:wrap;align-items:center;border:1px solid var(--border-grey);border-radius:9px;padding:.5rem .6rem;min-height:40px">
+        ${opChips}
+        ${opSelectRemaining.length?`<select onchange="docAddOp(this.value);this.value=''" style="border:none;background:transparent;font-size:.82rem;flex:1;min-width:140px"><option value="">+ Ajouter une opération…</option>${opSelectRemaining.map(op2=>`<option value="${op2.id}">${esc(op2.name)}</option>`).join('')}</select>`:''}
+      </div>
+    </div>
+    <div class="sectitle" style="margin-top:.9rem">Contenu du document</div>
+    <div style="display:flex;gap:6px;align-items:center;border:1px solid var(--border-grey);border-radius:8px 8px 0 0;padding:.5rem;background:#f7f9f5;flex-wrap:wrap">
+      <button type="button" class="iconbtn" style="font-weight:800" onmousedown="event.preventDefault()" onclick="docExec('bold')">B</button>
+      <button type="button" class="iconbtn" style="font-style:italic" onmousedown="event.preventDefault()" onclick="docExec('italic')">I</button>
+      <button type="button" class="iconbtn" style="text-decoration:underline" onmousedown="event.preventDefault()" onclick="docExec('underline')">U</button>
+      <span style="width:1px;height:18px;background:var(--border-grey)"></span>
+      <button type="button" class="btn btn-ghost btn-sm" onmousedown="event.preventDefault()" onclick="docExec('formatBlock','H2')">Titre 1</button>
+      <button type="button" class="btn btn-ghost btn-sm" onmousedown="event.preventDefault()" onclick="docExec('formatBlock','H3')">Titre 2</button>
+      <button type="button" class="btn btn-ghost btn-sm" onmousedown="event.preventDefault()" onclick="docExec('formatBlock','P')">Paragraphe</button>
+      <span style="width:1px;height:18px;background:var(--border-grey)"></span>
+      <button type="button" class="btn btn-ghost btn-sm" onmousedown="event.preventDefault()" onclick="docExec('insertUnorderedList')">• Liste</button>
+      <button type="button" class="btn btn-ghost btn-sm" onmousedown="event.preventDefault()" onclick="docInsertTable()">▦ Tableau</button>
+      <span class="sp"></span>
+      <select onmousedown="event.preventDefault()" onchange="docInsertPlaceholder(this.value);this.value=''" style="border:1px solid var(--border-grey);border-radius:6px;padding:.3rem .5rem;font-size:.78rem;background:#1A2B3D;color:#9BD651;font-weight:700">
+        <option value="">+ Insérer une info ▾</option>
+        ${Object.entries(DOC_PLACEHOLDER_LABELS).map(([k,l])=>`<option value="${k}">${esc(l)}</option>`).join('')}
+      </select>
+    </div>
+    <div style="background:#EEF1E8;border:1px solid var(--border-grey);border-top:none;border-radius:0 0 10px 10px;padding:20px;display:flex;justify-content:center">
+      <div id="doc_page_content" contenteditable="true" style="background:#fff;width:100%;max-width:480px;min-height:500px;box-shadow:0 2px 10px rgba(0,0,0,.12);padding:24px 30px;font-size:.86rem;line-height:1.75;outline:none">${docPageHeaderHtml()}${page.html||''}</div>
+    </div>
+    <div style="display:flex;align-items:center;justify-content:center;gap:14px;margin-top:.6rem;padding:.5rem;background:#f7f9f5;border-radius:8px">
+      <button type="button" class="iconbtn" onclick="docGoPage(-1)" ${DOC_PAGE_IDX===0?'style="opacity:.3;pointer-events:none"':''}>◀</button>
+      <span style="font-size:.82rem;font-weight:700">Page ${DOC_PAGE_IDX+1} sur ${o.pages.length}</span>
+      <button type="button" class="iconbtn" onclick="docGoPage(1)" ${DOC_PAGE_IDX===o.pages.length-1?'style="opacity:.3;pointer-events:none"':''}>▶</button>
+      <span style="width:1px;height:14px;background:var(--border-grey)"></span>
+      <button type="button" class="btn btn-ghost btn-sm" onclick="docAddPage()">+ Ajouter une page</button>
+      ${o.pages.length>1?`<button type="button" class="btn btn-ghost btn-sm" style="color:#E63946" onclick="docDelPage()">🗑️ Supprimer cette page</button>`:''}
+    </div>
+    <p class="muted" style="text-align:center;font-size:.72rem;margin-top:.4rem">Le logo EGN et le titre du document s'affichent automatiquement en haut de chaque page générée.</p>`;
+  openModal(o.id&&getDocTemplates().find(t=>t.id===o.id)?'Modèle — '+esc(o.name||''):'Nouveau modèle de document',body,`<button class="btn btn-ghost" onclick="closeModal()">Annuler</button><button class="btn btn-pri" onclick="saveDocTemplate()">💾 Enregistrer le modèle</button>`,'wide');
+}
+function docPageHeaderHtml(){
+  const s=getSettings()||{};
+  return `<div contenteditable="false" style="display:flex;align-items:center;justify-content:space-between;border-bottom:2px solid #7CC242;padding-bottom:10px;margin-bottom:20px;user-select:none">
+    ${s.logo?`<img src="${s.logo}" style="height:26px">`:`<div style="font-weight:800;font-size:.8rem;color:#1A2B3D">${esc(s.company||'EGN')}</div>`}
+    <div style="font-size:.72rem;font-weight:700;color:#1A2B3D;text-align:right">${esc(DOCDRAFT.name||'Titre du document')}</div>
+  </div>`;
+}
+function docExec(cmd,val){document.getElementById('doc_page_content').focus();document.execCommand(cmd,false,val||null);}
+function docInsertTable(){
+  document.getElementById('doc_page_content').focus();
+  const html='<table style="width:100%;border-collapse:collapse;margin:.5rem 0"><tr><td style="border:1px solid #ccc;padding:6px">Cellule</td><td style="border:1px solid #ccc;padding:6px">Cellule</td></tr><tr><td style="border:1px solid #ccc;padding:6px">Cellule</td><td style="border:1px solid #ccc;padding:6px">Cellule</td></tr></table><p><br></p>';
+  document.execCommand('insertHTML',false,html);
+}
+function docInsertPlaceholder(key){
+  if(!key)return;
+  document.getElementById('doc_page_content').focus();
+  document.execCommand('insertText',false,'{{'+key+'}}');
+}
+function docAddOp(id){if(!id)return;docCaptureName();docCapturePage();DOCDRAFT.operationIds=DOCDRAFT.operationIds||[];if(!DOCDRAFT.operationIds.includes(id))DOCDRAFT.operationIds.push(id);renderDocEditor();}
+function docRemoveOp(id){docCaptureName();docCapturePage();DOCDRAFT.operationIds=(DOCDRAFT.operationIds||[]).filter(x=>x!==id);renderDocEditor();}
+function docGoPage(delta){docCaptureName();docCapturePage();DOC_PAGE_IDX=Math.max(0,Math.min(DOCDRAFT.pages.length-1,DOC_PAGE_IDX+delta));renderDocEditor();}
+function docAddPage(){docCaptureName();docCapturePage();DOCDRAFT.pages.push({id:uid(),html:''});DOC_PAGE_IDX=DOCDRAFT.pages.length-1;renderDocEditor();}
+function docDelPage(){
+  if(DOCDRAFT.pages.length<=1)return;
+  docCaptureName();
+  DOCDRAFT.pages.splice(DOC_PAGE_IDX,1);
+  DOC_PAGE_IDX=Math.max(0,DOC_PAGE_IDX-1);
+  renderDocEditor();
+}
+function saveDocTemplate(){
+  docCaptureName();docCapturePage();
+  if(!DOCDRAFT.name){toast('Nom du modèle requis','err');return;}
+  const list=getDocTemplates();
+  const idx=list.findIndex(t=>t.id===DOCDRAFT.id);
+  if(idx>=0)list[idx]=DOCDRAFT;else list.push(DOCDRAFT);
+  save('egncrm_doctemplates',list);
+  logActivity('action',`📄 Modèle de document enregistré : ${DOCDRAFT.name}`);
+  DOCDRAFT=null;closeModal();renderDocsTab();toast('Modèle enregistré ✓','ok');
+}
+function delDocTemplate(id){
+  modalConfirm('Supprimer ce modèle de document ?','',()=>{
+    save('egncrm_doctemplates',getDocTemplates().filter(t=>t.id!==id));
+    deleteRemoteRow('egncrm_doctemplates',id);
+    closeModal();renderDocsTab();toast('Modèle supprimé','ok');
+  });
+}
 function tplVars(r){
   const op=getProducts().find(p=>p.id===r.productId);const rd=nextRdvOf(r);const wz=recWorkAddr(r);const deal=dealOf(r);
   const s=getSettings()||{};const me=ME?(ME.prenom+' '+ME.nom).trim():'';
