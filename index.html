@@ -658,25 +658,18 @@ const getFactures=()=>load(K.factures,[]);
 const getSources=()=>load(K.src,[]);
 const getTeams=()=>load(K.team,[]);
 const getSettings=()=>load(K.set,{});
-/* ---- TVA : tous les montants saisis dans le CRM sont réputés TTC — le HT et la TVA sont calculés et affichés partout ---- */
-const tvaRate=()=>{const t=parseFloat((getSettings()||{}).tvaRate);return isNaN(t)?20:t;};
-const htOf=n=>(n||0)/(1+tvaRate()/100);
-const tvaOf=n=>(n||0)-htOf(n);
-const fmtEur=n=>(n||0).toLocaleString('fr-FR',{maximumFractionDigits:2})+' €';
-const htSub=n=>`<span style="display:block;font-size:.64rem;font-weight:500;color:var(--text-mut)">HT ${fmtEur(htOf(n))} · TVA ${fmtEur(tvaOf(n))}</span>`;
 const statById=id=>getStatuses().find(s=>s.id===id);
 const userById=id=>getUsers().find(u=>u.id===id);
 const recById=id=>getRecs().find(r=>r.id===id);
 async function nextDossier(){
   try{const{data,error}=await SUPA.rpc('next_dossier_number');if(error)throw error;if(data)return data;}
   catch(e){console.error('[nextDossier] centralisé indisponible, repli local',e);}
-  // repli hors-ligne : suffixe horodaté unique -> aucun risque de collision entre deux appareils
-  return 'ND-'+new Date().getFullYear()+'-LOC-'+Date.now().toString(36).toUpperCase();
+  let c=load(K.cnt,0)+1;save(K.cnt,c);return 'ND-'+new Date().getFullYear()+'-'+String(c).padStart(4,'0')+'-LOC';
 }
 async function nextApfNum(){
   try{const{data,error}=await SUPA.rpc('next_apf_number');if(error)throw error;if(data)return data;}
   catch(e){console.error('[nextApfNum] centralisé indisponible, repli local',e);}
-  return 'APF-'+new Date().getFullYear()+'-LOC-'+Date.now().toString(36).toUpperCase();
+  let c=load('egncrm_apf_counter',0)+1;save('egncrm_apf_counter',c);return 'APF-'+new Date().getFullYear()+'-'+String(c).padStart(3,'0')+'-LOC';
 }
 
 /* ---- Supabase (authentification réelle — étape 1) ---- */
@@ -995,7 +988,7 @@ function thermitubePreviewHtml(t){
     <tr><td>Métrage linéaire ${t.manuel?'(saisie manuelle)':'(calculé automatiquement)'}</td><td style="text-align:right;font-weight:700">${t.metrage.toLocaleString('fr-FR')} ml</td></tr>
     <tr><td>Coût calculé (${t.prixMl} €/ml) <span class="muted" style="font-size:.62rem">— indicatif, comparaison uniquement</span></td><td style="text-align:right">${eur(t.coutCalcule)}</td></tr>
     <tr><td>kWh cumac estimé (390 × ${t.surface} m²)</td><td style="text-align:right;font-weight:700;color:var(--green-deep)">${t.cumacEstime.toLocaleString('fr-FR')} kWhc</td></tr>
-    <tr><td><b>Devis présenté dans l'étude</b> <span class="muted" style="font-size:.62rem">(= Prime CEE saisie dans le Deal — reste à payer 0 €)</span></td><td style="text-align:right;font-weight:800;color:#2D5F14">${eur(t.devisEstime)}<span style="display:block;font-size:.64rem;font-weight:500;color:var(--text-mut)">HT ${eur(htOf(t.devisEstime))}</span></td></tr>
+    <tr><td><b>Devis présenté dans l'étude</b> <span class="muted" style="font-size:.62rem">(= Prime CEE saisie dans le Deal — reste à payer 0 €)</span></td><td style="text-align:right;font-weight:800;color:#2D5F14">${eur(t.devisEstime)}</td></tr>
   </tbody></table></div><p class="muted" style="font-size:.7rem;margin-top:.3rem">💡 Ce devis "présenté" ne sert que dans le document d'étude — la Comptabilité et le reste du dossier restent gérés manuellement comme d'habitude. Pense à renseigner la prime dans le panneau Deal avant de générer le PDF.</p>`;
 }
 function recalcThermitubePreview(recId){
@@ -1290,8 +1283,8 @@ async function genererEtudeThermitubePdf(recId){
     ${photoGrandeHtml}
     <div class="kpi-row">
       <div class="kpi-box navy"><div class="l">Surface de serre</div><div class="v">${t.surface||'—'} m²</div><div class="s">${op?esc(op.name):''}</div></div>
-      <div class="kpi-box orange"><div class="l">Investissement estimé</div><div class="v">${eur(t.devisEstime)}</div><div class="s">HT ${eur(htOf(t.devisEstime))} · ${t.metrage.toLocaleString('fr-FR')} ml × ${t.prixMl} €/ml</div></div>
-      <div class="kpi-box green"><div class="l">Prime CEE</div><div class="v">${eur(primeCEE)}</div><div class="s">HT ${eur(htOf(primeCEE))}${t.devisEstime?' · '+Math.round(primeCEE/t.devisEstime*100)+'% du devis':''}</div></div>
+      <div class="kpi-box orange"><div class="l">Investissement estimé</div><div class="v">${eur(t.devisEstime)}</div><div class="s">${t.metrage.toLocaleString('fr-FR')} ml × ${t.prixMl} €/ml</div></div>
+      <div class="kpi-box green"><div class="l">Prime CEE</div><div class="v">${eur(primeCEE)}</div><div class="s">${t.devisEstime?Math.round(primeCEE/t.devisEstime*100)+'% du devis':''}</div></div>
     </div>
     <p style="text-align:center;font-size:.78rem;color:#5A6E82;font-style:italic">${dateVt?'Visite technique réalisée le '+fmtDateLong(dateVt):''}</p>
     <div class="foot"><span>Document confidentiel — ${esc(s.company||'EGN Rénovation')} © ${new Date().getFullYear()}</span><span>${esc(s.email||'')}</span></div>
@@ -1320,12 +1313,12 @@ async function genererEtudeThermitubePdf(recId){
     <div class="box"><p>${esc(e.strategie||'—').replace(/\n/g,'<br>')}</p></div>
 
     <h1 class="pt" style="margin-top:20px">Récapitulatif financier (estimatif)</h1>
-    <table class="et"><thead><tr><th>Désignation</th><th style="text-align:right">Montant HT</th><th style="text-align:right">TVA (${tvaRate()}%)</th><th style="text-align:right">Montant TTC</th></tr></thead><tbody>
-      <tr><td>Coût calculé (${t.metrage.toLocaleString('fr-FR')} ml × ${t.prixMl} €/ml) <span style="color:#9aa5b1;font-size:.7rem">— indicatif</span></td><td style="text-align:right;color:#9aa5b1">${eur(htOf(t.coutCalcule))}</td><td style="text-align:right;color:#9aa5b1">${eur(tvaOf(t.coutCalcule))}</td><td style="text-align:right;color:#9aa5b1">${eur(t.coutCalcule)}</td></tr>
-      <tr><td>Devis présenté (= Prime CEE)</td><td style="text-align:right">${eur(htOf(t.devisEstime))}</td><td style="text-align:right">${eur(tvaOf(t.devisEstime))}</td><td style="text-align:right;font-weight:700">${eur(t.devisEstime)}</td></tr>
-      <tr><td>Prime CEE${deleg?' — '+esc(deleg.name):''}</td><td style="text-align:right">− ${eur(htOf(primeCEE))}</td><td style="text-align:right">− ${eur(tvaOf(primeCEE))}</td><td style="text-align:right">− ${eur(primeCEE)}</td></tr>
+    <table class="et"><thead><tr><th>Désignation</th><th style="text-align:right">Montant</th></tr></thead><tbody>
+      <tr><td>Coût calculé (${t.metrage.toLocaleString('fr-FR')} ml × ${t.prixMl} €/ml) <span style="color:#9aa5b1;font-size:.7rem">— indicatif</span></td><td style="text-align:right;color:#9aa5b1">${eur(t.coutCalcule)}</td></tr>
+      <tr><td>Devis présenté (= Prime CEE)</td><td style="text-align:right;font-weight:700">${eur(t.devisEstime)}</td></tr>
+      <tr><td>Prime CEE${deleg?' — '+esc(deleg.name):''}</td><td style="text-align:right">− ${eur(primeCEE)}</td></tr>
     </tbody></table>
-    <div class="finalbox"><div>RESTE À PAYER (estimatif)</div><div class="r">${eur(resteAPayer)}<span class="s">soit ${eur(htOf(resteAPayer))} HT — TVA ${tvaRate()}% incluse</span></div></div>
+    <div class="finalbox"><div>RESTE À PAYER (estimatif)</div><div class="r">${eur(resteAPayer)}</div></div>
     <p style="font-size:.72rem;color:#9aa5b1;margin-top:20px">Document confidentiel — ${esc(s.company||'')} — Établi le ${new Date().toLocaleDateString('fr-FR')}. Estimation indicative. Prime CEE à confirmer auprès du mandataire — accord à sécuriser avant tout début de travaux.</p>
     <div class="foot"><span>${esc(s.company||'EGN Rénovation')} — Audit Thermitube | ${esc(recName(r))}</span><span>Page 2</span></div>
   </div>
@@ -1409,7 +1402,7 @@ async function genererEtudePdf(recId){
     ${photoGrandeHtml}
     <div class="kpi-row">
       <div class="kpi-box orange"><div class="l">Coût ${esc(energieLabel)} actuel</div><div class="v">${eur(coutActuel)}</div><div class="s">par an (estimé)</div></div>
-      <div class="kpi-box navy"><div class="l">Prime CEE</div><div class="v">${eur(primeCEE)}</div><div class="s">HT ${eur(htOf(primeCEE))}${devisTTC?' · '+Math.round(primeCEE/devisTTC*100)+'% du devis TTC':''}</div></div>
+      <div class="kpi-box navy"><div class="l">Prime CEE</div><div class="v">${eur(primeCEE)}</div><div class="s">${devisTTC?Math.round(primeCEE/devisTTC*100)+'% du devis TTC':''}</div></div>
       <div class="kpi-box green"><div class="l">Reste à payer</div><div class="v">${eur(resteAPayer)}</div><div class="s">après prime CEE</div></div>
     </div>
     <div class="interloc">${dateVt?'Visite technique réalisée le '+fmtDateLong(dateVt):''}</div>
@@ -1461,11 +1454,11 @@ async function genererEtudePdf(recId){
   <div class="page">
     <div class="ph"><span>${esc(r.dossier||'')} — Étude technique</span><span>${esc(s.company||'')}</span></div>
     <h1 class="pt">Récapitulatif financier</h1>
-    <table class="et"><thead><tr><th>Désignation</th><th style="text-align:right">Montant HT</th><th style="text-align:right">TVA (${tvaRate()}%)</th><th style="text-align:right">Montant TTC</th></tr></thead><tbody>
-      <tr><td>Montant du devis</td><td style="text-align:right">${eur(htOf(devisTTC))}</td><td style="text-align:right">${eur(tvaOf(devisTTC))}</td><td style="text-align:right">${eur(devisTTC)}</td></tr>
-      <tr><td>Prime CEE${deleg?' — '+esc(deleg.name):''}${deal.type?' ('+(deal.type==='precaire'?'Précaire':'Classique')+')':''}</td><td style="text-align:right">− ${eur(htOf(primeCEE))}</td><td style="text-align:right">− ${eur(tvaOf(primeCEE))}</td><td style="text-align:right">− ${eur(primeCEE)}</td></tr>
+    <table class="et"><thead><tr><th>Désignation</th><th style="text-align:right">Montant TTC</th></tr></thead><tbody>
+      <tr><td>Montant du devis</td><td style="text-align:right">${eur(devisTTC)}</td></tr>
+      <tr><td>Prime CEE${deleg?' — '+esc(deleg.name):''}${deal.type?' ('+(deal.type==='precaire'?'Précaire':'Classique')+')':''}</td><td style="text-align:right">− ${eur(primeCEE)}</td></tr>
     </tbody></table>
-    <div class="finalbox"><div>RESTE À PAYER</div><div class="r">${eur(resteAPayer)}<span class="s">soit ${eur(htOf(resteAPayer))} HT — TVA ${tvaRate()}% incluse</span></div></div>
+    <div class="finalbox"><div>RESTE À PAYER</div><div class="r">${eur(resteAPayer)}</div></div>
 
     <h1 class="pt" style="margin-top:20px">Qualification CEE</h1>
     <table class="et"><thead><tr><th>Critère</th><th>Valeur</th></tr></thead><tbody>
@@ -2056,7 +2049,7 @@ const COLS={
   updated:{label:'Date de modification',val:r=>`<span class="muted">${r.updated?new Date(r.updated).toLocaleDateString('fr-FR'):''}</span>`},
   zone:{label:'Zone climatique',val:r=>{const z=zoneOf(recWorkAddr(r).dept);return z?`<span class="zpill z-${z}">${z}</span>`:'<span class="muted">—</span>';}},
   delegataire:{label:'Délégataire',val:r=>`<span class="muted">${esc(dealOf(r).delegataireName||'')||'—'}</span>`},
-  prime:{label:'Prime (€ TTC)',val:r=>dealOf(r).prime?`<b style="color:var(--green-deep)">${dealOf(r).prime.toLocaleString('fr-FR')} €</b><span style="display:block;font-size:.62rem;color:var(--text-mut)">HT ${htOf(dealOf(r).prime).toLocaleString('fr-FR',{maximumFractionDigits:2})} €</span>`:'<span class="muted">—</span>'}
+  prime:{label:'Prime (€)',val:r=>dealOf(r).prime?`<b style="color:var(--green-deep)">${dealOf(r).prime.toLocaleString('fr-FR')} €</b>`:'<span class="muted">—</span>'}
 };
 const ALL_COL_KEYS=['dossier','name','tel','telFixe','email','ville','dept','adresse','siret','fonction','nomSite','operation','statut','source','intervenant','zone','delegataire','prime','created','updated'];
 const DEFAULT_VISIBLE=['dossier','name','tel','ville','operation','statut','source'];
@@ -2191,13 +2184,12 @@ function renderDossier(r){
   const delegs=getDelegataires();const deal=dealOf(r);
   let dealP='';
   if(isAdminCompta){
-    dealP=`<div class="panel deal-panel"><div class="panel-h"><h3>💰 Deal <span style="font-size:.66rem;font-weight:600;color:var(--text-mut);text-transform:none">— Super Admin / Admin uniquement</span></h3>${deal.prime?`<div class="sp"><span class="deal-tag">${deal.prime.toLocaleString('fr-FR')} € TTC · HT ${htOf(deal.prime).toLocaleString('fr-FR',{maximumFractionDigits:2})} €</span></div>`:''}</div><div class="panel-b">
+    dealP=`<div class="panel deal-panel"><div class="panel-h"><h3>💰 Deal <span style="font-size:.66rem;font-weight:600;color:var(--text-mut);text-transform:none">— Super Admin / Admin uniquement</span></h3>${deal.prime?`<div class="sp"><span class="deal-tag">${deal.prime.toLocaleString('fr-FR')} €</span></div>`:''}</div><div class="panel-b">
     <div class="deal-fields">
       <div class="fld"><label>Délégataire</label><select id="deal_deleg" onchange="dealRecalc()"><option value="">— Choisir —</option>${delegs.map(d=>`<option value="${d.id}" ${deal.delegataireId===d.id?'selected':''}>${esc(d.name)}</option>`).join('')}</select></div>
       <div class="fld"><label>Type de prime</label><select id="deal_type" onchange="dealRecalc()"><option value="classique" ${deal.type!=='precaire'?'selected':''}>Classique</option><option value="precaire" ${deal.type==='precaire'?'selected':''}>Précaire</option></select></div>
       <div class="fld"><label>Cumac (kWh cumac)</label><input type="number" id="deal_cumac" value="${deal.cumac!=null&&deal.cumac!==''?deal.cumac:''}" oninput="dealRecalc()" placeholder="ex : 1200000"></div>
       <div class="fld"><label>Prime estimée (TTC)</label><div id="deal_prime" class="deal-prime">—</div></div>
-      <div class="fld"><label>Soit HT / TVA (${tvaRate()}%)</label><div id="deal_ht" class="deal-prime" style="font-size:.85rem">—</div></div>
     </div>
     <div class="deal-info muted" id="deal_valoinfo"></div>
     <div style="display:flex;gap:.4rem;flex-wrap:wrap;margin-top:.6rem">
@@ -2266,8 +2258,6 @@ function callCenterCostFor(r){
   return{mode:rule.mode,montant,label:`${src.name} — ${detail}`,src};
 }
 /* -- VT (Visite technique) & Auditeur : tarif fixe par opération, ajouté automatiquement selon le statut du dossier -- */
-const VT_TRIGGER_STATUSES=['VT terminée','Audit terminé','Installé','Payé'];
-const AUDIT_TRIGGER_STATUSES=['Audit terminé','Installé','Payé'];
 function statusNameOf(r){const st=statById(r.statusId);return st?st.name:'';}
 function subAssignedFor(r,kind){
   // dernier RDV de ce type (vt / auditeur) lié au dossier, avec un sous-traitant choisi
@@ -2277,8 +2267,6 @@ function subAssignedFor(r,kind){
 function subCostFor(r,kind){
   const listKey=kind==='vt'?'egncrm_vt':'egncrm_auditeurs';
   const label=kind==='vt'?'VT':'Audit';
-  const triggers=kind==='vt'?VT_TRIGGER_STATUSES:AUDIT_TRIGGER_STATUSES;
-  const active=triggers.includes(statusNameOf(r));
   const c=comptaOf(r);
   const manualSubId=kind==='vt'?c.vtSubId:c.auditSubId;
   const list=load(listKey,[]);
@@ -2286,15 +2274,14 @@ function subCostFor(r,kind){
   if(manualSubId)sub=list.find(x=>x.id===manualSubId)||null;
   if(!sub){
     const rdv=subAssignedFor(r,kind);
-    if(!rdv)return{montant:0,active,label:`Aucun ${label==='VT'?'RDV Visite technique':'RDV Audit'} avec sous-traitant assigné, ni sélection manuelle`,sub:null};
+    if(!rdv)return{montant:0,active:true,label:`Aucun ${label==='VT'?'RDV Visite technique':'RDV Audit'} avec sous-traitant assigné, ni sélection manuelle`,sub:null};
     sub=list.find(x=>x.id===rdv.subId)||null;
   }
-  if(!sub)return{montant:0,active,label:'Sous-traitant introuvable',sub:null};
-  if(!active)return{montant:0,active,label:`${sub.name} — en attente du statut « ${triggers[0]} »`,sub};
+  if(!sub)return{montant:0,active:true,label:'Sous-traitant introuvable',sub:null};
   const prices=sub.prices||[];
   const rule=prices.find(p=>p.opId===r.productId)||prices.find(p=>!p.opId);
-  if(!rule)return{montant:0,active,label:`Aucun tarif défini pour cette opération sur « ${sub.name} »`,sub};
-  return{montant:rule.value||0,active,label:`${sub.name} — ${rule.value} € fixe`,sub};
+  if(!rule)return{montant:0,active:true,label:`Aucun tarif défini pour cette opération sur « ${sub.name} »`,sub};
+  return{montant:rule.value||0,active:true,label:`${sub.name} — ${rule.value} € fixe`,sub};
 }
 function vtCostFor(r){return subCostFor(r,'vt');}
 function auditCostFor(r){return subCostFor(r,'auditeur');}
@@ -2344,9 +2331,8 @@ function renderComptaPanel(r){
   const aPayerVt=vtAnnule?0:vtC.montant;
   const aPayerAudit=audAnnule?0:auditC.montant;
   const eur=n=>(n||0).toLocaleString('fr-FR',{maximumFractionDigits:2})+' €';
-  const ttcHt=n=>eur(n)+htSub(n);
-  let ffRows=ff.length?ff.map(x=>`<div class="cfg-item"><span class="nm">${esc(x.label)}</span><span class="tag" style="background:${x.origin==='poseur'?'rgba(230,148,57,.15);color:#B96A0A':'rgba(90,110,130,.12);color:#5A6E82'}">${x.origin==='poseur'?'🔧 Poseur':'🏢 Société'}</span><span class="tag" style="background:rgba(230,57,70,.1);color:#E63946">${eur(x.amount)} <span style="font-size:.62rem;font-weight:500">· HT ${eur(htOf(x.amount))}</span></span><span class="sp"><button class="iconbtn del" onclick="delFauxFrais('${r.id}','${x.id}')">🗑️</button></span></div>`).join(''):`<div class="muted" style="font-size:.82rem;padding:.4rem 0">Aucun faux frais.</div>`;
-  let prRows=prC.lignes.length?prC.lignes.map(l=>`<div class="cfg-item"><span class="nm">${l.calc.qty}× ${esc(l.calc.label)}</span><span class="tag" style="background:#eef0f2;color:#6b7785">${l.calc.mode==='m2'?'au m²':'à la pièce'}</span><span class="tag" style="background:rgba(45,125,210,.12);color:#2D7DD2">${eur(l.calc.montant)} <span style="font-size:.62rem;font-weight:500">· HT ${eur(htOf(l.calc.montant))}</span></span><span class="sp"><button class="iconbtn del" onclick="delProduitLigne('${r.id}','${l.id}')">🗑️</button></span></div>`).join(''):`<div class="muted" style="font-size:.82rem;padding:.4rem 0">Aucun produit ajouté.</div>`;
+  let ffRows=ff.length?ff.map(x=>`<div class="cfg-item"><span class="nm">${esc(x.label)}</span><span class="tag" style="background:${x.origin==='poseur'?'rgba(230,148,57,.15);color:#B96A0A':'rgba(90,110,130,.12);color:#5A6E82'}">${x.origin==='poseur'?'🔧 Poseur':'🏢 Société'}</span><span class="tag" style="background:rgba(230,57,70,.1);color:#E63946">${eur(x.amount)}</span><span class="sp"><button class="iconbtn del" onclick="delFauxFrais('${r.id}','${x.id}')">🗑️</button></span></div>`).join(''):`<div class="muted" style="font-size:.82rem;padding:.4rem 0">Aucun faux frais.</div>`;
+  let prRows=prC.lignes.length?prC.lignes.map(l=>`<div class="cfg-item"><span class="nm">${l.calc.qty}× ${esc(l.calc.label)}</span><span class="tag" style="background:#eef0f2;color:#6b7785">${l.calc.mode==='m2'?'au m²':'à la pièce'}</span><span class="tag" style="background:rgba(45,125,210,.12);color:#2D7DD2">${eur(l.calc.montant)}</span><span class="sp"><button class="iconbtn del" onclick="delProduitLigne('${r.id}','${l.id}')">🗑️</button></span></div>`).join(''):`<div class="muted" style="font-size:.82rem;padding:.4rem 0">Aucun produit ajouté.</div>`;
   const sourceAssignee=r.sourceId?getSources().find(s=>s.id===r.sourceId):null;
   return `<div class="panel" style="border:1.5px solid rgba(230,57,70,.25)">
     <div class="panel-h"><h3>💼 Comptabilité <span style="font-size:.66rem;font-weight:600;color:var(--text-mut);text-transform:none">— Super Admin / Admin uniquement</span></h3><div class="sp" style="display:flex;gap:.4rem;flex-wrap:wrap;align-items:center">${factureStatutBadge(r,'poseur')}${c.facturePoseur?statutComptaSelect(r,'poseur'):''}</div></div>
@@ -2384,30 +2370,29 @@ function renderComptaPanel(r){
       <div class="cfg-list">${ffRows}</div>
       <div class="fgrid c3" style="margin-top:.6rem">
         <div class="fld"><label>Libellé</label><input id="ff_label" placeholder="Ex : Déplacement, matériel supplémentaire…"></div>
-        <div class="fld"><label>Montant TTC (€)</label><input type="number" step="any" id="ff_amount" placeholder="0"></div>
+        <div class="fld"><label>Montant (€)</label><input type="number" step="any" id="ff_amount" placeholder="0"></div>
         <div class="fld"><label>Engendré par</label><select id="ff_origin"><option value="societe">🏢 Société (charge interne)</option><option value="poseur">🔧 Poseur (à lui facturer / déduire)</option></select></div>
       </div>
       <button class="btn btn-ghost btn-sm" style="margin-top:.5rem" onclick="addFauxFrais('${r.id}')">+ Ajouter un faux frais</button>
 
       <div class="sectitle" style="margin-top:1.1rem">Rentabilité du dossier</div>
-      <p class="muted" style="font-size:.7rem;margin:.15rem 0 .45rem">Montants saisis <b>TTC</b> — TVA ${tvaRate()}% déduite automatiquement (taux modifiable dans Paramètres ▸ Société).</p>
-      <div class="info-row"><span class="il">Montant du devis <span class="muted" style="font-size:.68rem">(base de calcul commission poseur — non compté en recette)</span></span><span class="iv muted">${ttcHt(c.devisTTC)}</span></div>
-      <div class="info-row"><span class="il">Prime CEE <span class="muted" style="font-size:.68rem">(recette prise en compte pour la rentabilité)</span></span><span class="iv">${ttcHt(prime)}</span></div>
-      <div class="info-row"><span class="il" style="font-weight:700">Recettes totales (= prime CEE)</span><span class="iv" style="font-weight:700">${ttcHt(recettes)}</span></div>
-      <div class="info-row"><span class="il">Coût poseur${pc.mode?` — ${esc(pc.label)}`:''}</span><span class="iv">${ttcHt(pc.montant)}</span></div>
-      <div class="info-row"><span class="il">Coût Call Center${ccC.mode?` — ${esc(ccC.label)}`:''}</span><span class="iv">${ttcHt(ccC.montant)}</span></div>
-      <div class="info-row"><span class="il">Coût VT ${vtC.active?'':'<span class="muted" style="font-size:.66rem">(inactif)</span>'} — ${esc(vtC.label)}</span><span class="iv">${ttcHt(vtC.montant)}</span></div>
-      <div class="info-row"><span class="il">Coût Audit ${auditC.active?'':'<span class="muted" style="font-size:.66rem">(inactif)</span>'} — ${esc(auditC.label)}</span><span class="iv">${ttcHt(auditC.montant)}</span></div>
-      <div class="info-row"><span class="il">Coût produits${prC.lignes.length?` (${prC.lignes.length} ligne${prC.lignes.length>1?'s':''})`:''}</span><span class="iv">${ttcHt(prC.montant)}</span></div>
-      <div class="info-row"><span class="il">Faux frais — Société</span><span class="iv">${ttcHt(ffSociete)}</span></div>
-      <div class="info-row"><span class="il">Faux frais — Poseur</span><span class="iv">${ttcHt(ffPoseur)}</span></div>
-      <div class="info-row" style="font-weight:700"><span class="il">Charges totales</span><span class="iv" style="font-weight:700">${ttcHt(charges)}</span></div>
-      <div class="info-row" style="margin-top:.4rem;border-top:1.5px solid var(--border-soft);padding-top:.5rem"><span class="il" style="font-weight:800">Marge nette</span><span class="iv" style="font-weight:800;color:${marge>=0?'var(--green-deep)':'#E63946'}">${eur(marge)}${recettes>0?' ('+margePct.toFixed(1)+'%)':''}${htSub(marge)}</span></div>
-      <div class="info-row" style="margin-top:.3rem"><span class="il" style="font-weight:800;color:#B96A0A">💰 Total à verser au poseur${poseurAnnule?' (annulé)':''}</span><span class="iv" style="font-weight:800;color:${poseurAnnule?'var(--text-mut)':'#B96A0A'}">${ttcHt(aPayerPoseur)}</span></div>
+      <div class="info-row"><span class="il">Montant du devis <span class="muted" style="font-size:.68rem">(base de calcul commission poseur — non compté en recette)</span></span><span class="iv muted">${eur(c.devisTTC)}</span></div>
+      <div class="info-row"><span class="il">Prime CEE <span class="muted" style="font-size:.68rem">(recette prise en compte pour la rentabilité)</span></span><span class="iv">${eur(prime)}</span></div>
+      <div class="info-row"><span class="il" style="font-weight:700">Recettes totales (= prime CEE)</span><span class="iv" style="font-weight:700">${eur(recettes)}</span></div>
+      <div class="info-row"><span class="il">Coût poseur${pc.mode?` — ${esc(pc.label)}`:''}</span><span class="iv">${eur(pc.montant)}</span></div>
+      <div class="info-row"><span class="il">Coût Call Center${ccC.mode?` — ${esc(ccC.label)}`:''}</span><span class="iv">${eur(ccC.montant)}</span></div>
+      <div class="info-row"><span class="il">Coût VT ${vtC.active?'':'<span class="muted" style="font-size:.66rem">(inactif)</span>'} — ${esc(vtC.label)}</span><span class="iv">${eur(vtC.montant)}</span></div>
+      <div class="info-row"><span class="il">Coût Audit ${auditC.active?'':'<span class="muted" style="font-size:.66rem">(inactif)</span>'} — ${esc(auditC.label)}</span><span class="iv">${eur(auditC.montant)}</span></div>
+      <div class="info-row"><span class="il">Coût produits${prC.lignes.length?` (${prC.lignes.length} ligne${prC.lignes.length>1?'s':''})`:''}</span><span class="iv">${eur(prC.montant)}</span></div>
+      <div class="info-row"><span class="il">Faux frais — Société</span><span class="iv">${eur(ffSociete)}</span></div>
+      <div class="info-row"><span class="il">Faux frais — Poseur</span><span class="iv">${eur(ffPoseur)}</span></div>
+      <div class="info-row" style="font-weight:700"><span class="il">Charges totales</span><span class="iv" style="font-weight:700">${eur(charges)}</span></div>
+      <div class="info-row" style="margin-top:.4rem;border-top:1.5px solid var(--border-soft);padding-top:.5rem"><span class="il" style="font-weight:800">Marge nette</span><span class="iv" style="font-weight:800;color:${marge>=0?'var(--green-deep)':'#E63946'}">${eur(marge)}${recettes>0?' ('+margePct.toFixed(1)+'%)':''}</span></div>
+      <div class="info-row" style="margin-top:.3rem"><span class="il" style="font-weight:800;color:#B96A0A">💰 Total à verser au poseur${poseurAnnule?' (annulé)':''}</span><span class="iv" style="font-weight:800;color:${poseurAnnule?'var(--text-mut)':'#B96A0A'}">${eur(aPayerPoseur)}</span></div>
       ${ffPoseur&&!poseurAnnule?`<p class="muted" style="font-size:.7rem;margin-top:.2rem">Inclut le tarif de base (${eur(pc.montant)}) + ${eur(ffPoseur)} de faux frais qui lui sont imputables.</p>`:''}
-      <div class="info-row" style="margin-top:.3rem"><span class="il" style="font-weight:800;color:#2D7DD2">📞 Total à verser au call center${ccAnnule?' (annulé)':''}</span><span class="iv" style="font-weight:800;color:${ccAnnule?'var(--text-mut)':'#2D7DD2'}">${ttcHt(aPayerCallCenter)}</span></div>
-      <div class="info-row" style="margin-top:.3rem"><span class="il" style="font-weight:800;color:#3D9970">🧰 Total à verser au VT${vtAnnule?' (annulé)':''}</span><span class="iv" style="font-weight:800;color:${vtAnnule?'var(--text-mut)':'#3D9970'}">${ttcHt(aPayerVt)}</span></div>
-      <div class="info-row" style="margin-top:.3rem"><span class="il" style="font-weight:800;color:#8E44AD">📝 Total à verser à l'auditeur${audAnnule?' (annulé)':''}</span><span class="iv" style="font-weight:800;color:${audAnnule?'var(--text-mut)':'#8E44AD'}">${ttcHt(aPayerAudit)}</span></div>
+      <div class="info-row" style="margin-top:.3rem"><span class="il" style="font-weight:800;color:#2D7DD2">📞 Total à verser au call center${ccAnnule?' (annulé)':''}</span><span class="iv" style="font-weight:800;color:${ccAnnule?'var(--text-mut)':'#2D7DD2'}">${eur(aPayerCallCenter)}</span></div>
+      <div class="info-row" style="margin-top:.3rem"><span class="il" style="font-weight:800;color:#3D9970">🧰 Total à verser au VT${vtAnnule?' (annulé)':''}</span><span class="iv" style="font-weight:800;color:${vtAnnule?'var(--text-mut)':'#3D9970'}">${eur(aPayerVt)}</span></div>
+      <div class="info-row" style="margin-top:.3rem"><span class="il" style="font-weight:800;color:#8E44AD">📝 Total à verser à l'auditeur${audAnnule?' (annulé)':''}</span><span class="iv" style="font-weight:800;color:${audAnnule?'var(--text-mut)':'#8E44AD'}">${eur(aPayerAudit)}</span></div>
       <div style="margin-top:.4rem;display:flex;gap:.4rem;flex-wrap:wrap;align-items:center">${factureStatutBadge(r,'callcenter')}${c.factureCallCenter?statutComptaSelect(r,'callcenter'):''}</div>
       <div style="margin-top:.4rem;display:flex;gap:.4rem;flex-wrap:wrap;align-items:center">${factureStatutBadge(r,'vt')}${c.factureVt?statutComptaSelect(r,'vt'):''}</div>
       <div style="margin-top:.4rem;display:flex;gap:.4rem;flex-wrap:wrap;align-items:center">${factureStatutBadge(r,'auditeur')}${c.factureAudit?statutComptaSelect(r,'auditeur'):''}</div>
@@ -2437,8 +2422,8 @@ function genererRapportCompta(recId){
   const rptMarge=rptRecettes-m.charges;
   const rptMargePct=rptRecettes>0?(rptMarge/rptRecettes*100):0;
   const dateStr=new Date().toLocaleDateString('fr-FR');
-  const prRows=prC.lignes.length?prC.lignes.map(l=>`<tr><td>${l.calc.qty}× ${esc(l.calc.label)}</td><td>${l.calc.mode==='m2'?'au m²':'à la pièce'}</td><td style="text-align:right;color:#6b7785">${eur(htOf(l.calc.montant))}</td><td style="text-align:right">${eur(l.calc.montant)}</td></tr>`).join(''):`<tr><td colspan="4" style="color:#9aa5b1">Aucun produit installé</td></tr>`;
-  const ffRows=ff.length?ff.map(x=>`<tr><td>${esc(x.label)}</td><td>${x.origin==='poseur'?'🔧 Poseur':'🏢 Société'}</td><td style="text-align:right;color:#6b7785">${eur(htOf(x.amount))}</td><td style="text-align:right">${eur(x.amount)}</td></tr>`).join(''):`<tr><td colspan="4" style="color:#9aa5b1">Aucun faux frais</td></tr>`;
+  const prRows=prC.lignes.length?prC.lignes.map(l=>`<tr><td>${l.calc.qty}× ${esc(l.calc.label)}</td><td>${l.calc.mode==='m2'?'au m²':'à la pièce'}</td><td style="text-align:right">${eur(l.calc.montant)}</td></tr>`).join(''):`<tr><td colspan="3" style="color:#9aa5b1">Aucun produit installé</td></tr>`;
+  const ffRows=ff.length?ff.map(x=>`<tr><td>${esc(x.label)}</td><td>${x.origin==='poseur'?'🔧 Poseur':'🏢 Société'}</td><td style="text-align:right">${eur(x.amount)}</td></tr>`).join(''):`<tr><td colspan="3" style="color:#9aa5b1">Aucun faux frais</td></tr>`;
   const doc=`<!DOCTYPE html><html lang="fr"><head><meta charset="UTF-8"><title>Rapport comptable — ${esc(r.dossier||'')}</title>
   <style>
     body{font-family:'Segoe UI',Arial,sans-serif;color:#1A2B3D;padding:40px;max-width:820px;margin:0 auto}
@@ -2485,35 +2470,33 @@ function genererRapportCompta(recId){
     <div><span class="lbl">Délégataire</span><br><span class="val">${deleg?esc(deleg.name):'—'}</span></div>
     <div><span class="lbl">Type de prime</span><br><span class="val">${dealOf(r).type==='precaire'?'Précaire':'Classique'}</span></div>
     <div><span class="lbl">Cumac</span><br><span class="val">${dealOf(r).cumac?Number(dealOf(r).cumac).toLocaleString('fr-FR')+' kWhc':'—'}</span></div>
-    <div><span class="lbl">Prime CEE (TTC)</span><br><span class="val">${eur(m.prime)}</span> <span style="color:#6b7785;font-size:.78rem">— HT ${eur(htOf(m.prime))} · TVA ${eur(tvaOf(m.prime))}</span></div>
+    <div><span class="lbl">Prime CEE (TTC)</span><br><span class="val">${eur(m.prime)}</span></div>
   </div>`:''}
 
   <h2>Produits installés</h2>
-  <table><thead><tr><th>Produit</th><th>Mode</th><th style="text-align:right">Coût HT</th><th style="text-align:right">Coût TTC</th></tr></thead>
+  <table><thead><tr><th>Produit</th><th>Mode</th><th style="text-align:right">Coût</th></tr></thead>
   <tbody>${prRows}</tbody></table>
 
   <h2>Faux frais</h2>
-  <table><thead><tr><th>Libellé</th><th>Origine</th><th style="text-align:right">Montant HT</th><th style="text-align:right">Montant TTC</th></tr></thead>
+  <table><thead><tr><th>Libellé</th><th>Origine</th><th style="text-align:right">Montant</th></tr></thead>
   <tbody>${ffRows}</tbody></table>
 
   <h2>Synthèse des coûts</h2>
-  <p style="font-size:.76rem;color:#6b7785;margin:0 0 4px">Montants saisis TTC — TVA ${tvaRate()}% déduite automatiquement.</p>
   <table>
-    <thead><tr><th>Désignation</th><th style="text-align:right">Montant HT</th><th style="text-align:right">TVA (${tvaRate()}%)</th><th style="text-align:right">Montant TTC</th></tr></thead>
     <tbody>
-      <tr><td>Montant du devis</td><td style="text-align:right">${eur(htOf(c.devisTTC))}</td><td style="text-align:right">${eur(tvaOf(c.devisTTC))}</td><td style="text-align:right">${eur(c.devisTTC)}</td></tr>
-      <tr><td>Coût poseur${pc.mode?' — '+esc(pc.label):''}</td><td style="text-align:right">${eur(htOf(pc.montant))}</td><td style="text-align:right">${eur(tvaOf(pc.montant))}</td><td style="text-align:right">${eur(pc.montant)}</td></tr>
-      <tr><td>Coût Call Center${ccC.mode?' — '+esc(ccC.label):''}</td><td style="text-align:right">${eur(htOf(ccC.montant))}</td><td style="text-align:right">${eur(tvaOf(ccC.montant))}</td><td style="text-align:right">${eur(ccC.montant)}</td></tr>
-      <tr><td>Coût VT — ${esc(m.vtC.label)}</td><td style="text-align:right">${eur(htOf(m.vtC.montant))}</td><td style="text-align:right">${eur(tvaOf(m.vtC.montant))}</td><td style="text-align:right">${eur(m.vtC.montant)}</td></tr>
-      <tr><td>Coût Audit — ${esc(m.auditC.label)}</td><td style="text-align:right">${eur(htOf(m.auditC.montant))}</td><td style="text-align:right">${eur(tvaOf(m.auditC.montant))}</td><td style="text-align:right">${eur(m.auditC.montant)}</td></tr>
-      <tr><td>Coût produits</td><td style="text-align:right">${eur(htOf(prC.montant))}</td><td style="text-align:right">${eur(tvaOf(prC.montant))}</td><td style="text-align:right">${eur(prC.montant)}</td></tr>
-      <tr><td>Faux frais (société + poseur)</td><td style="text-align:right">${eur(htOf(m.ffTotal))}</td><td style="text-align:right">${eur(tvaOf(m.ffTotal))}</td><td style="text-align:right">${eur(m.ffTotal)}</td></tr>
-      <tr class="totrow"><td>Charges totales</td><td style="text-align:right">${eur(htOf(m.charges))}</td><td style="text-align:right">${eur(tvaOf(m.charges))}</td><td style="text-align:right">${eur(m.charges)}</td></tr>
-      <tr class="totrow"><td>Recettes totales (${includeDeal?'prime CEE':'montant du devis'})</td><td style="text-align:right">${eur(htOf(rptRecettes))}</td><td style="text-align:right">${eur(tvaOf(rptRecettes))}</td><td style="text-align:right">${eur(rptRecettes)}</td></tr>
+      <tr><td>Montant du devis (TTC)</td><td colspan="1"></td><td style="text-align:right">${eur(c.devisTTC)}</td></tr>
+      <tr><td>Coût poseur${pc.mode?' — '+esc(pc.label):''}</td><td></td><td style="text-align:right">${eur(pc.montant)}</td></tr>
+      <tr><td>Coût Call Center${ccC.mode?' — '+esc(ccC.label):''}</td><td></td><td style="text-align:right">${eur(ccC.montant)}</td></tr>
+      <tr><td>Coût VT — ${esc(m.vtC.label)}</td><td></td><td style="text-align:right">${eur(m.vtC.montant)}</td></tr>
+      <tr><td>Coût Audit — ${esc(m.auditC.label)}</td><td></td><td style="text-align:right">${eur(m.auditC.montant)}</td></tr>
+      <tr><td>Coût produits</td><td></td><td style="text-align:right">${eur(prC.montant)}</td></tr>
+      <tr><td>Faux frais (société + poseur)</td><td></td><td style="text-align:right">${eur(m.ffTotal)}</td></tr>
+      <tr class="totrow"><td colspan="2">Charges totales</td><td style="text-align:right">${eur(m.charges)}</td></tr>
+      <tr class="totrow"><td colspan="2">Recettes totales (${includeDeal?'prime CEE':'montant du devis'})</td><td style="text-align:right">${eur(rptRecettes)}</td></tr>
     </tbody>
   </table>
 
-  <div class="marge-box"><span class="lbl">Marge nette</span><span class="val">${eur(rptMarge)}${rptRecettes>0?' ('+rptMargePct.toFixed(1)+'%)':''}<div style="font-size:.85rem;font-weight:700;opacity:.8">HT ${eur(htOf(rptMarge))} · TVA ${eur(tvaOf(rptMarge))}</div></span></div>
+  <div class="marge-box"><span class="lbl">Marge nette</span><span class="val">${eur(rptMarge)}${rptRecettes>0?' ('+rptMargePct.toFixed(1)+'%)':''}</span></div>
 
   <button class="print-btn" onclick="window.print()" style="padding:10px 18px;background:#7CC242;color:#fff;border:none;border-radius:8px;font-weight:700;cursor:pointer">🖨️ Imprimer / Enregistrer en PDF</button>
   </body></html>`;
@@ -2668,26 +2651,21 @@ function renderComptaResume(){
     return{r,m};
   }).sort((a,b)=>(b.r.updated||0)-(a.r.updated||0));
   const margePct=totRecettes>0?(totMarge/totRecettes*100):0;
-  const ttcHt=n=>eur(n)+`<span style="display:block;font-size:.64rem;font-weight:500;color:var(--text-mut)">HT ${eur(htOf(n))}</span>`;
-  const sumPoseur=Object.values(byPoseur).reduce((s,x)=>s+x.aPayer,0);
-  const sumCc=Object.values(byCc).reduce((s,x)=>s+x.aPayer,0);
-  const sumVt=Object.values(byVt).reduce((s,x)=>s+x.aPayer,0);
-  const sumAud=Object.values(byAud).reduce((s,x)=>s+x.aPayer,0);
-  let h=`<p class="muted" style="font-size:.72rem;margin-bottom:.5rem">💶 Montants TTC — TVA ${tvaRate()}% déduite automatiquement, HT affiché sous chaque montant (taux : Paramètres ▸ Société).</p><div class="kpis">
-    <div class="kpi"><div class="kico">💶</div><div class="klab">Recettes totales</div><div class="kval">${eur(totRecettes)}</div><div class="ksub">HT ${eur(htOf(totRecettes))} · ${recs.length} dossier${recs.length>1?'s':''} chiffré${recs.length>1?'s':''}</div></div>
-    <div class="kpi"><div class="kico">📤</div><div class="klab">Charges totales</div><div class="kval">${eur(totCharges)}</div><div class="ksub">HT ${eur(htOf(totCharges))} · poseurs + call center + VT + audits + produits + faux frais</div></div>
-    <div class="kpi accent"><div class="kico">📈</div><div class="klab">Marge nette</div><div class="kval">${eur(totMarge)}</div><div class="ksub">HT ${eur(htOf(totMarge))}${totRecettes>0?' · '+margePct.toFixed(1)+'% de marge':''}</div></div>
-    <div class="kpi"><div class="kico">🔧</div><div class="klab">À verser aux poseurs</div><div class="kval">${eur(sumPoseur)}</div><div class="ksub">HT ${eur(htOf(sumPoseur))} · ${Object.keys(byPoseur).length} poseur${Object.keys(byPoseur).length>1?'s':''}</div></div>
-    <div class="kpi"><div class="kico">📞</div><div class="klab">À verser au call center</div><div class="kval">${eur(sumCc)}</div><div class="ksub">HT ${eur(htOf(sumCc))} · ${Object.keys(byCc).length} source${Object.keys(byCc).length>1?'s':''}</div></div>
-    <div class="kpi"><div class="kico">🧰</div><div class="klab">À verser aux VT</div><div class="kval">${eur(sumVt)}</div><div class="ksub">HT ${eur(htOf(sumVt))} · ${Object.keys(byVt).length} société${Object.keys(byVt).length>1?'s':''}</div></div>
-    <div class="kpi"><div class="kico">📝</div><div class="klab">À verser aux auditeurs</div><div class="kval">${eur(sumAud)}</div><div class="ksub">HT ${eur(htOf(sumAud))} · ${Object.keys(byAud).length} auditeur${Object.keys(byAud).length>1?'s':''}</div></div>
+  let h=`<div class="kpis">
+    <div class="kpi"><div class="kico">💶</div><div class="klab">Recettes totales</div><div class="kval">${eur(totRecettes)}</div><div class="ksub">${recs.length} dossier${recs.length>1?'s':''} chiffré${recs.length>1?'s':''}</div></div>
+    <div class="kpi"><div class="kico">📤</div><div class="klab">Charges totales</div><div class="kval">${eur(totCharges)}</div><div class="ksub">poseurs + call center + VT + audits + produits + faux frais</div></div>
+    <div class="kpi accent"><div class="kico">📈</div><div class="klab">Marge nette</div><div class="kval">${eur(totMarge)}</div><div class="ksub">${totRecettes>0?margePct.toFixed(1)+'% de marge':''}</div></div>
+    <div class="kpi"><div class="kico">🔧</div><div class="klab">À verser aux poseurs</div><div class="kval">${eur(Object.values(byPoseur).reduce((s,x)=>s+x.aPayer,0))}</div><div class="ksub">${Object.keys(byPoseur).length} poseur${Object.keys(byPoseur).length>1?'s':''}</div></div>
+    <div class="kpi"><div class="kico">📞</div><div class="klab">À verser au call center</div><div class="kval">${eur(Object.values(byCc).reduce((s,x)=>s+x.aPayer,0))}</div><div class="ksub">${Object.keys(byCc).length} source${Object.keys(byCc).length>1?'s':''}</div></div>
+    <div class="kpi"><div class="kico">🧰</div><div class="klab">À verser aux VT</div><div class="kval">${eur(Object.values(byVt).reduce((s,x)=>s+x.aPayer,0))}</div><div class="ksub">${Object.keys(byVt).length} société${Object.keys(byVt).length>1?'s':''}</div></div>
+    <div class="kpi"><div class="kico">📝</div><div class="klab">À verser aux auditeurs</div><div class="kval">${eur(Object.values(byAud).reduce((s,x)=>s+x.aPayer,0))}</div><div class="ksub">${Object.keys(byAud).length} auditeur${Object.keys(byAud).length>1?'s':''}</div></div>
   </div>`;
   // par poseur
   h+=`<div class="panel"><div class="panel-h"><h3>Rentabilité par poseur</h3></div><div class="panel-b">`;
   const poseurKeys=Object.keys(byPoseur);
   if(!poseurKeys.length)h+=`<div class="empty"><div class="big">🔧</div>Aucun dossier avec poseur assigné.</div>`;
   else{h+=`<div class="tbl-wrap"><table class="tbl"><thead><tr><th>Poseur</th><th>Dossiers</th><th style="text-align:right">Total à verser</th><th></th></tr></thead><tbody>`;
-    poseurKeys.forEach(k=>{const u=userById(k);const x=byPoseur[k];h+=`<tr><td>${u?esc(u.prenom+' '+u.nom):'—'}</td><td>${x.nb}</td><td style="text-align:right;font-weight:700">${ttcHt(x.aPayer)}</td><td style="text-align:right"><button class="btn btn-ghost btn-sm" onclick="COMPTA_TAB='facturation';FACT_TYPE='poseur';FACT_AGENT='${k}';renderComptaGlobal()">📄 Facturer</button></td></tr>`;});
+    poseurKeys.forEach(k=>{const u=userById(k);const x=byPoseur[k];h+=`<tr><td>${u?esc(u.prenom+' '+u.nom):'—'}</td><td>${x.nb}</td><td style="text-align:right;font-weight:700">${eur(x.aPayer)}</td><td style="text-align:right"><button class="btn btn-ghost btn-sm" onclick="COMPTA_TAB='facturation';FACT_TYPE='poseur';FACT_AGENT='${k}';renderComptaGlobal()">📄 Facturer</button></td></tr>`;});
     h+=`</tbody></table></div>`;}
   h+=`</div></div>`;
   // par call center (source / régie)
@@ -2695,7 +2673,7 @@ function renderComptaResume(){
   const ccKeys=Object.keys(byCc);
   if(!ccKeys.length)h+=`<div class="empty"><div class="big">📞</div>Aucun dossier avec un coût call center calculé.</div>`;
   else{h+=`<div class="tbl-wrap"><table class="tbl"><thead><tr><th>Source / Régie</th><th>Dossiers</th><th style="text-align:right">Total à verser</th><th></th></tr></thead><tbody>`;
-    ccKeys.forEach(k=>{const src=getSources().find(s=>s.id===k);const x=byCc[k];h+=`<tr><td>${src?esc(src.name):'—'}</td><td>${x.nb}</td><td style="text-align:right;font-weight:700">${ttcHt(x.aPayer)}</td><td style="text-align:right"><button class="btn btn-ghost btn-sm" onclick="COMPTA_TAB='facturation';FACT_TYPE='callcenter';FACT_AGENT='${k}';renderComptaGlobal()">📄 Facturer</button></td></tr>`;});
+    ccKeys.forEach(k=>{const src=getSources().find(s=>s.id===k);const x=byCc[k];h+=`<tr><td>${src?esc(src.name):'—'}</td><td>${x.nb}</td><td style="text-align:right;font-weight:700">${eur(x.aPayer)}</td><td style="text-align:right"><button class="btn btn-ghost btn-sm" onclick="COMPTA_TAB='facturation';FACT_TYPE='callcenter';FACT_AGENT='${k}';renderComptaGlobal()">📄 Facturer</button></td></tr>`;});
     h+=`</tbody></table></div>`;}
   h+=`</div></div>`;
   // par société de visite technique
@@ -2703,7 +2681,7 @@ function renderComptaResume(){
   const vtKeys=Object.keys(byVt);
   if(!vtKeys.length)h+=`<div class="empty"><div class="big">🧰</div>Aucun dossier avec un coût VT actif.</div>`;
   else{h+=`<div class="tbl-wrap"><table class="tbl"><thead><tr><th>Société VT</th><th>Dossiers</th><th style="text-align:right">Total à verser</th><th></th></tr></thead><tbody>`;
-    vtKeys.forEach(k=>{const sub=load('egncrm_vt',[]).find(x=>x.id===k);const x=byVt[k];h+=`<tr><td>${sub?esc(sub.name):'—'}</td><td>${x.nb}</td><td style="text-align:right;font-weight:700">${ttcHt(x.aPayer)}</td><td style="text-align:right"><button class="btn btn-ghost btn-sm" onclick="COMPTA_TAB='facturation';FACT_TYPE='vt';FACT_AGENT='${k}';renderComptaGlobal()">📄 Facturer</button></td></tr>`;});
+    vtKeys.forEach(k=>{const sub=load('egncrm_vt',[]).find(x=>x.id===k);const x=byVt[k];h+=`<tr><td>${sub?esc(sub.name):'—'}</td><td>${x.nb}</td><td style="text-align:right;font-weight:700">${eur(x.aPayer)}</td><td style="text-align:right"><button class="btn btn-ghost btn-sm" onclick="COMPTA_TAB='facturation';FACT_TYPE='vt';FACT_AGENT='${k}';renderComptaGlobal()">📄 Facturer</button></td></tr>`;});
     h+=`</tbody></table></div>`;}
   h+=`</div></div>`;
   // par auditeur
@@ -2711,7 +2689,7 @@ function renderComptaResume(){
   const audKeys=Object.keys(byAud);
   if(!audKeys.length)h+=`<div class="empty"><div class="big">📝</div>Aucun dossier avec un coût audit actif.</div>`;
   else{h+=`<div class="tbl-wrap"><table class="tbl"><thead><tr><th>Auditeur</th><th>Dossiers</th><th style="text-align:right">Total à verser</th><th></th></tr></thead><tbody>`;
-    audKeys.forEach(k=>{const sub=load('egncrm_auditeurs',[]).find(x=>x.id===k);const x=byAud[k];h+=`<tr><td>${sub?esc(sub.name):'—'}</td><td>${x.nb}</td><td style="text-align:right;font-weight:700">${ttcHt(x.aPayer)}</td><td style="text-align:right"><button class="btn btn-ghost btn-sm" onclick="COMPTA_TAB='facturation';FACT_TYPE='auditeur';FACT_AGENT='${k}';renderComptaGlobal()">📄 Facturer</button></td></tr>`;});
+    audKeys.forEach(k=>{const sub=load('egncrm_auditeurs',[]).find(x=>x.id===k);const x=byAud[k];h+=`<tr><td>${sub?esc(sub.name):'—'}</td><td>${x.nb}</td><td style="text-align:right;font-weight:700">${eur(x.aPayer)}</td><td style="text-align:right"><button class="btn btn-ghost btn-sm" onclick="COMPTA_TAB='facturation';FACT_TYPE='auditeur';FACT_AGENT='${k}';renderComptaGlobal()">📄 Facturer</button></td></tr>`;});
     h+=`</tbody></table></div>`;}
   h+=`</div></div>`;
   // par opération
@@ -2719,14 +2697,14 @@ function renderComptaResume(){
   const opKeys=Object.keys(byOp);
   if(!opKeys.length)h+=`<div class="empty"><div class="big">📋</div>Aucune donnée.</div>`;
   else{h+=`<div class="tbl-wrap"><table class="tbl"><thead><tr><th>Opération</th><th>Dossiers</th><th style="text-align:right">Recettes</th><th style="text-align:right">Charges</th><th style="text-align:right">Marge</th></tr></thead><tbody>`;
-    opKeys.forEach(k=>{const op=getProducts().find(o=>o.id===k);const x=byOp[k];h+=`<tr><td>${op?esc(op.name):'—'}</td><td>${x.nb}</td><td style="text-align:right">${ttcHt(x.recettes)}</td><td style="text-align:right">${ttcHt(x.charges)}</td><td style="text-align:right;font-weight:700;color:${x.marge>=0?'var(--green-deep)':'#E63946'}">${ttcHt(x.marge)}</td></tr>`;});
+    opKeys.forEach(k=>{const op=getProducts().find(o=>o.id===k);const x=byOp[k];h+=`<tr><td>${op?esc(op.name):'—'}</td><td>${x.nb}</td><td style="text-align:right">${eur(x.recettes)}</td><td style="text-align:right">${eur(x.charges)}</td><td style="text-align:right;font-weight:700;color:${x.marge>=0?'var(--green-deep)':'#E63946'}">${eur(x.marge)}</td></tr>`;});
     h+=`</tbody></table></div>`;}
   h+=`</div></div>`;
   // détail par dossier
   h+=`<div class="panel"><div class="panel-h"><h3>Détail par dossier</h3></div><div class="panel-b">`;
   if(!rows.length)h+=`<div class="empty"><div class="big">📋</div>Aucun dossier chiffré pour l'instant — renseignez la comptabilité depuis une fiche client.</div>`;
   else{h+=`<div class="tbl-wrap"><table class="tbl"><thead><tr><th>N° Dossier</th><th>Client</th><th>Opération</th><th style="text-align:right">Recettes</th><th style="text-align:right">Charges</th><th style="text-align:right">Marge</th><th>Statut Poseur</th><th>Statut Call Center</th><th>Statut VT</th><th>Statut Audit</th></tr></thead><tbody>`;
-    rows.forEach(({r,m})=>{const op=getProducts().find(o=>o.id===r.productId);const cc=comptaOf(r);h+=`<tr><td style="cursor:pointer" onclick="openDossier('${r.id}')"><span class="dossier-tag">${esc(r.dossier||'—')}</span></td><td style="cursor:pointer" onclick="openDossier('${r.id}')">${esc(clientNameOf(r))}</td><td class="muted">${op?esc(op.name):'—'}</td><td style="text-align:right">${ttcHt(m.recettes)}</td><td style="text-align:right">${ttcHt(m.charges)}</td><td style="text-align:right;font-weight:700;color:${m.marge>=0?'var(--green-deep)':'#E63946'}">${ttcHt(m.marge)}</td><td>${cc.facturePoseur?statutComptaSelect(r,'poseur'):`<span class="muted" style="font-size:.72rem">—</span>`}</td><td>${cc.factureCallCenter?statutComptaSelect(r,'callcenter'):`<span class="muted" style="font-size:.72rem">—</span>`}</td><td>${cc.factureVt?statutComptaSelect(r,'vt'):`<span class="muted" style="font-size:.72rem">—</span>`}</td><td>${cc.factureAudit?statutComptaSelect(r,'auditeur'):`<span class="muted" style="font-size:.72rem">—</span>`}</td></tr>`;});
+    rows.forEach(({r,m})=>{const op=getProducts().find(o=>o.id===r.productId);const cc=comptaOf(r);h+=`<tr><td style="cursor:pointer" onclick="openDossier('${r.id}')"><span class="dossier-tag">${esc(r.dossier||'—')}</span></td><td style="cursor:pointer" onclick="openDossier('${r.id}')">${esc(clientNameOf(r))}</td><td class="muted">${op?esc(op.name):'—'}</td><td style="text-align:right">${eur(m.recettes)}</td><td style="text-align:right">${eur(m.charges)}</td><td style="text-align:right;font-weight:700;color:${m.marge>=0?'var(--green-deep)':'#E63946'}">${eur(m.marge)}</td><td>${cc.facturePoseur?statutComptaSelect(r,'poseur'):`<span class="muted" style="font-size:.72rem">—</span>`}</td><td>${cc.factureCallCenter?statutComptaSelect(r,'callcenter'):`<span class="muted" style="font-size:.72rem">—</span>`}</td><td>${cc.factureVt?statutComptaSelect(r,'vt'):`<span class="muted" style="font-size:.72rem">—</span>`}</td><td>${cc.factureAudit?statutComptaSelect(r,'auditeur'):`<span class="muted" style="font-size:.72rem">—</span>`}</td></tr>`;});
     h+=`</tbody></table></div>`;}
   h+=`</div></div>`;
   document.getElementById('comptaBody').innerHTML=h;
@@ -2759,7 +2737,7 @@ function renderComptaFacturation(){
       h+=`<div class="cfg-list">`+rows.map(({r,m})=>{
         const op=getProducts().find(o=>o.id===r.productId);
         const already='';
-        return `<div class="cfg-item"><input type="checkbox" class="fact_chk" data-rid="${r.id}" data-montant="${at.montantFn(m)}" checked style="margin-right:.3rem"><span class="nm"><span class="dossier-tag" style="margin-right:.4rem">${esc(r.dossier||'—')}</span>${esc(clientNameOf(r))}<span class="muted" style="font-weight:400"> — ${op?esc(op.name):''}</span></span>${already}<span class="tag" style="background:rgba(45,125,210,.12);color:#2D7DD2">${eur(at.montantFn(m))} <span style="font-size:.62rem;font-weight:500">· HT ${eur(htOf(at.montantFn(m)))}</span></span></div>`;
+        return `<div class="cfg-item"><input type="checkbox" class="fact_chk" data-rid="${r.id}" data-montant="${at.montantFn(m)}" checked style="margin-right:.3rem"><span class="nm"><span class="dossier-tag" style="margin-right:.4rem">${esc(r.dossier||'—')}</span>${esc(clientNameOf(r))}<span class="muted" style="font-weight:400"> — ${op?esc(op.name):''}</span></span>${already}<span class="tag" style="background:rgba(45,125,210,.12);color:#2D7DD2">${eur(at.montantFn(m))}</span></div>`;
       }).join('')+`</div>
       <label style="display:flex;align-items:center;gap:.5rem;margin-top:1rem;cursor:${agentInfo&&agentInfo.email?'pointer':'not-allowed'}"><input type="checkbox" id="fact_sendmail" ${agentInfo&&agentInfo.email?'':'disabled'}> Envoyer aussi par e-mail à ${agentInfo&&agentInfo.email?esc(agentInfo.email):'(aucun email renseigné pour ce partenaire)'}</label>
       <button class="btn btn-pri" style="margin-top:1rem" onclick="genererFactureAgent()">📄 Générer le document d'appel à facturation</button>`;
@@ -2768,10 +2746,7 @@ function renderComptaFacturation(){
   }
   document.getElementById('comptaBody').innerHTML=h;
 }
-let LAST_APF_GEN=0;
 async function genererFactureAgent(){
-  if(Date.now()-LAST_APF_GEN<2000)return; // anti double-clic
-  LAST_APF_GEN=Date.now();
   const type=FACT_TYPE,agentId=FACT_AGENT,at=AGENT_TYPES[type];
   const checks=[...document.querySelectorAll('.fact_chk')].filter(c=>c.checked);
   if(!checks.length){toast('Sélectionnez au moins un dossier','err');return;}
@@ -2781,7 +2756,7 @@ async function genererFactureAgent(){
   const total=lignes.reduce((s,l)=>s+l.montant,0);
   const eur=n=>(n||0).toLocaleString('fr-FR',{minimumFractionDigits:2,maximumFractionDigits:2})+' €';
   const dateStr=new Date().toLocaleDateString('fr-FR');
-  const rowsHtml=lignes.map(l=>{const op=getProducts().find(o=>o.id===l.r.productId);return `<tr><td>${esc(l.r.dossier||'—')}</td><td>${esc(clientNameOf(l.r))}</td><td>${op?esc(op.name):''}</td><td style="text-align:right;color:#6b7785">${eur(htOf(l.montant))}</td><td style="text-align:right;color:#6b7785">${eur(tvaOf(l.montant))}</td><td style="text-align:right;font-weight:700">${eur(l.montant)}</td></tr>`;}).join('');
+  const rowsHtml=lignes.map(l=>{const op=getProducts().find(o=>o.id===l.r.productId);return `<tr><td>${esc(l.r.dossier||'—')}</td><td>${esc(clientNameOf(l.r))}</td><td>${op?esc(op.name):''}</td><td style="text-align:right">${eur(l.montant)}</td></tr>`;}).join('');
   const doc=`<!DOCTYPE html><html lang="fr"><head><meta charset="UTF-8"><title>${esc(apfNum)} — Appel à facturation — ${esc(agentName)}</title>
   <style>
     body{font-family:'Segoe UI',Arial,sans-serif;color:#1A2B3D;padding:40px;max-width:800px;margin:0 auto}
@@ -2806,10 +2781,10 @@ async function genererFactureAgent(){
     </div>
     <div class="sub">Édité le ${dateStr}</div>
   </div>
-  <div class="meta"><b>${esc(at.label)} :</b> ${esc(agentName)}<br>${agent&&agent.email?'<b>Email :</b> '+esc(agent.email)+'<br>':''}<b>TVA :</b> ${tvaRate()}% incluse — montants dus exprimés TTC ; les colonnes HT / TVA sont fournies pour l'établissement de votre facture.</div>
-  <table><thead><tr><th>N° Dossier</th><th>Client</th><th>Opération</th><th style="text-align:right">Montant HT</th><th style="text-align:right">TVA (${tvaRate()}%)</th><th style="text-align:right">Montant dû TTC</th></tr></thead>
+  <div class="meta"><b>${esc(at.label)} :</b> ${esc(agentName)}<br>${agent&&agent.email?'<b>Email :</b> '+esc(agent.email)+'<br>':''}</div>
+  <table><thead><tr><th>N° Dossier</th><th>Client</th><th>Opération</th><th style="text-align:right">Montant dû</th></tr></thead>
   <tbody>${rowsHtml}</tbody>
-  <tfoot><tr><td colspan="3">Total à verser</td><td style="text-align:right">${eur(htOf(total))}</td><td style="text-align:right">${eur(tvaOf(total))}</td><td style="text-align:right">${eur(total)}</td></tr></tfoot>
+  <tfoot><tr><td colspan="3">Total à verser</td><td style="text-align:right">${eur(total)}</td></tr></tfoot>
   </table>
   <button class="print-btn" onclick="window.print()" style="padding:10px 18px;background:#7CC242;color:#fff;border:none;border-radius:8px;font-weight:700;cursor:pointer">🖨️ Imprimer / Enregistrer en PDF</button>
   </body></html>`;
@@ -2854,7 +2829,7 @@ function renderComptaHistorique(){
   if(!factures.length)h+=`<div class="empty"><div class="big">📄</div>Aucun appel à facturation généré pour l'instant.</div>`;
   else{
     h+=`<div class="tbl-wrap"><table class="tbl"><thead><tr><th>N° APF</th><th>Date</th><th>Type</th><th>Bénéficiaire</th><th>Dossiers</th><th style="text-align:right">Total</th><th>Généré par</th><th style="text-align:right">Actions</th></tr></thead><tbody>`;
-    factures.forEach(f=>{const at=AGENT_TYPES[f.type||'poseur'];h+=`<tr><td><span class="dossier-tag">${esc(f.apfNum||'—')}</span></td><td>${new Date(f.date).toLocaleDateString('fr-FR')}</td><td>${at.icon} ${at.label}</td><td>${esc(f.poseurName)}</td><td>${(f.lignes||[]).length}</td><td style="text-align:right;font-weight:700">${eur(f.total)}<span style="display:block;font-size:.64rem;font-weight:500;color:var(--text-mut)">HT ${eur(htOf(f.total))}</span></td><td class="muted">${esc(f.user||'')}</td><td><div class="row-act"><button class="iconbtn" title="Revoir / réimprimer" onclick="revoirFacture('${f.id}')">👁️</button><button class="iconbtn del" title="Supprimer de l'historique" onclick="delFacture('${f.id}')">🗑️</button></div></td></tr>`;});
+    factures.forEach(f=>{const at=AGENT_TYPES[f.type||'poseur'];h+=`<tr><td><span class="dossier-tag">${esc(f.apfNum||'—')}</span></td><td>${new Date(f.date).toLocaleDateString('fr-FR')}</td><td>${at.icon} ${at.label}</td><td>${esc(f.poseurName)}</td><td>${(f.lignes||[]).length}</td><td style="text-align:right;font-weight:700">${eur(f.total)}</td><td class="muted">${esc(f.user||'')}</td><td><div class="row-act"><button class="iconbtn" title="Revoir / réimprimer" onclick="revoirFacture('${f.id}')">👁️</button><button class="iconbtn del" title="Supprimer de l'historique" onclick="delFacture('${f.id}')">🗑️</button></div></td></tr>`;});
     h+=`</tbody></table></div>`;
   }
   h+=`</div></div>`;
@@ -3023,8 +2998,6 @@ function dealRecalc(){
   const prime=cumac/1000*valo;
   const el=document.getElementById('deal_prime');
   if(el)el.textContent=(d&&cumac&&valo)?prime.toLocaleString('fr-FR',{minimumFractionDigits:2,maximumFractionDigits:2})+' € TTC':'—';
-  const hel=document.getElementById('deal_ht');
-  if(hel)hel.textContent=(d&&cumac&&valo)?htOf(prime).toLocaleString('fr-FR',{minimumFractionDigits:2,maximumFractionDigits:2})+' € HT · TVA '+tvaOf(prime).toLocaleString('fr-FR',{minimumFractionDigits:2,maximumFractionDigits:2})+' €':'—';
   const vl=document.getElementById('deal_valoinfo');
   if(vl)vl.textContent=d?`Valorisation ${d.name} : ${(parseFloat(d.valoClassique)||0).toString().replace('.',',')} €/MWhc classique · ${(parseFloat(d.valoPrecaire)||0).toString().replace('.',',')} €/MWhc précaire`:'';
 }
@@ -3179,10 +3152,7 @@ async function lookupSiret(fieldId){
     toast('Entreprise trouvée ✓','ok');
   }catch(e){toast('Service SIRET indisponible — saisie manuelle','err');}
 }
-let LAST_LEAD_SAVE=0;
 async function saveLead(){
-  if(Date.now()-LAST_LEAD_SAVE<1500)return; // anti double-clic : évite de créer deux dossiers d'un coup
-  LAST_LEAD_SAVE=Date.now();
   const id=val('lf_id');
   const opId=val('lf_op');
   const op=getProducts().find(p=>p.id===opId);
@@ -4103,7 +4073,7 @@ function tplVars(r){
     tel:r.tel||'',email:r.email||'',nom_site:r.nomSite||'',
     adresse:r.adresse||'',cp:r.cp||'',ville:r.ville||'',adresse_travaux:[wz.adresse,wz.cp,wz.ville].filter(Boolean).join(', '),
     dossier:r.dossier||'',operation:op?op.name:'',zone:zoneOf(wz.dept)||'',
-    delegataire:deal.delegataireName||'',type_prime:deal.type==='precaire'?'Précaire':(deal.type?'Classique':''),cumac:deal.cumac?deal.cumac.toLocaleString('fr-FR'):'',prime:deal.prime?deal.prime.toLocaleString('fr-FR')+' € TTC (soit '+htOf(deal.prime).toLocaleString('fr-FR',{maximumFractionDigits:2})+' € HT)':'',
+    delegataire:deal.delegataireName||'',type_prime:deal.type==='precaire'?'Précaire':(deal.type?'Classique':''),cumac:deal.cumac?deal.cumac.toLocaleString('fr-FR'):'',prime:deal.prime?deal.prime.toLocaleString('fr-FR')+' €':'',
     date_rdv:rd?fmtDateLong(rd.date):'',heure_rdv:rd?(rd.heure||''):'',type_rdv:rd?(rd.type||''):'',intervenant_rdv:rd?rdvWho(rd):'',
     moi:me,ma_societe:s.company||'EGN Rénovation',mon_email:s.email||'contact@egnrenovation.fr',date_jour:new Date().toLocaleDateString('fr-FR')
   };
@@ -4568,11 +4538,6 @@ function setSociete(){
     <div class="fld"><label>Logo (PNG / JPG)</label><input type="file" accept="image/*" onchange="uploadLogo(this.files[0])"></div>
     <div class="fld full" style="margin-top:.3rem">${s.logo?`<img src="${s.logo}" style="max-height:70px;border-radius:8px;background:#1A2B3D;padding:.5rem">`:'<span class="muted">Aucun logo importé</span>'}</div>
   </div><button class="btn btn-pri" style="margin-top:1.1rem" onclick="saveSociete()">💾 Enregistrer</button></div></div>
-  <div class="panel" style="margin-top:1.2rem"><div class="panel-h"><h3>TVA</h3></div><div class="panel-b">
-    <p class="muted" style="margin-bottom:.8rem;font-size:.82rem">Tous les montants saisis dans le CRM (prime CEE, devis, tarifs poseur / call center / VT / auditeur, produits, faux frais…) sont réputés <b>TTC</b>. Le CRM déduit automatiquement la TVA au taux ci-dessous et affiche le <b>montant HT</b> et la <b>TVA</b> partout : fiches dossier, comptabilité, rapports, appels à facturation et études.</p>
-    <div class="fgrid c3"><div class="fld"><label>Taux de TVA <span class="muted" style="font-size:.66rem">(%)</span></label><input type="number" step="any" id="co_tva" value="${s.tvaRate!=null&&s.tvaRate!==''?s.tvaRate:20}" placeholder="20"></div></div>
-    <button class="btn btn-pri btn-sm" style="margin-top:.8rem" onclick="saveTvaRate()">💾 Enregistrer le taux</button>
-  </div></div>
   <div class="panel" style="margin-top:1.2rem"><div class="panel-h"><h3>Tarifs énergie</h3></div><div class="panel-b">
     <p class="muted" style="margin-bottom:.8rem;font-size:.82rem">Prix unitaire moyen par énergie — utilisé pour estimer automatiquement le <b>coût annuel actuel</b> dans les études (consommation saisie × prix ci-dessous).</p>
     <div class="fgrid c3">
@@ -4586,12 +4551,6 @@ function setSociete(){
     <button class="btn btn-pri btn-sm" style="margin-top:.8rem" onclick="saveTarifThermitube()">💾 Enregistrer</button>
   </div></div>`;
   document.getElementById('setBody').innerHTML=h;
-}
-function saveTvaRate(){
-  const s=getSettings();
-  const t=parseFloat(String(val('co_tva')||'').replace(',','.'));
-  s.tvaRate=isNaN(t)?20:t;
-  save(K.set,s);toast('Taux de TVA enregistré ✓ ('+s.tvaRate+'%)','ok');
 }
 function saveTarifThermitube(){
   const s=getSettings();
