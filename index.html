@@ -3898,7 +3898,7 @@ function openDocTemplate(id){
   DOC_PAGE_IDX=0;
   renderDocEditor();
 }
-function docCaptureName(){const e=document.getElementById('doc_name');if(e)DOCDRAFT.name=e.value.trim();}
+function docCaptureName(){const e=document.getElementById('doc_name');if(e)DOCDRAFT.name=e.value.trim();const s=document.getElementById('doc_subtitle');if(s)DOCDRAFT.subtitle=s.value.trim();}
 function docCapturePage(){const el=document.getElementById('doc_page_content');if(el&&DOCDRAFT.pages[DOC_PAGE_IDX])DOCDRAFT.pages[DOC_PAGE_IDX].html=el.innerHTML;}
 function renderDocEditor(){
   const o=DOCDRAFT;const ops=getProducts();
@@ -3907,6 +3907,7 @@ function renderDocEditor(){
   const page=o.pages[DOC_PAGE_IDX]||{html:''};
   let body=`<input type="hidden" id="doc_id" value="${o.id}">
     <div class="fld"><label>Nom du modèle</label><input id="doc_name" value="${esc(o.name)}" placeholder="Ex : Attestation de fin de travaux" oninput="docUpdateNameLive()"></div>
+    <div class="fld" style="margin-top:.6rem"><label>Sous-titre <span class="muted" style="font-size:.62rem">(affiché en vert, sous le titre, dans l'en-tête)</span></label><input id="doc_subtitle" value="${esc(o.subtitle||'')}" placeholder="Ex : Fiche BAT-TH-163" oninput="docUpdateNameLive()"></div>
     <div class="fld" style="margin-top:.6rem"><label>Applicable aux opérations <span class="muted" style="font-size:.62rem">(laisser vide = toutes)</span></label>
       <div style="display:flex;gap:.4rem;flex-wrap:wrap;align-items:center;border:1px solid var(--border-grey);border-radius:9px;padding:.5rem .6rem;min-height:40px">
         ${opChips}
@@ -3982,12 +3983,17 @@ function docPageHeaderHtml(){
   const s=getSettings()||{};
   return `<div style="display:flex;align-items:center;justify-content:space-between;background:#1A2B3D;padding:12px 18px;border-radius:8px;margin-bottom:20px">
     ${s.logo?`<img src="${s.logo}" style="height:26px;display:block">`:`<div style="font-weight:800;font-size:.8rem;color:#9BD651">${esc(s.company||'EGN')}</div>`}
-    <div id="doc_page_title_preview" style="font-size:.72rem;font-weight:700;color:#fff;text-align:right">${esc(DOCDRAFT.name||'Titre du document')}</div>
+    <div style="text-align:right">
+      <div id="doc_page_title_preview" style="font-size:.72rem;font-weight:700;color:#fff">${esc(DOCDRAFT.name||'Titre du document')}</div>
+      <div id="doc_page_subtitle_preview" style="font-size:.64rem;font-weight:600;color:#9BD651;margin-top:2px">${esc(DOCDRAFT.subtitle||'')}</div>
+    </div>
   </div>`;
 }
 function docUpdateNameLive(){
   const e=document.getElementById('doc_name');if(e)DOCDRAFT.name=e.value.trim();
+  const sub=document.getElementById('doc_subtitle');if(sub)DOCDRAFT.subtitle=sub.value.trim();
   const t=document.getElementById('doc_page_title_preview');if(t)t.textContent=DOCDRAFT.name||'Titre du document';
+  const ts=document.getElementById('doc_page_subtitle_preview');if(ts)ts.textContent=DOCDRAFT.subtitle||'';
 }
 /* ---- gestion de la position du curseur dans la zone éditable (nécessaire car le menu "Insérer une info" est un <select>, qui vole le focus) ---- */
 let DOC_SAVED_RANGE=null;
