@@ -2164,6 +2164,12 @@ function renderDossier(r){
   docs+=`</div>
     <div class="flex" style="flex-wrap:wrap;gap:.5rem;margin-top:1rem;border-top:1px dashed var(--border-soft);padding-top:.9rem">${(ME&&(ME.role==='superadmin'||ME.role==='admin')&&op&&op.etudeType)?`<button class="btn btn-navy btn-sm" onclick="openEtudePanel('${r.id}')">📐 Étude technique & PDF</button>`:''}<button class="btn btn-ghost btn-sm" onclick="toast('Module à configurer prochainement')">🖊️ Envoyer en signature</button></div>
   </div></div>`;
+  // génération de documents (modèles créés dans Administration ▸ Documents)
+  const applicableTpls=getDocTemplates().filter(t=>!t.operationIds||!t.operationIds.length||t.operationIds.includes(r.productId));
+  let docsGen=`<div class="panel"><div class="panel-h"><h3>📑 Génération de documents</h3></div><div class="panel-b">`;
+  if(!applicableTpls.length)docsGen+=`<div class="muted" style="font-size:.84rem">Aucun modèle disponible pour cette opération. Les modèles se créent dans Administration ▸ Documents.</div>`;
+  else docsGen+=`<div class="cfg-list">`+applicableTpls.map(t=>`<div class="cfg-item"><div style="flex:1;min-width:0"><div class="nm">${esc(t.name)}</div>${t.subtitle?`<div class="muted" style="font-size:.72rem">${esc(t.subtitle)}</div>`:''}</div><button class="btn btn-pri btn-sm" onclick="genererDocFromTemplate('${t.id}','${r.id}')">📄 Générer</button></div>`).join('')+`</div>`;
+  docsGen+=`</div></div>`;
   // commentaires
   const cmts=(r.comments||[]).slice().sort((a,b)=>(b.date||0)-(a.date||0));
   let comm=`<div class="panel"><div class="panel-h"><h3>Commentaires</h3><div class="sp"><span class="muted">${cmts.length} commentaire${cmts.length>1?'s':''}</span></div></div><div class="panel-b">
@@ -2199,7 +2205,7 @@ function renderDossier(r){
     +(can('sav_view')?`<button class="btn btn-ghost" onclick="openSav()">🔧 Nouveau ticket SAV</button>`:'')
     +`</div>`;
   const comptaP=isAdminCompta?renderComptaPanel(r):'';
-  document.getElementById('content').innerHTML=acts+zoneBadge+`<div class="grid2"><div>${coord}${opf}${docs}</div><div>${suivi}${rappelP}${rdvP}${hist}</div></div><div class="grid-bottom">${comm}${dealP}${comptaP}</div>`;
+  document.getElementById('content').innerHTML=acts+zoneBadge+`<div class="grid2"><div>${coord}${opf}${docs}${docsGen}</div><div>${suivi}${rappelP}${rdvP}${hist}</div></div><div class="grid-bottom">${comm}${dealP}${comptaP}</div>`;
   dealRecalc();
 }
 /* ---- comptabilité du dossier (Super Admin / Admin) : faux frais & rentabilité ---- */
@@ -4078,6 +4084,38 @@ function tplVars(r){
   };
 }
 function fillTemplate(txt,r){const v=tplVars(r);return String(txt||'').replace(/\{\{(\w+)\}\}/g,(m,k)=>v[k]!=null?v[k]:m);}
+function genererDocFromTemplate(tplId,recId){
+  const t=getDocTemplates().find(x=>x.id===tplId);const r=recById(recId);
+  if(!t||!r)return;
+  const s=getSettings()||{};
+  const title=fillTemplate(t.name||'',r);
+  const subtitle=fillTemplate(t.subtitle||'',r);
+  const headerHtml=`<div style="display:flex;align-items:center;justify-content:space-between;background:#1A2B3D;padding:12px 18px;border-radius:8px;margin-bottom:20px">
+    ${s.logo?`<img src="${s.logo}" style="height:26px;display:block">`:`<div style="font-weight:800;font-size:.8rem;color:#9BD651">${esc(s.company||'EGN')}</div>`}
+    <div style="text-align:right">
+      <div style="font-size:.72rem;font-weight:700;color:#fff">${esc(title||'Document')}</div>
+      ${subtitle?`<div style="font-size:.64rem;font-weight:600;color:#9BD651;margin-top:2px">${esc(subtitle)}</div>`:''}
+    </div>
+  </div>`;
+  const pagesHtml=(t.pages||[]).map(p=>`<div class="page">${headerHtml}<div class="page-body">${fillTemplate(p.html||'',r)}</div></div>`).join('');
+  const doc=`<!DOCTYPE html><html lang="fr"><head><meta charset="UTF-8"><title>${esc(title)} — ${esc(recName(r))}</title>
+  <style>
+    body{font-family:'Segoe UI',Arial,sans-serif;color:#1A2B3D;margin:0;background:#e8ebe3}
+    .page{width:210mm;min-height:297mm;background:#fff;margin:0 auto 16px;padding:14mm 14mm 18mm;box-sizing:border-box;page-break-after:always}
+    .page:last-child{page-break-after:auto}
+    .page-body{font-size:.86rem;line-height:1.75}
+    .page-body table{border-collapse:collapse}
+    @media print{body{background:#fff}.page{margin:0;box-shadow:none}.noprint{display:none}}
+    .print-btn{margin:16px auto;display:block;padding:10px 18px;background:#7CC242;color:#fff;border:none;border-radius:8px;font-weight:700;cursor:pointer}
+  </style></head><body>
+  ${pagesHtml}
+  <button class="print-btn noprint" onclick="window.print()">🖨️ Imprimer / Enregistrer en PDF</button>
+  </body></html>`;
+  const w=window.open('','_blank');
+  if(!w){toast('Autorisez les fenêtres pop-up pour générer le document','err');return;}
+  w.document.write(doc);w.document.close();
+  logActivity('action',`📑 Document généré (${t.name}) pour ${r.dossier||recId}`,recId);
+}
 const getMailTpl=()=>load('egncrm_mailtpl',[]);
 function setMailTpl(){
   const ts=getMailTpl();
