@@ -3977,7 +3977,7 @@ function renderDocEditor(){
 function docPageHeaderHtml(){
   const s=getSettings()||{};
   return `<div style="display:flex;align-items:center;justify-content:space-between;background:#1A2B3D;padding:12px 18px;border-radius:8px;margin-bottom:20px">
-    ${s.logo?`<div style="background:#fff;border-radius:6px;padding:4px 8px;display:inline-flex;align-items:center"><img src="${s.logo}" style="height:22px;display:block"></div>`:`<div style="font-weight:800;font-size:.8rem;color:#9BD651">${esc(s.company||'EGN')}</div>`}
+    ${s.logo?`<img src="${s.logo}" style="height:26px;display:block">`:`<div style="font-weight:800;font-size:.8rem;color:#9BD651">${esc(s.company||'EGN')}</div>`}
     <div id="doc_page_title_preview" style="font-size:.72rem;font-weight:700;color:#fff;text-align:right">${esc(DOCDRAFT.name||'Titre du document')}</div>
   </div>`;
 }
