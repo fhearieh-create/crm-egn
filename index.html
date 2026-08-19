@@ -3949,6 +3949,10 @@ function renderDocEditor(){
       <button type="button" class="btn btn-ghost btn-sm" onmousedown="event.preventDefault()" onclick="docExec('formatBlock','P')">Paragraphe</button>
       <span style="width:1px;height:18px;background:var(--border-grey)"></span>
       <button type="button" class="btn btn-ghost btn-sm" onmousedown="event.preventDefault()" onclick="docExec('insertUnorderedList')">• Liste</button>
+      <span style="width:1px;height:18px;background:var(--border-grey)"></span>
+      <button type="button" class="iconbtn" title="Aligner à gauche" onmousedown="event.preventDefault()" onclick="docExec('justifyLeft')">⇤</button>
+      <button type="button" class="iconbtn" title="Centrer" onmousedown="event.preventDefault()" onclick="docExec('justifyCenter')">↔</button>
+      <button type="button" class="iconbtn" title="Aligner à droite" onmousedown="event.preventDefault()" onclick="docExec('justifyRight')">⇥</button>
       <button type="button" class="btn btn-ghost btn-sm" onmousedown="event.preventDefault()" onclick="docInsertTable()">▦ Tableau</button>
       <span class="sp"></span>
       <select id="doc_ph_select" onchange="docInsertPlaceholder(this.value);this.value=''" style="border:1px solid var(--border-grey);border-radius:6px;padding:.3rem .5rem;font-size:.78rem;background:#1A2B3D;color:#9BD651;font-weight:700">
