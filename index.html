@@ -3906,7 +3906,7 @@ function renderDocEditor(){
   const opSelectRemaining=ops.filter(op2=>!(o.operationIds||[]).includes(op2.id));
   const page=o.pages[DOC_PAGE_IDX]||{html:''};
   let body=`<input type="hidden" id="doc_id" value="${o.id}">
-    <div class="fld"><label>Nom du modèle</label><input id="doc_name" value="${esc(o.name)}" placeholder="Ex : Attestation de fin de travaux" onchange="docCaptureName()"></div>
+    <div class="fld"><label>Nom du modèle</label><input id="doc_name" value="${esc(o.name)}" placeholder="Ex : Attestation de fin de travaux" oninput="docUpdateNameLive()"></div>
     <div class="fld" style="margin-top:.6rem"><label>Applicable aux opérations <span class="muted" style="font-size:.62rem">(laisser vide = toutes)</span></label>
       <div style="display:flex;gap:.4rem;flex-wrap:wrap;align-items:center;border:1px solid var(--border-grey);border-radius:9px;padding:.5rem .6rem;min-height:40px">
         ${opChips}
@@ -3926,13 +3926,16 @@ function renderDocEditor(){
       <button type="button" class="btn btn-ghost btn-sm" onmousedown="event.preventDefault()" onclick="docExec('insertUnorderedList')">• Liste</button>
       <button type="button" class="btn btn-ghost btn-sm" onmousedown="event.preventDefault()" onclick="docInsertTable()">▦ Tableau</button>
       <span class="sp"></span>
-      <select onmousedown="event.preventDefault()" onchange="docInsertPlaceholder(this.value);this.value=''" style="border:1px solid var(--border-grey);border-radius:6px;padding:.3rem .5rem;font-size:.78rem;background:#1A2B3D;color:#9BD651;font-weight:700">
+      <select id="doc_ph_select" onchange="docInsertPlaceholder(this.value);this.value=''" style="border:1px solid var(--border-grey);border-radius:6px;padding:.3rem .5rem;font-size:.78rem;background:#1A2B3D;color:#9BD651;font-weight:700">
         <option value="">+ Insérer une info ▾</option>
         ${Object.entries(DOC_PLACEHOLDER_LABELS).map(([k,l])=>`<option value="${k}">${esc(l)}</option>`).join('')}
       </select>
     </div>
     <div style="background:#EEF1E8;border:1px solid var(--border-grey);border-top:none;border-radius:0 0 10px 10px;padding:20px;display:flex;justify-content:center">
-      <div id="doc_page_content" contenteditable="true" style="background:#fff;width:100%;max-width:480px;min-height:500px;box-shadow:0 2px 10px rgba(0,0,0,.12);padding:24px 30px;font-size:.86rem;line-height:1.75;outline:none">${docPageHeaderHtml()}${page.html||''}</div>
+      <div style="background:#fff;width:100%;max-width:480px;box-shadow:0 2px 10px rgba(0,0,0,.12)">
+        <div id="doc_page_header" style="padding:24px 30px 0">${docPageHeaderHtml()}</div>
+        <div id="doc_page_content" contenteditable="true" onmouseup="docSaveSelection()" onkeyup="docSaveSelection()" style="min-height:440px;padding:0 30px 24px;font-size:.86rem;line-height:1.75;outline:none">${page.html||''}</div>
+      </div>
     </div>
     <div style="display:flex;align-items:center;justify-content:center;gap:14px;margin-top:.6rem;padding:.5rem;background:#f7f9f5;border-radius:8px">
       <button type="button" class="iconbtn" onclick="docGoPage(-1)" ${DOC_PAGE_IDX===0?'style="opacity:.3;pointer-events:none"':''}>◀</button>
@@ -3942,15 +3945,35 @@ function renderDocEditor(){
       <button type="button" class="btn btn-ghost btn-sm" onclick="docAddPage()">+ Ajouter une page</button>
       ${o.pages.length>1?`<button type="button" class="btn btn-ghost btn-sm" style="color:#E63946" onclick="docDelPage()">🗑️ Supprimer cette page</button>`:''}
     </div>
-    <p class="muted" style="text-align:center;font-size:.72rem;margin-top:.4rem">Le logo EGN et le titre du document s'affichent automatiquement en haut de chaque page générée.</p>`;
+    <p class="muted" style="text-align:center;font-size:.72rem;margin-top:.4rem">Le logo EGN et le titre du document s'affichent automatiquement en haut de chaque page générée — ce n'est qu'un aperçu, pas de la zone éditable.</p>`;
   openModal(o.id&&getDocTemplates().find(t=>t.id===o.id)?'Modèle — '+esc(o.name||''):'Nouveau modèle de document',body,`<button class="btn btn-ghost" onclick="closeModal()">Annuler</button><button class="btn btn-pri" onclick="saveDocTemplate()">💾 Enregistrer le modèle</button>`,'wide');
+  DOC_SAVED_RANGE=null;
 }
 function docPageHeaderHtml(){
   const s=getSettings()||{};
-  return `<div contenteditable="false" style="display:flex;align-items:center;justify-content:space-between;border-bottom:2px solid #7CC242;padding-bottom:10px;margin-bottom:20px;user-select:none">
+  return `<div style="display:flex;align-items:center;justify-content:space-between;border-bottom:2px solid #7CC242;padding-bottom:10px;margin-bottom:20px">
     ${s.logo?`<img src="${s.logo}" style="height:26px">`:`<div style="font-weight:800;font-size:.8rem;color:#1A2B3D">${esc(s.company||'EGN')}</div>`}
-    <div style="font-size:.72rem;font-weight:700;color:#1A2B3D;text-align:right">${esc(DOCDRAFT.name||'Titre du document')}</div>
+    <div id="doc_page_title_preview" style="font-size:.72rem;font-weight:700;color:#1A2B3D;text-align:right">${esc(DOCDRAFT.name||'Titre du document')}</div>
   </div>`;
+}
+function docUpdateNameLive(){
+  const e=document.getElementById('doc_name');if(e)DOCDRAFT.name=e.value.trim();
+  const t=document.getElementById('doc_page_title_preview');if(t)t.textContent=DOCDRAFT.name||'Titre du document';
+}
+/* ---- gestion de la position du curseur dans la zone éditable (nécessaire car le menu "Insérer une info" est un <select>, qui vole le focus) ---- */
+let DOC_SAVED_RANGE=null;
+function docSaveSelection(){
+  const el=document.getElementById('doc_page_content');
+  const sel=window.getSelection();
+  if(sel&&sel.rangeCount>0&&el&&el.contains(sel.anchorNode))DOC_SAVED_RANGE=sel.getRangeAt(0).cloneRange();
+}
+function docRestoreSelection(){
+  const el=document.getElementById('doc_page_content');if(!el)return;
+  el.focus();
+  const sel=window.getSelection();
+  sel.removeAllRanges();
+  if(DOC_SAVED_RANGE&&el.contains(DOC_SAVED_RANGE.startContainer)){sel.addRange(DOC_SAVED_RANGE);}
+  else{const range=document.createRange();range.selectNodeContents(el);range.collapse(false);sel.addRange(range);}
 }
 function docExec(cmd,val){document.getElementById('doc_page_content').focus();document.execCommand(cmd,false,val||null);}
 function docInsertTable(){
@@ -3960,8 +3983,9 @@ function docInsertTable(){
 }
 function docInsertPlaceholder(key){
   if(!key)return;
-  document.getElementById('doc_page_content').focus();
+  docRestoreSelection();
   document.execCommand('insertText',false,'{{'+key+'}}');
+  docSaveSelection();
 }
 function docAddOp(id){if(!id)return;docCaptureName();docCapturePage();DOCDRAFT.operationIds=DOCDRAFT.operationIds||[];if(!DOCDRAFT.operationIds.includes(id))DOCDRAFT.operationIds.push(id);renderDocEditor();}
 function docRemoveOp(id){docCaptureName();docCapturePage();DOCDRAFT.operationIds=(DOCDRAFT.operationIds||[]).filter(x=>x!==id);renderDocEditor();}
