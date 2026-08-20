@@ -2971,33 +2971,42 @@ function idbOpen(){return new Promise((res,rej)=>{const rq=indexedDB.open('egncr
 async function idbGet(key){try{const db=await idbOpen();return new Promise((res,rej)=>{const tx=db.transaction('files','readonly');const rq=tx.objectStore('files').get(key);rq.onsuccess=()=>res(rq.result);rq.onerror=()=>rej(rq.error);});}catch(e){return null;}}
 async function idbDel(key){try{const db=await idbOpen();return new Promise((res,rej)=>{const tx=db.transaction('files','readwrite');tx.objectStore('files').delete(key);tx.oncomplete=()=>res();tx.onerror=()=>rej(tx.error);});}catch(e){}}
 /* ============================================================
-   SCANNER DE DOCUMENT — caméra dans le navigateur
-   Fonctionne sur mobile (iOS Safari, Android Chrome) et desktop.
+   SCANNER DE DOCUMENT — caméra dans le navigateur, multi-photos → PDF
    ============================================================ */
 let SCANNER_STREAM=null;
+let SCAN_PAGES=[]; // tableau de dataURL JPEG
 function openScanner(recId){
+  SCAN_PAGES=[];
   const dts=getDocTypes();
   const body=`
     <div style="margin-bottom:.6rem;display:flex;gap:.5rem;flex-wrap:wrap;align-items:center">
       <div class="fld" style="flex:1;min-width:160px;margin:0"><select id="scan_type">${dts.length?dts.map(t=>`<option value="${t.id}">${esc(t.name)}</option>`).join(''):'<option value="">— Document —</option>'}</select></div>
       <div class="fld" style="flex:1;min-width:140px;margin:0"><input id="scan_name" placeholder="Nom du fichier (optionnel)"></div>
     </div>
-    <div style="position:relative;background:#000;border-radius:10px;overflow:hidden;min-height:280px;display:flex;align-items:center;justify-content:center">
-      <video id="scan_video" autoplay playsinline muted style="width:100%;max-height:420px;display:block;border-radius:10px"></video>
+    <div style="position:relative;background:#000;border-radius:10px;overflow:hidden;min-height:260px;display:flex;align-items:center;justify-content:center">
+      <video id="scan_video" autoplay playsinline muted style="width:100%;max-height:380px;display:block;border-radius:10px"></video>
       <canvas id="scan_canvas" style="display:none"></canvas>
-      <div id="scan_preview" style="display:none;position:absolute;inset:0;background:#000;border-radius:10px">
-        <img id="scan_img" style="width:100%;max-height:420px;object-fit:contain;border-radius:10px">
-        <div style="position:absolute;bottom:10px;left:0;right:0;display:flex;justify-content:center;gap:10px">
+      <div id="scan_preview" style="display:none;position:absolute;inset:0;background:#000;border-radius:10px;flex-direction:column;align-items:center;justify-content:center">
+        <img id="scan_img" style="max-width:100%;max-height:320px;object-fit:contain;border-radius:8px;border:2px solid #7CC242">
+        <div style="display:flex;gap:8px;margin-top:10px">
           <button class="btn btn-ghost btn-sm" style="background:rgba(0,0,0,.6);color:#fff;border-color:rgba(255,255,255,.4)" onclick="scanRetake()">🔄 Reprendre</button>
-          <button class="btn btn-pri btn-sm" onclick="scanUpload('${recId}')">✅ Utiliser cette photo</button>
+          <button class="btn btn-pri btn-sm" onclick="scanAddPage('${recId}')">➕ Ajouter cette page</button>
         </div>
       </div>
-      <div id="scan_loading" style="display:none;position:absolute;inset:0;background:rgba(0,0,0,.7);border-radius:10px;display:flex;align-items:center;justify-content:center;color:#fff;font-size:.9rem">⏳ Envoi en cours…</div>
+      <div id="scan_loading" style="display:none;position:absolute;inset:0;background:rgba(0,0,0,.7);border-radius:10px;align-items:center;justify-content:center;color:#fff;font-size:.9rem">⏳ Génération du PDF…</div>
     </div>
-    <div style="text-align:center;margin-top:12px">
-      <button id="scan_btn" class="btn btn-pri" onclick="scanCapture()" style="font-size:1rem;padding:10px 28px">📷 Prendre la photo</button>
+    <div style="text-align:center;margin-top:10px">
+      <button class="btn btn-pri" onclick="scanCapture()" style="font-size:1rem;padding:9px 24px">📷 Prendre la photo</button>
     </div>
-    <p class="muted" style="text-align:center;font-size:.72rem;margin-top:.5rem">La photo sera automatiquement convertie en JPEG et jointe au dossier.</p>`;
+    <div id="scan_pages_bar" style="margin-top:10px;display:none">
+      <div style="font-size:.78rem;font-weight:700;color:var(--text-mut);margin-bottom:6px">Pages capturées :</div>
+      <div id="scan_thumbs" style="display:flex;gap:6px;flex-wrap:wrap"></div>
+      <div style="margin-top:10px;display:flex;gap:8px;justify-content:center">
+        <button class="btn btn-ghost btn-sm" onclick="scanCapture();document.getElementById('scan_preview').style.display='none'">📷 Ajouter une autre page</button>
+        <button class="btn btn-pri" id="scan_finalize_btn" onclick="scanFinalize('${recId}')">✅ Finaliser le PDF</button>
+      </div>
+    </div>
+    <p class="muted" style="text-align:center;font-size:.72rem;margin-top:.5rem">Toutes les pages seront assemblées en un seul PDF.</p>`;
   openModal('📷 Scanner un document',body,`<button class="btn btn-ghost" onclick="closeScanner()">Fermer</button>`,'wide');
   setTimeout(()=>startScanner(),200);
 }
@@ -3006,64 +3015,137 @@ async function startScanner(){
     const stream=await navigator.mediaDevices.getUserMedia({video:{facingMode:'environment',width:{ideal:1920},height:{ideal:1080}}});
     SCANNER_STREAM=stream;
     const v=document.getElementById('scan_video');if(v)v.srcObject=stream;
-  }catch(e){
-    toast('Impossible d\'accéder à la caméra — vérifiez les permissions','err');
-    console.error('[scanner]',e);
-  }
+  }catch(e){toast('Impossible d\'accéder à la caméra — vérifiez les permissions','err');console.error('[scanner]',e);}
 }
 function scanCapture(){
-  const v=document.getElementById('scan_video');
-  const c=document.getElementById('scan_canvas');
-  const img=document.getElementById('scan_img');
-  const preview=document.getElementById('scan_preview');
+  const v=document.getElementById('scan_video');const c=document.getElementById('scan_canvas');
+  const img=document.getElementById('scan_img');const preview=document.getElementById('scan_preview');
   if(!v||!c)return;
   c.width=v.videoWidth||1280;c.height=v.videoHeight||720;
-  const ctx=c.getContext('2d');
-  ctx.drawImage(v,0,0,c.width,c.height);
+  c.getContext('2d').drawImage(v,0,0,c.width,c.height);
   const dataUrl=c.toDataURL('image/jpeg',0.92);
   if(img)img.src=dataUrl;
-  if(preview)preview.style.display='block';
+  if(preview){preview.style.display='flex';}
 }
 function scanRetake(){
   const preview=document.getElementById('scan_preview');
   if(preview)preview.style.display='none';
 }
-async function scanUpload(recId){
-  const c=document.getElementById('scan_canvas');
-  const loading=document.getElementById('scan_loading');
-  if(!c)return;
-  if(loading)loading.style.display='flex';
+function scanAddPage(){
+  const c=document.getElementById('scan_canvas');if(!c)return;
+  const dataUrl=c.toDataURL('image/jpeg',0.92);
+  SCAN_PAGES.push(dataUrl);
+  const preview=document.getElementById('scan_preview');if(preview)preview.style.display='none';
+  const bar=document.getElementById('scan_pages_bar');if(bar)bar.style.display='block';
+  const thumbs=document.getElementById('scan_thumbs');
+  if(thumbs){
+    const idx=SCAN_PAGES.length-1;
+    const thumb=document.createElement('div');
+    thumb.style.cssText='position:relative;display:inline-flex;flex-direction:column;align-items:center;gap:3px';
+    thumb.innerHTML=`<img src="${dataUrl}" style="height:72px;width:54px;object-fit:cover;border-radius:5px;border:1.5px solid var(--border-grey)"><span style="font-size:.62rem;color:var(--text-mut)">p.${SCAN_PAGES.length}</span><button onclick="scanDeletePage(${idx})" style="position:absolute;top:-5px;right:-5px;background:#E63946;color:#fff;border:none;border-radius:50%;width:16px;height:16px;font-size:9px;cursor:pointer;display:flex;align-items:center;justify-content:center">✕</button>`;
+    thumbs.appendChild(thumb);
+  }
+  const btn=document.getElementById('scan_finalize_btn');
+  if(btn)btn.textContent=`✅ Finaliser le PDF (${SCAN_PAGES.length} page${SCAN_PAGES.length>1?'s':''})`;
+  toast(`Page ${SCAN_PAGES.length} ajoutée ✓`,'ok');
+}
+function scanDeletePage(idx){
+  SCAN_PAGES.splice(idx,1);
+  const thumbs=document.getElementById('scan_thumbs');
+  if(thumbs){thumbs.innerHTML='';SCAN_PAGES.forEach((url,i)=>{const t=document.createElement('div');t.style.cssText='position:relative;display:inline-flex;flex-direction:column;align-items:center;gap:3px';t.innerHTML=`<img src="${url}" style="height:72px;width:54px;object-fit:cover;border-radius:5px;border:1.5px solid var(--border-grey)"><span style="font-size:.62rem;color:var(--text-mut)">p.${i+1}</span><button onclick="scanDeletePage(${i})" style="position:absolute;top:-5px;right:-5px;background:#E63946;color:#fff;border:none;border-radius:50%;width:16px;height:16px;font-size:9px;cursor:pointer;display:flex;align-items:center;justify-content:center">✕</button>`;thumbs.appendChild(t);});}
+  const btn=document.getElementById('scan_finalize_btn');if(btn)btn.textContent=`✅ Finaliser le PDF (${SCAN_PAGES.length} page${SCAN_PAGES.length>1?'s':''})`;
+}
+async function scanFinalize(recId){
+  if(!SCAN_PAGES.length){toast('Ajoutez au moins une page avant de finaliser','err');return;}
+  const loading=document.getElementById('scan_loading');if(loading)loading.style.display='flex';
   try{
-    const r=recById(recId);if(!r)return;
-    const typeEl=document.getElementById('scan_type');
-    const nameEl=document.getElementById('scan_name');
-    const typeId=typeEl?typeEl.value:'';
-    const dts=getDocTypes();
-    const dt=dts.find(x=>x.id===typeId);
-    const rawName=nameEl&&nameEl.value.trim()?nameEl.value.trim():(dt?dt.name:'document');
-    const filename=rawName.replace(/[^a-zA-Z0-9\-_. àâäéèêëîïôùûüç]/g,'_')+'.jpg';
-    // Convertir le canvas en Blob JPEG
-    const blob=await new Promise(res=>c.toBlob(res,'image/jpeg',0.92));
-    const file=new File([blob],filename,{type:'image/jpeg'});
-    const fid=uid();
-    const path=`${recId}/${fid}-${filename}`;
-    const{error}=await SUPA.storage.from(ATTACH_BUCKET).upload(path,file,{contentType:'image/jpeg'});
+    const r=recById(recId);if(!r)throw new Error('Dossier introuvable');
+    const typeEl=document.getElementById('scan_type');const nameEl=document.getElementById('scan_name');
+    const typeId=typeEl?typeEl.value:'';const dts=getDocTypes();const dt=dts.find(x=>x.id===typeId);
+    const rawName=nameEl&&nameEl.value.trim()?nameEl.value.trim():(dt?dt.name:'scan');
+    const filename=rawName.replace(/[^a-zA-Z0-9\-_. àâäéèêëîïôùûüç]/g,'_')+'.pdf';
+    // Construire un PDF minimal en pur JS (sans librairie externe)
+    const pdfBytes=await buildScanPdf(SCAN_PAGES);
+    const blob=new Blob([pdfBytes],{type:'application/pdf'});
+    const fid=uid();const path=`${recId}/${fid}-${filename}`;
+    const{error}=await SUPA.storage.from(ATTACH_BUCKET).upload(path,blob,{contentType:'application/pdf'});
     if(error)throw error;
     const recs=getRecs();const rec=recs.find(x=>x.id===recId);if(!rec)throw new Error('Dossier introuvable');
     rec.docs=rec.docs||[];
-    rec.docs.push({id:fid,typeId,typeName:dt?dt.name:'Document scanné',filename,path,mime:'image/jpeg',size:blob.size,date:Date.now(),user:(ME.prenom+' '+ME.nom).trim()||ME.code});
+    rec.docs.push({id:fid,typeId,typeName:dt?dt.name:'Document scanné',filename,path,mime:'application/pdf',size:blob.size,date:Date.now(),user:(ME.prenom+' '+ME.nom).trim()||ME.code});
     save(K.recs,recs);
-    logActivity('action',`📷 Document scanné : ${filename} sur ${rec.dossier||recId}`,recId);
-    closeScanner();openDossier(recId);toast('Document scanné et joint ✓','ok');
-  }catch(e){
-    console.error('[scanUpload]',e);
-    toast('Échec de l\'envoi : '+(e.message||e),'err');
-    if(loading)loading.style.display='none';
+    logActivity('action',`📷 Document scanné (${SCAN_PAGES.length} p.) : ${filename} sur ${rec.dossier||recId}`,recId);
+    closeScanner();openDossier(recId);toast(`PDF créé (${SCAN_PAGES.length} page${SCAN_PAGES.length>1?'s':''}) et joint ✓`,'ok');
+  }catch(e){console.error('[scanFinalize]',e);toast('Échec : '+(e.message||e),'err');if(loading)loading.style.display='none';}
+}
+async function buildScanPdf(dataUrls){
+  // Génère un PDF A4 minimal sans lib externe, une image JPEG par page
+  const A4_W=595,A4_H=842;
+  const xobjs=[];const pages=[];let offset=0;
+  const enc=s=>new TextEncoder().encode(s);
+  const chunks=[];
+  const w=s=>{const b=enc(s);chunks.push(b);offset+=b.length;return offset;};
+  const offsets=[];
+  w('%PDF-1.4\n');
+  // Images et pages
+  const imgDataArr=[];
+  for(let i=0;i<dataUrls.length;i++){
+    const url=dataUrls[i];
+    const base64=url.split(',')[1];
+    const raw=atob(base64);
+    const bytes=new Uint8Array(raw.length);for(let j=0;j<raw.length;j++)bytes[j]=raw.charCodeAt(j);
+    // Lire W/H depuis le JPEG (SOF markers)
+    let w2=A4_W,h2=A4_H;
+    for(let p=0;p<bytes.length-8;p++){if(bytes[p]===0xFF&&bytes[p+1]>=0xC0&&bytes[p+1]<=0xC3){h2=bytes[p+5]*256+bytes[p+6];w2=bytes[p+7]*256+bytes[p+8];break;}}
+    imgDataArr.push({bytes,w:w2,h:h2});
   }
+  // Objets PDF
+  let objIdx=1;
+  const catalogRef=objIdx++;const pagesRef=objIdx++;
+  const pageRefs=[];const imgRefs=[];
+  for(let i=0;i<dataUrls.length;i++){imgRefs.push(objIdx++);pageRefs.push(objIdx++);}
+  // Catalog
+  offsets[catalogRef]=offset;w(`${catalogRef} 0 obj\n<< /Type /Catalog /Pages ${pagesRef} 0 R >>\nendobj\n`);
+  // Pages
+  offsets[pagesRef]=offset;w(`${pagesRef} 0 obj\n<< /Type /Pages /Kids [${pageRefs.map(r=>r+' 0 R').join(' ')}] /Count ${dataUrls.length} >>\nendobj\n`);
+  // Image + Page objects
+  for(let i=0;i<dataUrls.length;i++){
+    const{bytes,w:iw,h:ih}=imgDataArr[i];
+    const ir=imgRefs[i];const pr=pageRefs[i];
+    // Scale image to fit A4 keeping ratio
+    const scale=Math.min(A4_W/iw,A4_H/ih);
+    const sw=Math.round(iw*scale),sh=Math.round(ih*scale);
+    const dx=Math.round((A4_W-sw)/2),dy=Math.round((A4_H-sh)/2);
+    // XObject image
+    offsets[ir]=offset;
+    const hdr=enc(`${ir} 0 obj\n<< /Type /XObject /Subtype /Image /Width ${iw} /Height ${ih} /ColorSpace /DeviceRGB /BitsPerComponent 8 /Filter /DCTDecode /Length ${bytes.length} >>\nstream\n`);
+    chunks.push(hdr);offset+=hdr.length;
+    chunks.push(bytes);offset+=bytes.length;
+    const tail=enc('\nendstream\nendobj\n');chunks.push(tail);offset+=tail.length;
+    // Page
+    offsets[pr]=offset;
+    w(`${pr} 0 obj\n<< /Type /Page /Parent ${pagesRef} 0 R /MediaBox [0 0 ${A4_W} ${A4_H}]\n/Resources << /XObject << /Im${i} ${ir} 0 R >> >>\n/Contents ${pr+1} 0 R >>\nendobj\n`);
+    // Content stream
+    const cs=`q ${sw} 0 0 ${sh} ${dx} ${dy} cm /Im${i} Do Q`;
+    offsets[pr+1]=offset;
+    w(`${pr+1} 0 obj\n<< /Length ${cs.length} >>\nstream\n${cs}\nendstream\nendobj\n`);
+  }
+  // xref
+  const xrefOffset=offset;
+  const allObjs=Object.keys(offsets).map(Number).sort((a,b)=>a-b);
+  const maxObj=Math.max(...allObjs)+1;
+  w(`xref\n0 ${maxObj+1}\n0000000000 65535 f \n`);
+  for(let i=1;i<=maxObj;i++){const off=offsets[i]||0;w(String(off).padStart(10,'0')+' 00000 n \n');}
+  w(`trailer\n<< /Size ${maxObj+1} /Root ${catalogRef} 0 R >>\nstartxref\n${xrefOffset}\n%%EOF\n`);
+  // Assembler
+  const total=chunks.reduce((s,c)=>s+c.length,0);
+  const out=new Uint8Array(total);let pos=0;
+  for(const c of chunks){out.set(c,pos);pos+=c.length;}
+  return out;
 }
 function closeScanner(){
   if(SCANNER_STREAM){SCANNER_STREAM.getTracks().forEach(t=>t.stop());SCANNER_STREAM=null;}
-  closeModal();
+  SCAN_PAGES=[];closeModal();
 }
 async function attachDoc(id){
   const fileEl=document.getElementById('doc_file');const typeEl=document.getElementById('doc_type');
