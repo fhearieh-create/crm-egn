@@ -3079,64 +3079,68 @@ async function scanFinalize(recId){
   }catch(e){console.error('[scanFinalize]',e);toast('Échec : '+(e.message||e),'err');if(loading)loading.style.display='none';}
 }
 async function buildScanPdf(dataUrls){
-  // Génère un PDF A4 minimal sans lib externe, une image JPEG par page
   const A4_W=595,A4_H=842;
-  const xobjs=[];const pages=[];let offset=0;
   const enc=s=>new TextEncoder().encode(s);
-  const chunks=[];
-  const w=s=>{const b=enc(s);chunks.push(b);offset+=b.length;return offset;};
-  const offsets=[];
-  w('%PDF-1.4\n');
-  // Images et pages
-  const imgDataArr=[];
-  for(let i=0;i<dataUrls.length;i++){
-    const url=dataUrls[i];
+  // Lire les données JPEG de chaque image
+  const imgs=dataUrls.map(url=>{
     const base64=url.split(',')[1];
     const raw=atob(base64);
-    const bytes=new Uint8Array(raw.length);for(let j=0;j<raw.length;j++)bytes[j]=raw.charCodeAt(j);
-    // Lire W/H depuis le JPEG (SOF markers)
-    let w2=A4_W,h2=A4_H;
-    for(let p=0;p<bytes.length-8;p++){if(bytes[p]===0xFF&&bytes[p+1]>=0xC0&&bytes[p+1]<=0xC3){h2=bytes[p+5]*256+bytes[p+6];w2=bytes[p+7]*256+bytes[p+8];break;}}
-    imgDataArr.push({bytes,w:w2,h:h2});
-  }
-  // Objets PDF
-  let objIdx=1;
-  const catalogRef=objIdx++;const pagesRef=objIdx++;
-  const pageRefs=[];const imgRefs=[];
-  for(let i=0;i<dataUrls.length;i++){imgRefs.push(objIdx++);pageRefs.push(objIdx++);}
+    const bytes=new Uint8Array(raw.length);
+    for(let j=0;j<raw.length;j++)bytes[j]=raw.charCodeAt(j);
+    let iw=A4_W,ih=A4_H;
+    for(let p=0;p<bytes.length-8;p++){if(bytes[p]===0xFF&&bytes[p+1]>=0xC0&&bytes[p+1]<=0xC3){ih=bytes[p+5]*256+bytes[p+6];iw=bytes[p+7]*256+bytes[p+8];break;}}
+    return{bytes,iw,ih};
+  });
+  const n=imgs.length;
+  // Plan des objets : 1=catalog, 2=pages, puis par page : imgObj, contentObj, pageObj (3 objets par page)
+  // obj 1: catalog, obj 2: pages, obj 3+3i: image XObject, obj 4+3i: content stream, obj 5+3i: page
+  const catalogId=1,pagesId=2;
+  const imgId=i=>3+3*i;
+  const contentId=i=>4+3*i;
+  const pageId=i=>5+3*i;
+  const totalObjs=2+3*n;
+  // Construire les objets dans l'ordre et tracer les offsets
+  const offsets=new Array(totalObjs+1).fill(0);
+  const chunks=[];let off=0;
+  const push=s=>{const b=enc(s);chunks.push(b);off+=b.length;};
+  const pushRaw=b=>{chunks.push(b);off+=b.length;};
+  push('%PDF-1.4\n%\xFF\xFF\n');
   // Catalog
-  offsets[catalogRef]=offset;w(`${catalogRef} 0 obj\n<< /Type /Catalog /Pages ${pagesRef} 0 R >>\nendobj\n`);
+  offsets[catalogId]=off;
+  push(`${catalogId} 0 obj\n<</Type/Catalog/Pages ${pagesId} 0 R>>\nendobj\n`);
   // Pages
-  offsets[pagesRef]=offset;w(`${pagesRef} 0 obj\n<< /Type /Pages /Kids [${pageRefs.map(r=>r+' 0 R').join(' ')}] /Count ${dataUrls.length} >>\nendobj\n`);
-  // Image + Page objects
-  for(let i=0;i<dataUrls.length;i++){
-    const{bytes,w:iw,h:ih}=imgDataArr[i];
-    const ir=imgRefs[i];const pr=pageRefs[i];
-    // Scale image to fit A4 keeping ratio
+  offsets[pagesId]=off;
+  const kids=Array.from({length:n},(_,i)=>`${pageId(i)} 0 R`).join(' ');
+  push(`${pagesId} 0 obj\n<</Type/Pages/Kids[${kids}]/Count ${n}>>\nendobj\n`);
+  // Pour chaque image : image XObject, content stream, page
+  for(let i=0;i<n;i++){
+    const{bytes,iw,ih}=imgs[i];
     const scale=Math.min(A4_W/iw,A4_H/ih);
     const sw=Math.round(iw*scale),sh=Math.round(ih*scale);
     const dx=Math.round((A4_W-sw)/2),dy=Math.round((A4_H-sh)/2);
-    // XObject image
-    offsets[ir]=offset;
-    const hdr=enc(`${ir} 0 obj\n<< /Type /XObject /Subtype /Image /Width ${iw} /Height ${ih} /ColorSpace /DeviceRGB /BitsPerComponent 8 /Filter /DCTDecode /Length ${bytes.length} >>\nstream\n`);
-    chunks.push(hdr);offset+=hdr.length;
-    chunks.push(bytes);offset+=bytes.length;
-    const tail=enc('\nendstream\nendobj\n');chunks.push(tail);offset+=tail.length;
-    // Page
-    offsets[pr]=offset;
-    w(`${pr} 0 obj\n<< /Type /Page /Parent ${pagesRef} 0 R /MediaBox [0 0 ${A4_W} ${A4_H}]\n/Resources << /XObject << /Im${i} ${ir} 0 R >> >>\n/Contents ${pr+1} 0 R >>\nendobj\n`);
+    const imgName=`Im${i}`;
+    // Image XObject
+    offsets[imgId(i)]=off;
+    push(`${imgId(i)} 0 obj\n<</Type/XObject/Subtype/Image/Width ${iw}/Height ${ih}/ColorSpace/DeviceRGB/BitsPerComponent 8/Filter/DCTDecode/Length ${bytes.length}>>\nstream\n`);
+    pushRaw(bytes);
+    push('\nendstream\nendobj\n');
     // Content stream
-    const cs=`q ${sw} 0 0 ${sh} ${dx} ${dy} cm /Im${i} Do Q`;
-    offsets[pr+1]=offset;
-    w(`${pr+1} 0 obj\n<< /Length ${cs.length} >>\nstream\n${cs}\nendstream\nendobj\n`);
+    const cs=`q ${sw} 0 0 ${sh} ${dx} ${dy} cm /${imgName} Do Q`;
+    const csBytes=enc(cs);
+    offsets[contentId(i)]=off;
+    push(`${contentId(i)} 0 obj\n<</Length ${csBytes.length}>>\nstream\n`);
+    pushRaw(csBytes);
+    push('\nendstream\nendobj\n');
+    // Page
+    offsets[pageId(i)]=off;
+    push(`${pageId(i)} 0 obj\n<</Type/Page/Parent ${pagesId} 0 R/MediaBox[0 0 ${A4_W} ${A4_H}]/Resources<</XObject<</${imgName} ${imgId(i)} 0 R>>>>/Contents ${contentId(i)} 0 R>>\nendobj\n`);
   }
   // xref
-  const xrefOffset=offset;
-  const allObjs=Object.keys(offsets).map(Number).sort((a,b)=>a-b);
-  const maxObj=Math.max(...allObjs)+1;
-  w(`xref\n0 ${maxObj+1}\n0000000000 65535 f \n`);
-  for(let i=1;i<=maxObj;i++){const off=offsets[i]||0;w(String(off).padStart(10,'0')+' 00000 n \n');}
-  w(`trailer\n<< /Size ${maxObj+1} /Root ${catalogRef} 0 R >>\nstartxref\n${xrefOffset}\n%%EOF\n`);
+  const xrefOff=off;
+  push(`xref\n0 ${totalObjs+1}\n`);
+  push('0000000000 65535 f \n');
+  for(let i=1;i<=totalObjs;i++)push(String(offsets[i]).padStart(10,'0')+' 00000 n \n');
+  push(`trailer\n<</Size ${totalObjs+1}/Root ${catalogId} 0 R>>\nstartxref\n${xrefOff}\n%%EOF\n`);
   // Assembler
   const total=chunks.reduce((s,c)=>s+c.length,0);
   const out=new Uint8Array(total);let pos=0;
