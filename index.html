@@ -2316,10 +2316,10 @@ function produitsCostFor(r){
 function renderComptaPanel(r){
   const c=comptaOf(r);
   const poseurs=getUsers().filter(u=>u.role==='poseur');
-  const pc=poseurCostFor(r);
-  const ccC=callCenterCostFor(r);
-  const vtC=vtCostFor(r);
-  const auditC=auditCostFor(r);
+  const pc=effectiveCost(r,'poseur',poseurCostFor);
+  const ccC=effectiveCost(r,'callcenter',callCenterCostFor);
+  const vtC=effectiveCost(r,'vt',vtCostFor);
+  const auditC=effectiveCost(r,'audit',auditCostFor);
   const prC=produitsCostFor(r);
   const itemsOp=getItems().filter(i=>i.opId===r.productId);
   const surf=surfaceFieldValue(r);
