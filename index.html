@@ -691,7 +691,7 @@ let ME=null;
 let COMPTA_CACHE={},FACTURES_CACHE=null;
 function rowToCompta(row){
   if(!row)return{devisTTC:0,poseurUserId:'',jours:0,nbRdv:0,vtSubId:'',auditSubId:'',produits:[],fauxFrais:[],facturePoseur:null,factureCallCenter:null,factureVt:null,factureAudit:null,overrides:{}};
-  return{devisTTC:row.devis_ttc||0,poseurUserId:row.poseur_user_id||'',jours:row.jours||0,nbRdv:row.nb_rdv||0,vtSubId:row.vt_sub_id||'',auditSubId:row.audit_sub_id||'',produits:row.produits||[],fauxFrais:row.faux_frais||[],facturePoseur:row.facture_poseur||null,factureCallCenter:row.facture_callcenter||null,factureVt:row.facture_vt||null,factureAudit:row.facture_audit||null,overrides:row.overrides||{}};
+  return{devisTTC:row.devis_ttc||0,poseurUserId:row.poseur_user_id||'',jours:row.jours||0,nbRdv:row.nb_rdv||0,vtSubId:row.vt_sub_id||'',auditSubId:row.audit_sub_id||'',produits:row.produits||[],fauxFrais:row.faux_frais||[],facturePoseur:row.facture_poseur||null,factureCallCenter:row.facture_callcenter||null,factureVt:row.facture_vt||null,factureAudit:row.facture_audit||null,overrides:row.overrides||{},verrouille:!!row.verrouille,montantsGeles:row.montants_geles||{}};
 }
 async function loadComptaFor(recId){
   if(COMPTA_CACHE[recId])return COMPTA_CACHE[recId];
@@ -718,6 +718,7 @@ async function persistCompta(recId){
       vt_sub_id:c.vtSubId||null,audit_sub_id:c.auditSubId||null,
       produits:c.produits||[],faux_frais:c.fauxFrais||[],facture_poseur:c.facturePoseur,facture_callcenter:c.factureCallCenter,
       facture_vt:c.factureVt,facture_audit:c.factureAudit,overrides:c.overrides||{},
+      verrouille:!!c.verrouille,montants_geles:c.montantsGeles||{},
       updated_at:new Date().toISOString(),updated_by:ME?ME.id:null
     });
   }catch(e){console.error('[compta] sauvegarde échouée',e);toast('⚠️ Sauvegarde Supabase échouée : '+e.message,'err');}
@@ -2234,31 +2235,33 @@ function surfaceFieldValue(r){
   }
   return parseFloat(String(v||0).replace(',','.'))||0;
 }
-function effectiveCost(r,key,autoFn){
-  // Retourne le coût effectif d'une ligne : override manuel si présent, sinon calcul auto.
+function effectiveCost(r,key,autoFn,margeProvisoire){
   const c=comptaOf(r);
+  const gel=(c.montantsGeles||{})[key];
+  if(gel!=null)return{...autoFn(r),montant:gel,overridden:true,gele:true};
   const ovr=(c.overrides||{})[key];
   if(ovr&&ovr.mode==='manuel'&&ovr.montant!=null)return{...autoFn(r),montant:ovr.montant,overridden:true};
   if(ovr&&ovr.mode==='pct_marge'){
-    // Calcul préliminaire sans ce poste pour éviter la circularité
     const auto=autoFn(r);
-    const prime=dealOf(r).prime||0;
-    const autoCosts=tempChargesWithout(r,key);
-    const margeProvisoire=prime-autoCosts;
-    const montant=Math.max(0,margeProvisoire*(ovr.pct||0)/100);
-    return{...auto,montant,overridden:true,pctMarge:true,pct:ovr.pct,margeProvisoire};
+    const montant=Math.max(0,(margeProvisoire||0)*(ovr.pct||0)/100);
+    return{...auto,montant,overridden:true,pctMarge:true,pct:ovr.pct};
   }
   return{...autoFn(r),overridden:false};
 }
-function tempChargesWithout(r,exceptKey){
+function chargesBaseOnly(r){
   const c=comptaOf(r);
   const ff=(c.fauxFrais||[]).reduce((s,x)=>s+(x.amount||0),0);
-  let total=0;
-  if(exceptKey!=='poseur')total+=poseurCostFor(r).montant;
-  if(exceptKey!=='callcenter')total+=callCenterCostFor(r).montant;
-  if(exceptKey!=='vt')total+=vtCostFor(r).montant;
-  if(exceptKey!=='audit')total+=auditCostFor(r).montant;
-  total+=produitsCostFor(r).montant+ff;
+  let total=ff+produitsCostFor(r).montant;
+  ['poseur','callcenter','vt','audit'].forEach(k=>{
+    const gel=(c.montantsGeles||{})[k];const ovr=(c.overrides||{})[k];
+    if(gel!=null){total+=gel;return;}
+    if(ovr&&ovr.mode==='pct_marge')return;
+    if(ovr&&ovr.mode==='manuel'&&ovr.montant!=null){total+=ovr.montant;return;}
+    if(k==='poseur')total+=poseurCostFor(r).montant;
+    else if(k==='callcenter')total+=callCenterCostFor(r).montant;
+    else if(k==='vt')total+=vtCostFor(r).montant;
+    else if(k==='audit')total+=auditCostFor(r).montant;
+  });
   return total;
 }
 function poseurCostFor(r){
@@ -2372,7 +2375,14 @@ function renderComptaPanel(r){
   let prRows=prC.lignes.length?prC.lignes.map(l=>`<div class="cfg-item"><span class="nm">${l.calc.qty}× ${esc(l.calc.label)}</span><span class="tag" style="background:#eef0f2;color:#6b7785">${l.calc.mode==='m2'?'au m²':'à la pièce'}</span><span class="tag" style="background:rgba(45,125,210,.12);color:#2D7DD2">${eur(l.calc.montant)} <span style="font-size:.62rem;font-weight:500">· HT ${eur(htOf(l.calc.montant))}</span></span><span class="sp"><button class="iconbtn del" onclick="delProduitLigne('${r.id}','${l.id}')">🗑️</button></span></div>`).join(''):`<div class="muted" style="font-size:.82rem;padding:.4rem 0">Aucun produit ajouté.</div>`;
   const sourceAssignee=r.sourceId?getSources().find(s=>s.id===r.sourceId):null;
   return `<div class="panel" style="border:1.5px solid rgba(230,57,70,.25)">
-    <div class="panel-h"><h3>💼 Comptabilité <span style="font-size:.66rem;font-weight:600;color:var(--text-mut);text-transform:none">— Super Admin / Admin uniquement</span></h3><div class="sp" style="display:flex;gap:.4rem;flex-wrap:wrap;align-items:center">${factureStatutBadge(r,'poseur')}${c.facturePoseur?statutComptaSelect(r,'poseur'):''}</div></div>
+    <div class="panel-h"><h3>💼 Comptabilité <span style="font-size:.66rem;font-weight:600;color:var(--text-mut);text-transform:none">— Super Admin / Admin uniquement</span></h3>
+    <div class="sp" style="display:flex;gap:.4rem;flex-wrap:wrap;align-items:center">
+      ${c.verrouille
+        ?`<span style="background:rgba(230,57,70,.12);color:#E63946;border-radius:7px;padding:3px 10px;font-size:.74rem;font-weight:700">🔒 Compta verrouillée</span>
+           <button class="btn btn-ghost btn-sm" onclick="deverrouillerCompta('${r.id}')">🔓 Déverrouiller</button>`
+        :`<button class="btn btn-pri btn-sm" onclick="validerEtVerrouiller('${r.id}')">✅ Valider & Verrouiller</button>`}
+      ${factureStatutBadge(r,'poseur')}${c.facturePoseur?statutComptaSelect(r,'poseur'):''}
+    </div></div>
     <div class="panel-b">
       ${poseurLocked?`<p class="muted" style="font-size:.74rem;color:#B96A0A;margin-bottom:.5rem">🔒 APF Poseur déjà envoyé — devis / poseur / jours verrouillés. Passez le statut à « Annulé » pour les modifier et pouvoir refacturer.</p>`:''}
       <div class="fgrid c3">
@@ -2546,13 +2556,30 @@ function genererRapportCompta(recId){
   logActivity('action',`📄 Rapport comptable téléchargé — dossier ${r.dossier||recId}`,recId);
 }
 function overrideLine(r,key,cost,label,color){
-  const c=comptaOf(r);const ovr=(c.overrides||{})[key]||{};
-  const isManuel=ovr.mode==='manuel';const isPctMarge=ovr.mode==='pct_marge';
+  const c=comptaOf(r);const locked=c.verrouille;
+  const gel=(c.montantsGeles||{})[key];const ovr=(c.overrides||{})[key]||{};
+  const isGele=gel!=null;const isManuel=!isGele&&ovr.mode==='manuel';const isPctMarge=!isGele&&ovr.mode==='pct_marge';
   const eur=n=>(n||0).toLocaleString('fr-FR',{maximumFractionDigits:2})+' €';
-  const badge=isManuel?`<span style="font-size:.62rem;background:rgba(230,148,57,.15);color:#B96A0A;border-radius:5px;padding:1px 5px">✏️ Manuel</span>`:isPctMarge?`<span style="font-size:.62rem;background:rgba(45,125,210,.12);color:#2D7DD2;border-radius:5px;padding:1px 5px">% Marge</span>`:`<span style="font-size:.62rem;background:#eef0f2;color:#6b7785;border-radius:5px;padding:1px 5px">Auto</span>`;
-  const actions=!isManuel&&!isPctMarge?`<button class="iconbtn" style="font-size:.7rem;padding:2px 5px" title="Saisir manuellement" onclick="setOverride('${r.id}','${key}','manuel',${cost.montant||0})">✏️</button><button class="iconbtn" style="font-size:.7rem;padding:2px 5px" title="% de la marge" onclick="setOverride('${r.id}','${key}','pct_marge',null)">%</button>`:'';
-  const overrideInput=isManuel?`<div style="display:flex;gap:.4rem;align-items:center;margin-top:.3rem"><input type="number" step="any" value="${ovr.montant||''}" style="width:110px" placeholder="0" onchange="updateOverrideManuel('${r.id}','${key}',this.value)"><span class="muted" style="font-size:.75rem">€ TTC</span><button class="btn btn-ghost btn-sm" onclick="clearOverride('${r.id}','${key}')">🔄 Auto</button></div>`:isPctMarge?`<div style="display:flex;gap:.4rem;align-items:center;margin-top:.3rem"><input type="number" step="any" value="${ovr.pct||''}" style="width:80px" placeholder="0" onchange="updateOverridePct('${r.id}','${key}',this.value)"><span class="muted" style="font-size:.75rem">% de la marge → ${eur(cost.montant)}</span><button class="btn btn-ghost btn-sm" onclick="clearOverride('${r.id}','${key}')">🔄 Auto</button></div>`:'';
-  return `<div class="info-row${isManuel||isPctMarge?' override-active':''}"><span class="il">${label}${cost.label?` — <span class="muted" style="font-size:.72rem">${esc(cost.label)}</span>`:''} ${badge} ${actions}</span><span class="iv" style="color:${color}">${eur(cost.montant)}</span>${overrideInput?`<div style="grid-column:1/-1;margin-left:0">${overrideInput}</div>`:''}</div>`;
+  const badge=isGele?`<span style="font-size:.62rem;background:rgba(45,95,20,.15);color:#3B6D11;border-radius:5px;padding:1px 5px">🔒 Gelé</span>`:isManuel?`<span style="font-size:.62rem;background:rgba(230,148,57,.15);color:#B96A0A;border-radius:5px;padding:1px 5px">✏️ Manuel</span>`:isPctMarge?`<span style="font-size:.62rem;background:rgba(45,125,210,.12);color:#2D7DD2;border-radius:5px;padding:1px 5px">% Marge</span>`:`<span style="font-size:.62rem;background:#eef0f2;color:#6b7785;border-radius:5px;padding:1px 5px">Auto</span>`;
+  const actions=!locked&&!isGele&&!isManuel&&!isPctMarge?`<button class="iconbtn" style="font-size:.7rem;padding:2px 5px" title="Saisir manuellement" onclick="setOverride('${r.id}','${key}','manuel',${cost.montant||0})">✏️</button><button class="iconbtn" style="font-size:.7rem;padding:2px 5px" title="% de la marge" onclick="setOverride('${r.id}','${key}','pct_marge',null)">%</button>`:'';
+  let overrideInput='';
+  if(!locked&&isManuel)overrideInput=`<div style="display:flex;gap:.4rem;align-items:center;margin-top:.3rem"><input type="number" step="any" value="${ovr.montant||''}" style="width:110px" placeholder="0" id="ovr_${key}_inp"><span class="muted" style="font-size:.75rem">€ TTC</span><button class="btn btn-pri btn-sm" onclick="validateOverride('${r.id}','${key}','manuel')">✅ Valider</button><button class="btn btn-ghost btn-sm" onclick="clearOverride('${r.id}','${key}')">🔄 Auto</button></div>`;
+  else if(!locked&&isPctMarge)overrideInput=`<div style="display:flex;gap:.4rem;align-items:center;margin-top:.3rem"><input type="number" step="any" value="${ovr.pct||''}" style="width:80px" placeholder="0" id="ovr_${key}_pct"><span class="muted" style="font-size:.75rem">% de la marge → <b>${eur(cost.montant)}</b></span><button class="btn btn-pri btn-sm" onclick="validateOverride('${r.id}','${key}','pct_marge')">✅ Valider</button><button class="btn btn-ghost btn-sm" onclick="clearOverride('${r.id}','${key}')">🔄 Auto</button></div>`;
+  return `<div class="info-row"><span class="il">${label}${cost.label?` — <span class="muted" style="font-size:.72rem">${esc(cost.label)}</span>`:''} ${badge} ${actions}</span><span class="iv" style="color:${color}">${eur(cost.montant)}</span>${overrideInput?`<div style="grid-column:1/-1">${overrideInput}</div>`:''}</div>`;
+}
+async function validateOverride(recId,key,mode){
+  const r=recById(recId);if(!r)return;
+  const c=comptaOf(r);c.overrides=c.overrides||{};
+  if(mode==='manuel'){
+    const inp=document.getElementById('ovr_'+key+'_inp');
+    const val=parseFloat(String((inp?inp.value:0)||'0').replace(',','.'))||0;
+    c.overrides[key]={mode:'manuel',montant:val};
+  } else if(mode==='pct_marge'){
+    const inp=document.getElementById('ovr_'+key+'_pct');
+    const pct=parseFloat(String((inp?inp.value:0)||'0').replace(',','.'))||0;
+    c.overrides[key]={mode:'pct_marge',pct};
+  }
+  await persistCompta(recId);openDossier(recId);toast('Montant validé ✓','ok');
 }
 async function setOverride(recId,key,mode,val){
   const r=recById(recId);if(!r)return;
@@ -2561,22 +2588,34 @@ async function setOverride(recId,key,mode,val){
   else c.overrides[key]={mode:'pct_marge',pct:0};
   await persistCompta(recId);openDossier(recId);
 }
-async function updateOverrideManuel(recId,key,val){
-  const r=recById(recId);if(!r)return;
-  const c=comptaOf(r);c.overrides=c.overrides||{};
-  c.overrides[key]={mode:'manuel',montant:parseFloat(String(val||'0').replace(',','.'))||0};
-  await persistCompta(recId);
-}
-async function updateOverridePct(recId,key,pct){
-  const r=recById(recId);if(!r)return;
-  const c=comptaOf(r);c.overrides=c.overrides||{};
-  c.overrides[key]={mode:'pct_marge',pct:parseFloat(String(pct||'0').replace(',','.'))||0};
-  await persistCompta(recId);openDossier(recId);
-}
 async function clearOverride(recId,key){
   const r=recById(recId);if(!r)return;
   const c=comptaOf(r);if(c.overrides)delete c.overrides[key];
   await persistCompta(recId);openDossier(recId);
+}
+async function validerEtVerrouiller(recId){
+  const r=recById(recId);if(!r)return;
+  const m=recordComptaMetrics(r);
+  const c=comptaOf(r);
+  c.montantsGeles={
+    poseur:m.pc.montant,callcenter:m.ccC.montant,
+    vt:m.vtC.montant,audit:m.auditC.montant
+  };
+  c.verrouille=true;
+  await persistCompta(recId);
+  logActivity('action',`🔒 Compta verrouillée sur ${r.dossier||recId} — marge ${m.marge.toFixed(2)} €`,recId);
+  openDossier(recId);toast('Comptabilité validée et verrouillée 🔒','ok');
+}
+async function deverrouillerCompta(recId){
+  modalConfirm('Déverrouiller la comptabilité ?','Les montants gelés seront réinitialisés et les calculs recalculés. Cette action est traçable.',async()=>{
+    const c=comptaOf(recId)?comptaOf(recById(recId)):null;
+    const r=recById(recId);if(!r)return;
+    const cc=comptaOf(r);
+    cc.verrouille=false;cc.montantsGeles={};
+    await persistCompta(recId);
+    logActivity('action',`🔓 Compta déverrouillée sur ${r.dossier||recId}`,recId);
+    closeModal();openDossier(recId);toast('Compta déverrouillée 🔓','ok');
+  });
 }
 async function saveCompta(id){
   const r=recById(id);if(!r)return;
@@ -2627,23 +2666,28 @@ async function delFauxFrais(id,fid){
    ==================================================================== */
 function recordComptaMetrics(r){
   const c=comptaOf(r);
-  const pc=effectiveCost(r,'poseur',poseurCostFor);
-  const ccC=effectiveCost(r,'callcenter',callCenterCostFor);
-  const vtC=effectiveCost(r,'vt',vtCostFor);
-  const auditC=effectiveCost(r,'audit',auditCostFor);
+  // Passe 1 : charges fixes (auto, manuel, gelées) — exclut les postes en % marge
+  const chargesBase=chargesBaseOnly(r);
+  const prime=dealOf(r).prime||0;
+  const margeProvisoire=prime-chargesBase;
+  // Passe 2 : postes en % marge calculés sur cette marge provisoire
+  const pc=effectiveCost(r,'poseur',poseurCostFor,margeProvisoire);
+  const ccC=effectiveCost(r,'callcenter',callCenterCostFor,margeProvisoire);
+  const vtC=effectiveCost(r,'vt',vtCostFor,margeProvisoire);
+  const auditC=effectiveCost(r,'audit',auditCostFor,margeProvisoire);
   const prC=produitsCostFor(r);
   const ff=c.fauxFrais||[];
   const ffTotal=ff.reduce((s,x)=>s+(x.amount||0),0);
   const ffPoseur=ff.filter(x=>x.origin==='poseur').reduce((s,x)=>s+(x.amount||0),0);
-  const prime=dealOf(r).prime||0;
-  const recettes=(prime||0);
+  const recettes=prime;
   const charges=pc.montant+ccC.montant+vtC.montant+auditC.montant+prC.montant+ffTotal;
   const marge=recettes-charges;
+  const margePct=recettes>0?(marge/recettes*100):0;
   const aPayerPoseur=pc.montant+ffPoseur;
   const aPayerCallCenter=ccC.montant;
   const aPayerVt=vtC.montant;
   const aPayerAudit=auditC.montant;
-  return{c,pc,ccC,vtC,auditC,prC,ffTotal,ffPoseur,prime,recettes,charges,marge,aPayerPoseur,aPayerCallCenter,aPayerVt,aPayerAudit};
+  return{c,pc,ccC,vtC,auditC,prC,ffTotal,ffPoseur,prime,recettes,charges,marge,margePct,margeProvisoire,aPayerPoseur,aPayerCallCenter,aPayerVt,aPayerAudit};
 }
 function hasComptaData(r){const c=COMPTA_CACHE[r.id];if(!c)return false;return (c.devisTTC||0)>0||(c.produits&&c.produits.length)||(c.fauxFrais&&c.fauxFrais.length)||!!c.poseurUserId||!!(c.nbRdv&&r.userId);}
 function clientNameOf(r){return (r.raisonSociale||((r.prenom||'')+' '+(r.nom||'')).trim()||r.dossier||'Dossier');}
