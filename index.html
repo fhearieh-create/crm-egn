@@ -2274,7 +2274,7 @@ function poseurCostFor(r){
   if(!rule)return{mode:null,montant:0,label:`Aucun tarif défini pour cette opération dans « ${fam.name} »`};
   let montant=0;
   if(rule.mode==='pourcentage')montant=(c.devisTTC||0)*(rule.value||0)/100;
-  else if(rule.mode==='pct_marge'){const prime=dealOf(r).prime||0;const charges=tempChargesWithout(r,'poseur');montant=Math.max(0,(prime-charges)*(rule.value||0)/100);}
+  else if(rule.mode==='pct_marge')montant=0;
   else if(rule.mode==='fixe')montant=rule.value||0;
   else if(rule.mode==='jour')montant=(rule.value||0)*(c.jours||0);
   else if(rule.mode==='m2')montant=(rule.value||0)*surfaceFieldValue(r);
@@ -2293,7 +2293,7 @@ function callCenterCostFor(r){
   if(rule.mode==='rdv')montant=(rule.value||0)*(c.nbRdv||0);
   else if(rule.mode==='m2')montant=(rule.value||0)*surfaceFieldValue(r);
   else if(rule.mode==='pourcentage')montant=(c.devisTTC||0)*(rule.value||0)/100;
-  else if(rule.mode==='pct_marge'){const prime=dealOf(r).prime||0;const charges=tempChargesWithout(r,'callcenter');montant=Math.max(0,(prime-charges)*(rule.value||0)/100);}
+  else if(rule.mode==='pct_marge')montant=0;
   const detail=rule.mode==='m2'?`${rule.value} €/m²`:rule.mode==='pourcentage'?`${rule.value}% du devis`:rule.mode==='pct_marge'?`${rule.value}% de la marge`:`${rule.value} €/RDV`;
   return{mode:rule.mode,montant,label:`${src.name} — ${detail}`,src};
 }
