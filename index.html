@@ -2164,8 +2164,12 @@ function renderDossier(r){
       <div class="fld"><label>Type de document</label><select id="doc_type">${dts.length?dts.map(t=>`<option value="${t.id}">${esc(t.name)}</option>`).join(''):'<option value="">— à définir dans Paramètres —</option>'}</select></div>
       <div class="fld"><label>Fichier (PDF / image)</label><input type="file" id="doc_file" accept=".pdf,image/*"></div>
     </div>
-    <button class="btn btn-pri btn-sm" style="margin-top:.6rem" onclick="attachDoc('${r.id}')">📎 Joindre au dossier</button>
+    <div style="display:flex;gap:.5rem;margin-top:.6rem;flex-wrap:wrap">
+      <button class="btn btn-pri btn-sm" onclick="attachDoc('${r.id}')">📎 Joindre au dossier</button>
+      <button class="btn btn-ghost btn-sm" onclick="openScanner('${r.id}')">📷 Scanner un document</button>
+    </div>
     <div class="cfg-list" style="margin-top:1rem">`;
+
   if(!docList.length)docs+=`<div class="muted">Aucune pièce jointe.</div>`;
   else docList.forEach(d=>{docs+=`<div class="cfg-item"><span style="font-size:1.1rem">${/image\//.test(d.mime||'')?'🖼️':'📄'}</span><div style="flex:1;min-width:0"><div class="nm" style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${esc(d.typeName||'Document')} — ${esc(d.filename||'')}</div><div class="muted" style="font-size:.68rem">${esc(d.user||'')} • ${new Date(d.date).toLocaleString('fr-FR')} • ${fmtSize(d.size)}</div></div><span class="sp"><button class="iconbtn" title="Voir / télécharger" onclick="viewDoc('${d.id}','${r.id}')">👁️</button><button class="iconbtn del" onclick="delDoc('${r.id}','${d.id}')">🗑️</button></span></div>`;});
   docs+=`</div>
@@ -2966,6 +2970,101 @@ const ATTACH_BUCKET='attachments';
 function idbOpen(){return new Promise((res,rej)=>{const rq=indexedDB.open('egncrm_files',1);rq.onupgradeneeded=()=>{rq.result.createObjectStore('files');};rq.onsuccess=()=>res(rq.result);rq.onerror=()=>rej(rq.error);});}
 async function idbGet(key){try{const db=await idbOpen();return new Promise((res,rej)=>{const tx=db.transaction('files','readonly');const rq=tx.objectStore('files').get(key);rq.onsuccess=()=>res(rq.result);rq.onerror=()=>rej(rq.error);});}catch(e){return null;}}
 async function idbDel(key){try{const db=await idbOpen();return new Promise((res,rej)=>{const tx=db.transaction('files','readwrite');tx.objectStore('files').delete(key);tx.oncomplete=()=>res();tx.onerror=()=>rej(tx.error);});}catch(e){}}
+/* ============================================================
+   SCANNER DE DOCUMENT — caméra dans le navigateur
+   Fonctionne sur mobile (iOS Safari, Android Chrome) et desktop.
+   ============================================================ */
+let SCANNER_STREAM=null;
+function openScanner(recId){
+  const dts=getDocTypes();
+  const body=`
+    <div style="margin-bottom:.6rem;display:flex;gap:.5rem;flex-wrap:wrap;align-items:center">
+      <div class="fld" style="flex:1;min-width:160px;margin:0"><select id="scan_type">${dts.length?dts.map(t=>`<option value="${t.id}">${esc(t.name)}</option>`).join(''):'<option value="">— Document —</option>'}</select></div>
+      <div class="fld" style="flex:1;min-width:140px;margin:0"><input id="scan_name" placeholder="Nom du fichier (optionnel)"></div>
+    </div>
+    <div style="position:relative;background:#000;border-radius:10px;overflow:hidden;min-height:280px;display:flex;align-items:center;justify-content:center">
+      <video id="scan_video" autoplay playsinline muted style="width:100%;max-height:420px;display:block;border-radius:10px"></video>
+      <canvas id="scan_canvas" style="display:none"></canvas>
+      <div id="scan_preview" style="display:none;position:absolute;inset:0;background:#000;border-radius:10px">
+        <img id="scan_img" style="width:100%;max-height:420px;object-fit:contain;border-radius:10px">
+        <div style="position:absolute;bottom:10px;left:0;right:0;display:flex;justify-content:center;gap:10px">
+          <button class="btn btn-ghost btn-sm" style="background:rgba(0,0,0,.6);color:#fff;border-color:rgba(255,255,255,.4)" onclick="scanRetake()">🔄 Reprendre</button>
+          <button class="btn btn-pri btn-sm" onclick="scanUpload('${recId}')">✅ Utiliser cette photo</button>
+        </div>
+      </div>
+      <div id="scan_loading" style="display:none;position:absolute;inset:0;background:rgba(0,0,0,.7);border-radius:10px;display:flex;align-items:center;justify-content:center;color:#fff;font-size:.9rem">⏳ Envoi en cours…</div>
+    </div>
+    <div style="text-align:center;margin-top:12px">
+      <button id="scan_btn" class="btn btn-pri" onclick="scanCapture()" style="font-size:1rem;padding:10px 28px">📷 Prendre la photo</button>
+    </div>
+    <p class="muted" style="text-align:center;font-size:.72rem;margin-top:.5rem">La photo sera automatiquement convertie en JPEG et jointe au dossier.</p>`;
+  openModal('📷 Scanner un document',body,`<button class="btn btn-ghost" onclick="closeScanner()">Fermer</button>`,'wide');
+  setTimeout(()=>startScanner(),200);
+}
+async function startScanner(){
+  try{
+    const stream=await navigator.mediaDevices.getUserMedia({video:{facingMode:'environment',width:{ideal:1920},height:{ideal:1080}}});
+    SCANNER_STREAM=stream;
+    const v=document.getElementById('scan_video');if(v)v.srcObject=stream;
+  }catch(e){
+    toast('Impossible d\'accéder à la caméra — vérifiez les permissions','err');
+    console.error('[scanner]',e);
+  }
+}
+function scanCapture(){
+  const v=document.getElementById('scan_video');
+  const c=document.getElementById('scan_canvas');
+  const img=document.getElementById('scan_img');
+  const preview=document.getElementById('scan_preview');
+  if(!v||!c)return;
+  c.width=v.videoWidth||1280;c.height=v.videoHeight||720;
+  const ctx=c.getContext('2d');
+  ctx.drawImage(v,0,0,c.width,c.height);
+  const dataUrl=c.toDataURL('image/jpeg',0.92);
+  if(img)img.src=dataUrl;
+  if(preview)preview.style.display='block';
+}
+function scanRetake(){
+  const preview=document.getElementById('scan_preview');
+  if(preview)preview.style.display='none';
+}
+async function scanUpload(recId){
+  const c=document.getElementById('scan_canvas');
+  const loading=document.getElementById('scan_loading');
+  if(!c)return;
+  if(loading)loading.style.display='flex';
+  try{
+    const r=recById(recId);if(!r)return;
+    const typeEl=document.getElementById('scan_type');
+    const nameEl=document.getElementById('scan_name');
+    const typeId=typeEl?typeEl.value:'';
+    const dts=getDocTypes();
+    const dt=dts.find(x=>x.id===typeId);
+    const rawName=nameEl&&nameEl.value.trim()?nameEl.value.trim():(dt?dt.name:'document');
+    const filename=rawName.replace(/[^a-zA-Z0-9\-_. àâäéèêëîïôùûüç]/g,'_')+'.jpg';
+    // Convertir le canvas en Blob JPEG
+    const blob=await new Promise(res=>c.toBlob(res,'image/jpeg',0.92));
+    const file=new File([blob],filename,{type:'image/jpeg'});
+    const fid=uid();
+    const path=`${recId}/${fid}-${filename}`;
+    const{error}=await SUPA.storage.from(ATTACH_BUCKET).upload(path,file,{contentType:'image/jpeg'});
+    if(error)throw error;
+    const recs=getRecs();const rec=recs.find(x=>x.id===recId);if(!rec)throw new Error('Dossier introuvable');
+    rec.docs=rec.docs||[];
+    rec.docs.push({id:fid,typeId,typeName:dt?dt.name:'Document scanné',filename,path,mime:'image/jpeg',size:blob.size,date:Date.now(),user:(ME.prenom+' '+ME.nom).trim()||ME.code});
+    save(K.recs,recs);
+    logActivity('action',`📷 Document scanné : ${filename} sur ${rec.dossier||recId}`,recId);
+    closeScanner();openDossier(recId);toast('Document scanné et joint ✓','ok');
+  }catch(e){
+    console.error('[scanUpload]',e);
+    toast('Échec de l\'envoi : '+(e.message||e),'err');
+    if(loading)loading.style.display='none';
+  }
+}
+function closeScanner(){
+  if(SCANNER_STREAM){SCANNER_STREAM.getTracks().forEach(t=>t.stop());SCANNER_STREAM=null;}
+  closeModal();
+}
 async function attachDoc(id){
   const fileEl=document.getElementById('doc_file');const typeEl=document.getElementById('doc_type');
   const file=fileEl&&fileEl.files&&fileEl.files[0];
@@ -3265,7 +3364,7 @@ function openModal(title,body,footer,cls){
   document.getElementById('modalBox').innerHTML=`<div class="modal-h"><h3>${title}</h3><button class="x" onclick="closeModal()">✕</button></div><div class="modal-b">${body}</div>${footer?`<div class="modal-f">${footer}</div>`:''}`;
   document.getElementById('modalBg').classList.add('on');
 }
-function closeModal(){document.getElementById('modalBg').classList.remove('on');document.getElementById('modalBox').innerHTML='';}
+function closeModal(){if(SCANNER_STREAM){SCANNER_STREAM.getTracks().forEach(t=>t.stop());SCANNER_STREAM=null;}document.getElementById('modalBg').classList.remove('on');document.getElementById('modalBox').innerHTML='';}
 function setModalBody(html){const b=document.querySelector('#modalBox .modal-b');if(b)b.innerHTML=html;}
 function modalConfirm(title,msg,onYes){
   window._confirmCb=onYes;
