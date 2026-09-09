@@ -3325,6 +3325,9 @@ async function saveDeal(id){
   const primeAuto=Math.round(cumac/1000*valo*100)/100;
   const prime=primeInput||primeAuto;
   Object.assign(dealOf(r),{delegataireId:did,delegataireName:d?d.name:'',type,cumac,valo,prime});
+  // Synchroniser aussi r.deal dans localStorage pour que dealOf() relise la bonne valeur après rechargement
+  r.deal=r.deal||{};
+  Object.assign(r.deal,{delegataireId:did,delegataireName:d?d.name:'',type,cumac,valo,prime});
   await persistDeal(id);
   r.updated=Date.now();
   r.history=r.history||[];
