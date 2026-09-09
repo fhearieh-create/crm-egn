@@ -2661,7 +2661,12 @@ function recordComptaMetrics(r){
   const aPayerAudit=auditC.montant;
   return{c,pc,ccC,vtC,auditC,prC,ffTotal,ffPoseur,prime,recettes,charges,marge,margePct,aPayerPoseur,aPayerCallCenter,aPayerVt,aPayerAudit};
 }
-function hasComptaData(r){const c=COMPTA_CACHE[r.id];if(!c)return false;return (c.devisTTC||0)>0||(c.produits&&c.produits.length)||(c.fauxFrais&&c.fauxFrais.length)||!!c.poseurUserId||!!(c.nbRdv&&r.userId);}
+function hasComptaData(r){
+  const c=COMPTA_CACHE[r.id];
+  const hasCompta=c&&((c.devisTTC||0)>0||(c.produits&&c.produits.length)||(c.fauxFrais&&c.fauxFrais.length)||!!c.poseurUserId||!!(c.nbRdv&&r.userId));
+  const hasDeal=DEAL_CACHE[r.id]&&(DEAL_CACHE[r.id].prime||DEAL_CACHE[r.id].cumac);
+  return !!(hasCompta||hasDeal);
+}
 function clientNameOf(r){return (r.raisonSociale||((r.prenom||'')+' '+(r.nom||'')).trim()||r.dossier||'Dossier');}
 /* -- sous-statuts de facturation (calculés automatiquement, non modifiables à la main) -- */
 const AGENT_TYPES={
@@ -2708,6 +2713,9 @@ async function renderComptaGlobal(){
     document.getElementById('content').innerHTML='<div class="empty"><div class="big">⏳</div>Chargement de la comptabilité depuis Supabase…</div>';
     await Promise.all([loadAllCompta(),loadFactures(),loadAllDeal()]);
     COMPTA_LOADED=true;
+  } else {
+    // Toujours recharger les deals pour avoir les primes à jour
+    await loadAllDeal();
   }
   renderComptaTabs();
 }
