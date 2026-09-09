@@ -2199,6 +2199,7 @@ function renderDossier(r){
     +row('Opération',op?op.name:'')+row('Source',src?src.name:'')+row('Intervenant',u?u.prenom+' '+u.nom:'')
     +row('Créé le',r.created?new Date(r.created).toLocaleString('fr-FR'):'')
     +row('Modifié le',r.updated?new Date(r.updated).toLocaleString('fr-FR'):'')
+    +`<div class="info-row"><span class="il" style="font-weight:600">CRM devis</span><span class="iv"><select data-crm-devis="${r.id}" onchange="saveCrmDevis('${r.id}',this.value)" style="font-size:.82rem;padding:.3rem .6rem;border-radius:7px;border:1.5px solid var(--border-grey);background:var(--surface-1);color:var(--text-primary);font-weight:500"><option value="" ${!r.crmDevis?'selected':''}>— Non renseigné —</option><option value="Qhare CRM" ${r.crmDevis==='Qhare CRM'?'selected':''}>Qhare CRM</option><option value="Pixel CRM" ${r.crmDevis==='Pixel CRM'?'selected':''}>Pixel CRM</option></select></span></div>`
     +`</div></div>`;
   let opf='';
   if(op&&op.fields){
@@ -3391,6 +3392,17 @@ async function saveDeal(id){
 function statusInline(r){
   const s=statById(r.statusId);const col=s?s.color:'#9aa5b1';
   return `<select class="status-sel" style="color:${col};background:${col}1a" onchange="quickStatus('${r.id}',this.value)">${statusOptions(r.statusId)}</select>`;
+}
+function saveCrmDevis(id,val){
+  const recs=getRecs();const r=recs.find(x=>x.id===id);if(!r)return;
+  r.crmDevis=val||null;r.updated=Date.now();
+  r.history=r.history||[];
+  if(val)r.history.unshift({date:Date.now(),user:ME.prenom,text:`CRM devis : ${val}`});
+  save(K.recs,recs);
+  // Pas de rechargement complet pour garder la position de scroll
+  const el=document.querySelector(`[data-crm-devis="${id}"]`);
+  if(el)el.value=val||'';
+  toast('CRM devis enregistré ✓','ok');
 }
 function quickSousStatut(id,ssid){
   const recs=getRecs();const r=recs.find(x=>x.id===id);if(!r)return;
