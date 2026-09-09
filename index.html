@@ -3282,9 +3282,17 @@ function dealRecalc(){
 }
 function dealAutoCumac(id){
   const r=recById(id);const c=computeCumac(r);
-  if(c==null){toast('Renseignez d\'abord les champs de calcul (ex. type + puissance) et les coefficients dans Paramètres ▸ Opérations','err');return;}
+  if(c==null){toast('Renseignez d\'abord les champs de calcul et les coefficients dans Paramètres ▸ Opérations','err');return;}
   const el=document.getElementById('deal_cumac');if(el){el.value=c;dealRecalc();}
-  toast('Cumac calculé : '+c.toLocaleString('fr-FR')+' kWhc','ok');
+  // Si un mode de calcul de prime avancé est configuré, pré-calcule aussi la prime
+  const prime=computePrimeAuto(r);
+  if(prime!=null){
+    const pel=document.getElementById('deal_prime_override');
+    if(pel)pel.value=prime;
+    toast('Cumac : '+c.toLocaleString('fr-FR')+' kWhc → Prime calculée : '+prime.toLocaleString('fr-FR',{maximumFractionDigits:2})+' € TTC','ok');
+  } else {
+    toast('Cumac calculé : '+c.toLocaleString('fr-FR')+' kWhc','ok');
+  }
 }
 async function saveDeal(id){
   const recs=getRecs();const r=recs.find(x=>x.id===id);if(!r)return;
@@ -5002,10 +5010,92 @@ function renderOpEditor(){
   ${fl}
   <button class="btn btn-ghost btn-sm" style="margin-top:.7rem" onclick="opAddField()">+ Ajouter un champ</button>
   ${cumacEditorHtml()}
+  ${primeEditorHtml()}
   <div class="sectitle" style="margin-top:1.1rem">Module Étude technique <span style="font-weight:500;text-transform:none;letter-spacing:0;color:var(--text-mut)">(bouton « 📐 Étude technique & PDF » dans la fiche dossier — Admin/Super Admin)</span></div>
   <div class="fld"><label>Type d'étude</label><select id="op_etudetype">${Object.entries(ETUDE_TYPES).map(([k,l])=>`<option value="${k}" ${(o.etudeType||'')===k?'selected':''}>${l}</option>`).join('')}</select></div>
   <p class="muted" style="margin-top:.4rem;font-size:.74rem">💡 Le module Étude actuel (déperditions NF EN 12831 + solution PAC + Facteur R) n'est prévu que pour les fiches PAC. D'autres types d'étude pourront être ajoutés ici plus tard pour les autres familles de fiches.</p>`;
   openModal(o.name?'Opération — '+esc(o.name):'Nouvelle opération',body,`<button class="btn btn-ghost" onclick="closeModal()">Annuler</button><button class="btn btn-pri" onclick="saveOperation()">💾 Enregistrer l'opération</button>`,'wide');
+}
+function primeEditorHtml(){
+  const o=OPDRAFT;
+  const p=o.prime||{mode:'standard',factors:[]};
+  const numFields=o.fields.filter(f=>f.type==='number'&&f.label&&f.label.trim());
+  const factors=p.factors||[];
+  let factorsHtml='';
+  if(p.mode==='multi'){
+    factorsHtml=`<div class="muted" style="font-size:.78rem;margin:.4rem 0 .6rem">
+      Formule : <b>cumac × ${factors.map(f=>`<span style="color:var(--green-deep)">${esc(f.label||f.field||'?')}</span>`).join(' × ')} × valo ÷ 1000</b>
+    </div>
+    <div class="cfg-list" id="prime_factors_list">
+    ${factors.map((f,i)=>`<div class="cfg-item">
+      <select onchange="primeUpdateFactor(${i},'field',this.value)" style="flex:2">
+        <option value="">— Choisir un champ numérique —</option>
+        ${numFields.map(nf=>`<option value="${nf.id}" ${f.field===nf.id?'selected':''}>${esc(nf.label)}</option>`).join('')}
+      </select>
+      <input placeholder="Libellé (ex: Surface m²)" value="${esc(f.label||'')}" style="flex:1" oninput="primeUpdateFactor(${i},'label',this.value)">
+      <button class="iconbtn del" onclick="primeDelFactor(${i})">🗑️</button>
+    </div>`).join('')}
+    </div>
+    <button class="btn btn-ghost btn-sm" style="margin-top:.5rem" onclick="primeAddFactor()">+ Ajouter un champ multiplicateur</button>`;
+  }
+  return `<div class="sectitle" style="margin-top:1.1rem">Calcul automatique de la prime <span style="font-weight:500;text-transform:none;letter-spacing:0;color:var(--text-mut)">(alimente le bouton « ⚡ Calculer le cumac » du Deal — prime = cumac × champs × valo)</span></div>
+  <div class="fld"><label>Mode de calcul de la prime</label>
+    <select id="prime_mode" onchange="opPrimeMode(this.value)">
+      <option value="standard" ${(p.mode||'standard')==='standard'?'selected':''}>Standard — cumac × valorisation ÷ 1000 (mode actuel)</option>
+      <option value="multi" ${p.mode==='multi'?'selected':''}>Avancé — cumac × champs × valorisation ÷ 1000</option>
+    </select>
+  </div>
+  ${factorsHtml}`;
+}
+function opPrimeMode(mode){
+  opCaptureName();
+  OPDRAFT.prime=OPDRAFT.prime||{mode:'standard',factors:[]};
+  OPDRAFT.prime.mode=mode;
+  renderOpEditor();
+}
+function primeCapture(){
+  const mode=(document.getElementById('prime_mode')||{}).value||'standard';
+  OPDRAFT.prime=OPDRAFT.prime||{};
+  OPDRAFT.prime.mode=mode;
+  if(!OPDRAFT.prime.factors)OPDRAFT.prime.factors=[];
+}
+function primeAddFactor(){
+  opCaptureName();primeCapture();
+  OPDRAFT.prime.factors.push({id:uid(),field:'',label:''});
+  renderOpEditor();
+}
+function primeDelFactor(i){
+  opCaptureName();primeCapture();
+  OPDRAFT.prime.factors.splice(i,1);
+  renderOpEditor();
+}
+function primeUpdateFactor(i,key,val){
+  if(!OPDRAFT.prime||!OPDRAFT.prime.factors)return;
+  OPDRAFT.prime.factors[i][key]=val;
+}
+/* ---- calcul automatique de la prime selon le mode configuré sur l'opération ---- */
+function computePrimeAuto(r){
+  const op=getProducts().find(p=>p.id===r.productId);
+  if(!op)return null;
+  const cumac=computeCumac(r);if(cumac==null)return null;
+  const deal=dealOf(r);
+  const deleg=getDelegataires().find(d=>d.id===deal.delegataireId);
+  if(!deleg)return null;
+  const valo=parseFloat(deal.type==='precaire'?deleg.valoPrecaire:deleg.valoClassique)||0;
+  if(!valo)return null;
+  const prime=op.prime||{mode:'standard'};
+  if(prime.mode==='multi'){
+    const factors=prime.factors||[];
+    let product=1;
+    for(const f of factors){
+      const v=parseFloat((r.opFields&&r.opFields[f.field])||'')||0;
+      if(!v)return null;
+      product*=v;
+    }
+    return Math.round(cumac*product*valo/1000*100)/100;
+  }
+  // mode standard
+  return Math.round(cumac*valo/1000*100)/100;
 }
 function cumacEditorHtml(){
   const o=OPDRAFT;const c=o.cumac||{mode:'manuel'};
@@ -5188,7 +5278,7 @@ function fieldSave(){
   renderOpEditor();
 }
 function saveOperation(){
-  opCaptureName();
+  opCaptureName();primeCapture();
   if(!OPDRAFT.name){toast("Nom de l'opération requis",'err');return;}
   OPDRAFT.fields=OPDRAFT.fields.filter(f=>f.label&&f.label.trim());
   OPDRAFT.etudeType=val('op_etudetype')||'';
