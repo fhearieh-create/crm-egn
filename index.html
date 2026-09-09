@@ -472,6 +472,7 @@ const SYNC_TABLES=[
   {key:'egncrm_recs',table:'records',shape:'record'},
   {key:'egncrm_rdvs',table:'rdvs',shape:'rdv'},
   {key:'egncrm_statuses',table:'cfg_statuses',shape:'blob'},
+  {key:'egncrm_sousstatuts',table:'cfg_sousstatuts',shape:'blob'},
   {key:'egncrm_products',table:'cfg_operations',shape:'blob'},
   {key:'egncrm_sources',table:'cfg_sources',shape:'blob'},
   {key:'egncrm_teams',table:'cfg_equipes',shape:'blob'},
@@ -533,6 +534,8 @@ async function pullTable(cfg){
       if(local.length){await pushTable(cfg,local);return;} // 1er lancement : Supabase est vide, on publie les valeurs par défaut locales au lieu de les effacer
     }
     const arr=(data||[]).map(row=>({...row.data,id:row.id}));
+    // Trier par le champ order si présent (statuts, sous-statuts, etc.)
+    arr.sort((a,b)=>(a.order??9999)-(b.order??9999));
     _localSave(cfg.key,arr);
   }catch(e){console.error('[sync pull]',cfg.table,e);}
 }
@@ -683,7 +686,7 @@ function seed(){
 /* ---- accès données ---- */
 const getUsers=()=>load(K.users,[]);
 const getRecs=()=>load(K.recs,[]);
-const getStatuses=()=>load(K.stat,[]);
+const getStatuses=()=>{const sts=load(K.stat,[]);return sts.sort((a,b)=>(a.order??999)-(b.order??999));};
 const getRdvs=()=>load(K.rdv,[]);
 const getProducts=()=>load(K.prod,[]);
 const getItems=()=>load(K.items,[]);
@@ -2089,9 +2092,15 @@ const COLS={
   updated:{label:'Date de modification',val:r=>`<span class="muted">${r.updated?new Date(r.updated).toLocaleDateString('fr-FR'):''}</span>`},
   zone:{label:'Zone climatique',val:r=>{const z=zoneOf(recWorkAddr(r).dept);return z?`<span class="zpill z-${z}">${z}</span>`:'<span class="muted">—</span>';}},
   delegataire:{label:'Délégataire',val:r=>`<span class="muted">${esc(dealOf(r).delegataireName||'')||'—'}</span>`},
-  prime:{label:'Prime (€ TTC)',val:r=>dealOf(r).prime?`<b style="color:var(--green-deep)">${dealOf(r).prime.toLocaleString('fr-FR')} €</b><span style="display:block;font-size:.62rem;color:var(--text-mut)">HT ${htOf(dealOf(r).prime).toLocaleString('fr-FR',{maximumFractionDigits:2})} €</span>`:'<span class="muted">—</span>'}
+  prime:{label:'Prime (€ TTC)',val:r=>dealOf(r).prime?`<b style="color:var(--green-deep)">${dealOf(r).prime.toLocaleString('fr-FR')} €</b><span style="display:block;font-size:.62rem;color:var(--text-mut)">HT ${htOf(dealOf(r).prime).toLocaleString('fr-FR',{maximumFractionDigits:2})} €</span>`:'<span class="muted">—</span>'},
+  sousstatut:{label:'Sous-statut admin.',val:r=>{
+    if(!can('sousstatut_view'))return '';
+    const subs=load('egncrm_sousstatuts',[]);
+    const s=subs.find(x=>x.id===r.sousStatutId);
+    return s?`<span style="background:${s.color}1a;color:${s.color};border-radius:6px;padding:2px 8px;font-size:.75rem;font-weight:600">${esc(s.name)}</span>`:'<span class="muted">—</span>';
+  }}
 };
-const ALL_COL_KEYS=['dossier','name','tel','telFixe','email','ville','dept','adresse','siret','fonction','nomSite','operation','statut','source','intervenant','zone','delegataire','prime','created','updated'];
+const ALL_COL_KEYS=['dossier','name','tel','telFixe','email','ville','dept','adresse','siret','fonction','nomSite','operation','statut','sousstatut','source','intervenant','zone','delegataire','prime','created','updated'];
 const DEFAULT_VISIBLE=['dossier','name','tel','ville','operation','statut','source'];
 function defaultCols(){return ALL_COL_KEYS.map(k=>({key:k,visible:DEFAULT_VISIBLE.includes(k)}));}
 function getCols(mode){
@@ -4603,6 +4612,8 @@ function statDragOver(e){e.preventDefault();e.dataTransfer.dropEffect='move';}
 function statDrop(e,i){
   e.preventDefault();if(STAT_DRAG_IDX===null||STAT_DRAG_IDX===i)return;
   const sts=getStatuses();const moved=sts.splice(STAT_DRAG_IDX,1)[0];sts.splice(i,0,moved);
+  // Persister l'ordre dans chaque objet pour que Supabase le conserve
+  sts.forEach((s,idx)=>s.order=idx);
   STAT_DRAG_IDX=null;save(K.stat,sts);setStatuts();toast('Ordre mis à jour ✓','ok');
 }
 /* ---- drag & drop sous-statuts ---- */
@@ -4612,6 +4623,7 @@ function subDragOver(e){e.preventDefault();e.dataTransfer.dropEffect='move';}
 function subDrop(e,i){
   e.preventDefault();if(SUB_DRAG_IDX===null||SUB_DRAG_IDX===i)return;
   const subs=load('egncrm_sousstatuts',[]);const moved=subs.splice(SUB_DRAG_IDX,1)[0];subs.splice(i,0,moved);
+  subs.forEach((s,idx)=>s.order=idx);
   SUB_DRAG_IDX=null;save('egncrm_sousstatuts',subs);setStatuts();toast('Ordre mis à jour ✓','ok');
 }
 /* ---- CRUD sous-statuts ---- */
