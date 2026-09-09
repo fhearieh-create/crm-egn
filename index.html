@@ -563,6 +563,8 @@ const PERMS=[
   {k:'leads_edit',l:'Modifier les fiches'},
   {k:'leads_delete',l:'Supprimer des dossiers'},
   {k:'status_change',l:'Changer les statuts'},
+  {k:'sousstatut_view',l:'Voir et modifier les sous-statuts administratifs'},
+  {k:'docs_generate',l:'Générer des documents depuis les fiches'},
   {k:'clients_view',l:'Accès aux clients'},
   {k:'planning_view',l:'Accès au planning + carte'},
   {k:'planning_view_all',l:'Voir le planning de tous'},
@@ -2171,8 +2173,13 @@ function renderDossier(r){
     +row('Adresse du siège',[r.adresse,r.cp,r.ville].filter(Boolean).join(', '))
     +(r.adresseTravauxDiff?row('Adresse des travaux',[r.adresseTravaux,r.cpTravaux,r.villeTravaux].filter(Boolean).join(', ')):'')
     +`</div></div>`;
+  const subs=load('egncrm_sousstatuts',[]);
+  const canSub=can('sousstatut_view');
+  const curSub=subs.find(s=>s.id===r.sousStatutId);
+  const sousStatutRow=canSub&&subs.length?`<div class="info-row"><span class="il">Sous-statut administratif</span><span class="iv"><select class="status-sel" style="color:${curSub?curSub.color:'#9aa5b1'};background:${curSub?curSub.color+'1a':'#f5f5f5'}" onchange="quickSousStatut('${r.id}',this.value)"><option value="">— Aucun —</option>${subs.map(s=>`<option value="${s.id}" ${r.sousStatutId===s.id?'selected':''}>${esc(s.name)}</option>`).join('')}</select></span></div>`:canSub&&!subs.length?`<div class="info-row"><span class="il">Sous-statut administratif</span><span class="iv muted" style="font-size:.78rem">Aucun sous-statut configuré — <a href="#" onclick="goPage('settings');return false">Paramètres ▸ Statuts</a></span></div>`:'';
   let suivi=`<div class="panel"><div class="panel-h"><h3>Suivi commercial</h3></div><div class="panel-b">`
     +`<div class="info-row"><span class="il">Statut</span><span class="iv">${statusInline(r)}</span></div>`
+    +sousStatutRow
     +row('Opération',op?op.name:'')+row('Source',src?src.name:'')+row('Intervenant',u?u.prenom+' '+u.nom:'')
     +row('Créé le',r.created?new Date(r.created).toLocaleString('fr-FR'):'')
     +row('Modifié le',r.updated?new Date(r.updated).toLocaleString('fr-FR'):'')
@@ -3369,6 +3376,16 @@ function statusInline(r){
   const s=statById(r.statusId);const col=s?s.color:'#9aa5b1';
   return `<select class="status-sel" style="color:${col};background:${col}1a" onchange="quickStatus('${r.id}',this.value)">${statusOptions(r.statusId)}</select>`;
 }
+function quickSousStatut(id,ssid){
+  const recs=getRecs();const r=recs.find(x=>x.id===id);if(!r)return;
+  const old=load('egncrm_sousstatuts',[]).find(s=>s.id===r.sousStatutId);
+  const nw=load('egncrm_sousstatuts',[]).find(s=>s.id===ssid);
+  r.sousStatutId=ssid||null;r.updated=Date.now();
+  r.history=r.history||[];r.history.unshift({date:Date.now(),user:ME.prenom,text:`Sous-statut : ${old?old.name:'—'} → ${nw?nw.name:'Aucun'}`});
+  save(K.recs,recs);
+  if(DOSSIER_OPEN===id)openDossier(id);
+  toast('Sous-statut mis à jour','ok');
+}
 function quickStatus(id,sid){
   const recs=getRecs();const r=recs.find(x=>x.id===id);if(!r)return;
   const old=statById(r.statusId),nw=statById(sid);
@@ -4544,20 +4561,82 @@ function sendMailto(recId){
 function copyMail(){const su=document.getElementById('ms_subject').value;const bo=document.getElementById('ms_body').value;if(navigator.clipboard)navigator.clipboard.writeText('Objet : '+su+'\n\n'+bo).then(()=>toast('Copié ✓','ok'),()=>toast('Copie impossible','err'));}
 function setStatuts(){
   const sts=getStatuses();
-  let h=`<div class="panel"><div class="panel-h"><h3>Statuts du pipeline</h3><div class="sp"><button class="btn btn-pri btn-sm" onclick="openStatus()">+ Nouveau statut</button></div></div><div class="panel-b"><p class="muted" style="margin-bottom:.9rem">Créez et ordonnez vos propres statuts. La <b>phase</b> détermine si le dossier apparaît dans Leads ou Clients. « Converti » alimente le taux de conversion.</p><div class="cfg-list">`;
+  const subs=load('egncrm_sousstatuts',[]);
+  let h=`<div class="panel"><div class="panel-h"><h3>Statuts du pipeline</h3><div class="sp"><button class="btn btn-pri btn-sm" onclick="openStatus()">+ Nouveau statut</button></div></div><div class="panel-b">
+    <p class="muted" style="margin-bottom:.9rem">Créez et ordonnez vos propres statuts par <b>glisser-déposer</b>. La <b>phase</b> détermine si le dossier apparaît dans Leads ou Clients.</p>
+    <div class="cfg-list" id="statuts_drag_list">`;
   sts.forEach((s,i)=>{
-    h+=`<div class="cfg-item"><span class="colordot" style="background:${s.color}"></span><span class="nm">${esc(s.name)}</span>
+    h+=`<div class="cfg-item" draggable="true" data-stat-idx="${i}" ondragstart="statDragStart(event,${i})" ondragover="statDragOver(event)" ondrop="statDrop(event,${i})" style="cursor:grab">
+      <span style="color:#9aa5b1;font-size:1rem;margin-right:.2rem">⠿</span>
+      <span class="colordot" style="background:${s.color}"></span>
+      <span class="nm">${esc(s.name)}</span>
       <span class="tag" style="background:${s.phase==='client'?'rgba(123,95,214,.15)':'rgba(124,194,66,.15)'};color:${s.phase==='client'?'#7B5FD6':'#5BA82E'}">${s.phase==='client'?'Client':'Lead'}</span>
       ${s.won?'<span class="tag" style="background:rgba(61,122,30,.15);color:#3D7A1E">Converti</span>':''}
       <span class="sp">
-        <button class="iconbtn" onclick="moveStatus(${i},-1)" style="${i===0?'opacity:.3;pointer-events:none':''}">↑</button>
-        <button class="iconbtn" onclick="moveStatus(${i},1)" style="${i===sts.length-1?'opacity:.3;pointer-events:none':''}">↓</button>
         <button class="iconbtn" onclick="openStatus('${s.id}')">✏️</button>
         <button class="iconbtn del" onclick="delStatus('${s.id}')">🗑️</button>
       </span></div>`;
   });
   h+=`</div></div></div>`;
+  // Sous-statuts
+  h+=`<div class="panel" style="margin-top:1.2rem"><div class="panel-h"><h3>Sous-statuts administratifs</h3><div class="sp"><button class="btn btn-pri btn-sm" onclick="openSousStatut()">+ Nouveau</button></div></div><div class="panel-b">
+    <p class="muted" style="margin-bottom:.9rem">Les sous-statuts apparaissent dans le panneau <b>Suivi commercial</b> de chaque fiche dossier. L'accès est contrôlé par la permission <b>« Voir les sous-statuts »</b> dans la fiche utilisateur.</p>
+    <div class="cfg-list" id="sousstatuts_drag_list">`;
+  if(!subs.length)h+=`<div class="muted" style="font-size:.82rem;padding:.5rem 0">Aucun sous-statut pour l'instant.</div>`;
+  subs.forEach((s,i)=>{
+    h+=`<div class="cfg-item" draggable="true" data-sub-idx="${i}" ondragstart="subDragStart(event,${i})" ondragover="subDragOver(event)" ondrop="subDrop(event,${i})" style="cursor:grab">
+      <span style="color:#9aa5b1;font-size:1rem;margin-right:.2rem">⠿</span>
+      <span class="colordot" style="background:${s.color||'#7CC242'}"></span>
+      <span class="nm">${esc(s.name)}</span>
+      <span class="sp">
+        <button class="iconbtn" onclick="openSousStatut('${s.id}')">✏️</button>
+        <button class="iconbtn del" onclick="delSousStatut('${s.id}')">🗑️</button>
+      </span></div>`;
+  });
+  h+=`</div></div></div>`;
   document.getElementById('setBody').innerHTML=h;
+}
+/* ---- drag & drop statuts ---- */
+let STAT_DRAG_IDX=null;
+function statDragStart(e,i){STAT_DRAG_IDX=i;e.dataTransfer.effectAllowed='move';}
+function statDragOver(e){e.preventDefault();e.dataTransfer.dropEffect='move';}
+function statDrop(e,i){
+  e.preventDefault();if(STAT_DRAG_IDX===null||STAT_DRAG_IDX===i)return;
+  const sts=getStatuses();const moved=sts.splice(STAT_DRAG_IDX,1)[0];sts.splice(i,0,moved);
+  STAT_DRAG_IDX=null;save(K.stat,sts);setStatuts();toast('Ordre mis à jour ✓','ok');
+}
+/* ---- drag & drop sous-statuts ---- */
+let SUB_DRAG_IDX=null;
+function subDragStart(e,i){SUB_DRAG_IDX=i;e.dataTransfer.effectAllowed='move';}
+function subDragOver(e){e.preventDefault();e.dataTransfer.dropEffect='move';}
+function subDrop(e,i){
+  e.preventDefault();if(SUB_DRAG_IDX===null||SUB_DRAG_IDX===i)return;
+  const subs=load('egncrm_sousstatuts',[]);const moved=subs.splice(SUB_DRAG_IDX,1)[0];subs.splice(i,0,moved);
+  SUB_DRAG_IDX=null;save('egncrm_sousstatuts',subs);setStatuts();toast('Ordre mis à jour ✓','ok');
+}
+/* ---- CRUD sous-statuts ---- */
+function openSousStatut(id){
+  const subs=load('egncrm_sousstatuts',[]);const s=id?subs.find(x=>x.id===id):null;
+  const d=s||{color:'#2D7DD2'};
+  const body=`<input type="hidden" id="ss_id" value="${id||''}">
+    <div class="fgrid">
+      <div class="fld"><label>Nom du sous-statut</label><input id="ss_name" value="${esc(d.name||'')}" placeholder="Ex : Devis signé reçu"></div>
+      <div class="fld"><label>Couleur</label><input type="color" id="ss_color" value="${d.color||'#2D7DD2'}" style="height:42px;padding:.2rem;cursor:pointer"></div>
+    </div>`;
+  openModal(id?'Modifier le sous-statut':'Nouveau sous-statut',body,`<button class="btn btn-ghost" onclick="closeModal()">Annuler</button><button class="btn btn-pri" onclick="saveSousStatut()">💾 Enregistrer</button>`);
+}
+function saveSousStatut(){
+  const id=val('ss_id');const name=val('ss_name');if(!name){toast('Nom requis','err');return;}
+  const subs=load('egncrm_sousstatuts',[]);let s=id?subs.find(x=>x.id===id):null;
+  if(!s){s={id:uid()};subs.push(s);}
+  s.name=name;s.color=val('ss_color')||'#2D7DD2';
+  save('egncrm_sousstatuts',subs);closeModal();setStatuts();toast('Sous-statut enregistré ✓','ok');
+}
+function delSousStatut(id){
+  modalConfirm('Supprimer ce sous-statut ?','',()=>{
+    save('egncrm_sousstatuts',load('egncrm_sousstatuts',[]).filter(s=>s.id!==id));
+    closeModal();setStatuts();toast('Sous-statut supprimé','ok');
+  });
 }
 function openStatus(id){
   const s=id?statById(id):null;const d=s||{color:'#7CC242',phase:'lead',won:false};
