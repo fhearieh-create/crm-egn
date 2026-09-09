@@ -1896,8 +1896,8 @@ function renderRecRows(mode,recs){
   f.sort((a,b)=>(b.created||0)-(a.created||0));
   REC_LAST_LIST=f;
   const isAdminCompta=ME&&(ME.role==='superadmin'||ME.role==='admin');
-  const RESTRICTED_COLS=['prime','delegataire'];
-  const cols=getCols(mode).filter(c=>c.visible&&COLS[c.key]&&(isAdminCompta||!RESTRICTED_COLS.includes(c.key)));
+  const RESTRICTED_COLS=['prime','delegataire','sousstatut'];
+  const cols=getCols(mode).filter(c=>c.visible&&COLS[c.key]&&(isAdminCompta||!RESTRICTED_COLS.includes(c.key)||(c.key==='sousstatut'&&can('sousstatut_view'))));
   let h='';
   if(!f.length){h=`<div class="empty"><div class="big">📭</div>Aucun dossier${LF.q||LF.status||LF.prod||LF.src?' pour ces filtres':''}.<br>${can('leads_create')?'Créez-en un ou importez votre base.':''}</div>`;}
   else{
@@ -2002,8 +2002,8 @@ function bulkAssign(){
 let EXPORT_COLS=null;
 function openExportModal(){
   const isAdminCompta=ME&&(ME.role==='superadmin'||ME.role==='admin');
-  const RESTRICTED_COLS=['prime','delegataire'];
-  const availCols=getCols(REC_MODE).filter(c=>COLS[c.key]&&(isAdminCompta||!RESTRICTED_COLS.includes(c.key)));
+  const RESTRICTED_COLS=['prime','delegataire','sousstatut'];
+  const availCols=getCols(REC_MODE).filter(c=>COLS[c.key]&&(isAdminCompta||!RESTRICTED_COLS.includes(c.key)||(c.key==='sousstatut'&&can('sousstatut_view'))));
   if(!availCols.length){toast('Aucune colonne disponible','err');return;}
   EXPORT_COLS=availCols.map(c=>({key:c.key,checked:c.visible}));
   const hasSelection=REC_SELECTED.size>0;
@@ -2085,7 +2085,14 @@ const COLS={
   fonction:{label:'Fonction signataire',val:r=>esc(r.fonction||'')||'—'},
   nomSite:{label:'Nom du site',val:r=>esc(r.nomSite||'')||'—'},
   operation:{label:'Opération',val:r=>`<span class="muted">${esc(prodNameById(r.productId))||'—'}</span>`},
-  statut:{label:'Statut',val:r=>can('status_change')?statusInline(r):badge(r.statusId)},
+  statut:{label:'Statut',val:r=>{
+    const statHtml=can('status_change')?statusInline(r):badge(r.statusId);
+    if(!can('sousstatut_view'))return statHtml;
+    const subs=load('egncrm_sousstatuts',[]);
+    const s=subs.find(x=>x.id===r.sousStatutId);
+    if(!s)return statHtml;
+    return statHtml+`<div style="margin-top:3px"><span style="background:${s.color}1a;color:${s.color};border-radius:5px;padding:1px 7px;font-size:.68rem;font-weight:600">${esc(s.name)}</span></div>`;
+  }},
   source:{label:'Source',val:r=>`<span class="muted">${esc(srcNameById(r.sourceId))||'—'}</span>`},
   intervenant:{label:'Intervenant',val:r=>{const u=userById(r.userId);return `<span class="muted">${u?esc(u.prenom+' '+(u.nom[0]||'')+'.'):'—'}</span>`;}},
   created:{label:'Date de création',val:r=>`<span class="muted">${r.created?new Date(r.created).toLocaleDateString('fr-FR'):''}</span>`},
@@ -2101,7 +2108,7 @@ const COLS={
   }}
 };
 const ALL_COL_KEYS=['dossier','name','tel','telFixe','email','ville','dept','adresse','siret','fonction','nomSite','operation','statut','sousstatut','source','intervenant','zone','delegataire','prime','created','updated'];
-const DEFAULT_VISIBLE=['dossier','name','tel','ville','operation','statut','source'];
+const DEFAULT_VISIBLE=['dossier','name','tel','ville','operation','statut','sousstatut','source'];
 function defaultCols(){return ALL_COL_KEYS.map(k=>({key:k,visible:DEFAULT_VISIBLE.includes(k)}));}
 function getCols(mode){
   const key=mode==='clients'?'egncrm_cols_clients':'egncrm_cols_leads';
@@ -2125,8 +2132,8 @@ function openColsModal(mode){
 function renderColList(){
   const el=document.getElementById('colList');if(!el)return;
   const isAdminCompta=ME&&(ME.role==='superadmin'||ME.role==='admin');
-  const RESTRICTED_COLS=['prime','delegataire'];
-  const list=isAdminCompta?COLWORK:COLWORK.filter(c=>!RESTRICTED_COLS.includes(c.key));
+  const RESTRICTED_COLS=['prime','delegataire','sousstatut'];
+  const list=COLWORK.filter(c=>!RESTRICTED_COLS.includes(c.key)||isAdminCompta||(c.key==='sousstatut'&&can('sousstatut_view')));
   el.innerHTML='<div class="cfg-list">'+list.map((c)=>{const i=COLWORK.indexOf(c);return `<div class="cfg-item col-item" draggable="true" ondragstart="colDragStart(event,${i})" ondragover="event.preventDefault()" ondrop="colDrop(event,${i})"><span class="grip">⠿</span><label style="display:flex;align-items:center;gap:.55rem;flex:1;cursor:pointer;font-weight:600;color:var(--navy)"><input type="checkbox" ${c.visible?'checked':''} onchange="COLWORK[${i}].visible=this.checked" style="width:17px;height:17px;accent-color:var(--green-dark);cursor:pointer"> ${esc(COLS[c.key].label)}</label><span class="sp"><button class="iconbtn" onclick="colMove(${i},-1)" style="${i===0?'opacity:.3;pointer-events:none':''}">↑</button><button class="iconbtn" onclick="colMove(${i},1)" style="${i===COLWORK.length-1?'opacity:.3;pointer-events:none':''}">↓</button></span></div>`;}).join('')+'</div>';
 }
 function colMove(i,d){const j=i+d;if(j<0||j>=COLWORK.length)return;const t=COLWORK[i];COLWORK[i]=COLWORK[j];COLWORK[j]=t;renderColList();}
