@@ -3325,10 +3325,15 @@ async function saveDeal(id){
   const primeAuto=Math.round(cumac/1000*valo*100)/100;
   const prime=primeInput||primeAuto;
   Object.assign(dealOf(r),{delegataireId:did,delegataireName:d?d.name:'',type,cumac,valo,prime});
-  // Synchroniser aussi r.deal dans localStorage pour que dealOf() relise la bonne valeur après rechargement
+  // Synchroniser r.deal dans localStorage
   r.deal=r.deal||{};
   Object.assign(r.deal,{delegataireId:did,delegataireName:d?d.name:'',type,cumac,valo,prime});
   await persistDeal(id);
+  // Mettre à jour le cache avec la nouvelle prime pour que la compta globale la voit immédiatement
+  DEAL_CACHE[id]=DEAL_CACHE[id]||rowToDeal(null);
+  Object.assign(DEAL_CACHE[id],{delegataireId:did,delegataireName:d?d.name:'',type,cumac,valo,prime});
+  // Invalider la compta globale pour forcer le rechargement depuis Supabase au prochain accès
+  COMPTA_LOADED=false;
   r.updated=Date.now();
   r.history=r.history||[];
   r.history.unshift({date:Date.now(),user:(ME.prenom+' '+ME.nom).trim()||ME.code,text:'Deal mis à jour'});
