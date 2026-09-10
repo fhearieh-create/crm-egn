@@ -3274,10 +3274,24 @@ function renderComptaDelegataires(){
   const delegs=getDelegataires();
   const apfs=load('egncrm_apf_deleg',[]);
   const eur=n=>(n||0).toLocaleString('fr-FR',{maximumFractionDigits:2})+' €';
+  // KPIs globaux tous délégataires confondus
+  const totAttente=apfs.filter(a=>a.statut!=='recu').reduce((s,a)=>{
+    return s+(a.recIds||[]).reduce((s2,rid)=>{const r=recById(rid);return s2+(r?dealOf(r).prime||0:0);},0);
+  },0);
+  const totRecu=apfs.filter(a=>a.statut==='recu').reduce((s,a)=>{
+    return s+(a.recIds||[]).reduce((s2,rid)=>{const r=recById(rid);return s2+(r?dealOf(r).prime||0:0);},0);
+  },0);
+  const nbAttente=apfs.filter(a=>a.statut!=='recu').length;
+  const nbRecu=apfs.filter(a=>a.statut==='recu').length;
+  let h=`<div class="kpis" style="margin-bottom:1.1rem">
+    <div class="kpi" style="border:1.5px solid rgba(230,148,57,.3)"><div class="kico">⏳</div><div class="klab">Virements en attente</div><div class="kval" style="color:#B96A0A">${eur(totAttente)}</div><div class="ksub">${nbAttente} APF · HT ${eur(htOf(totAttente))}</div></div>
+    <div class="kpi" style="border:1.5px solid rgba(91,186,84,.4)"><div class="kico">✅</div><div class="klab">Virements reçus</div><div class="kval" style="color:var(--green-deep)">${eur(totRecu)}</div><div class="ksub">${nbRecu} APF · HT ${eur(htOf(totRecu))}</div></div>
+    <div class="kpi"><div class="kico">📄</div><div class="klab">Total APF délégataires</div><div class="kval">${apfs.length}</div><div class="ksub">sur ${delegs.length} délégataire${delegs.length>1?'s':''}</div></div>
+  </div>`;
   // Sélecteur délégataire
   const curDeleg=(DELEG_DRAFT_APF&&DELEG_DRAFT_APF.delegId)||load('egncrm_deleg_tab_sel','');
   const filtreNonAffilie=load('egncrm_deleg_tab_filter','1')==='1';
-  let h=`<div class="panel"><div class="panel-h"><h3>Sélectionner un délégataire</h3></div><div class="panel-b">
+  h+=`<div class="panel"><div class="panel-h"><h3>Sélectionner un délégataire</h3></div><div class="panel-b">
     <div style="display:flex;gap:.7rem;align-items:center;flex-wrap:wrap">
       <select id="deleg_sel" onchange="selectDelegTab(this.value)" style="font-family:'Saira',sans-serif;font-size:.88rem;border:1.5px solid var(--border-grey);border-radius:9px;padding:.45rem .8rem;flex:1;min-width:200px">
         <option value="">— Choisir un délégataire —</option>
