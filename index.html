@@ -1650,9 +1650,20 @@ async function startApp(){
   await loadNotifications();
   if(ME.role==='superadmin'||ME.role==='admin')loadAllDeal();
   checkUpcomingRdvReminders();
+  scheduleMidnightRefresh();
   // 1ère page autorisée
   let first=NAV.find(n=>n.id&&can(n.perm));
   go(first?first.id:'dash');
+}
+function scheduleMidnightRefresh(){
+  // Calcule le nombre de ms jusqu'à minuit et relance renderDash automatiquement
+  const now=new Date();
+  const midnight=new Date(now.getFullYear(),now.getMonth(),now.getDate()+1,0,0,5);
+  const msUntilMidnight=midnight-now;
+  setTimeout(()=>{
+    if(CUR==='dash')renderDash();
+    scheduleMidnightRefresh(); // relance pour la nuit suivante
+  },msUntilMidnight);
 }
 async function logLoginEvent(){
   if(!ME)return;
@@ -1791,8 +1802,9 @@ function renderDash(){
   const wonIds=sts.filter(s=>s.won).map(s=>s.id);
   const won=recs.filter(r=>wonIds.includes(r.statusId)).length;
   const conv=recs.length?Math.round(won/recs.length*100):0;
-  const today=new Date();today.setHours(0,0,0,0);
-  const todayStr=today.toISOString().slice(0,10);
+  // Recalcul dynamique de la date du jour à chaque rendu
+  const now=new Date();
+  const todayStr=now.getFullYear()+'-'+String(now.getMonth()+1).padStart(2,'0')+'-'+String(now.getDate()).padStart(2,'0');
   const visRdvs=rdvs.filter(rdvVisible);
   const upcoming=visRdvs.filter(r=>(r.date||'')>=todayStr).sort((a,b)=>((a.date||'')+(a.heure||'')).localeCompare((b.date||'')+(b.heure||'')));
   const dashList=upcoming.length?upcoming:visRdvs.slice().sort((a,b)=>((b.date||'')+(b.heure||'')).localeCompare((a.date||'')+(a.heure||'')));
