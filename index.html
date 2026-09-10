@@ -1811,14 +1811,15 @@ function renderDash(){
   const todayStr=now.getFullYear()+'-'+String(now.getMonth()+1).padStart(2,'0')+'-'+String(now.getDate()).padStart(2,'0');
   const visRdvs=rdvs.filter(rdvVisible);
   const todayTs=new Date(todayStr+'T00:00:00').getTime();
+  console.log('[DASH] todayStr=',todayStr,'todayTs=',todayTs,'visRdvs=',visRdvs.map(r=>({date:r.date,client:r.client})));
   const upcoming=visRdvs.filter(r=>{
     if(!r.date)return false;
-    // Normaliser la date en YYYY-MM-DD quelle que soit la forme stockée
     const d=String(r.date).trim();
     let iso=d;
     if(d.includes('/')){const p=d.split('/');iso=p[2]+'-'+p[1].padStart(2,'0')+'-'+p[0].padStart(2,'0');}
-    else if(d.length<=5){return false;} // format invalide
+    else if(d.length<=5){return false;}
     const rdvTs=new Date(iso+'T00:00:00').getTime();
+    console.log('[DASH RDV]',r.client,d,'iso=',iso,'rdvTs=',rdvTs,'>=todayTs?',rdvTs>=todayTs);
     return !isNaN(rdvTs)&&rdvTs>=todayTs;
   }).sort((a,b)=>((a.date||'')+(a.heure||'')).localeCompare((b.date||'')+(b.heure||'')));
   const dashList=upcoming.slice(0,8);
