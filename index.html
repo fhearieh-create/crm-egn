@@ -1810,18 +1810,18 @@ function renderDash(){
   const now=new Date();
   const todayStr=now.getFullYear()+'-'+String(now.getMonth()+1).padStart(2,'0')+'-'+String(now.getDate()).padStart(2,'0');
   const visRdvs=rdvs.filter(rdvVisible);
-  // Comparaison robuste : convertir les dates en timestamp pour éviter les problèmes de format
   const todayTs=new Date(todayStr+'T00:00:00').getTime();
   const upcoming=visRdvs.filter(r=>{
     if(!r.date)return false;
-    const d=r.date.trim();
-    // Accepter ISO (2026-09-10) ou FR (10/09/2026)
-    const parts=d.includes('-')?d.split('-'):d.split('/').reverse();
-    if(parts.length<3)return false;
-    const rdvTs=new Date(`${parts[0].padStart(4,'20')}-${parts[1].padStart(2,'0')}-${parts[2].padStart(2,'0')}T00:00:00`).getTime();
-    return rdvTs>=todayTs;
+    // Normaliser la date en YYYY-MM-DD quelle que soit la forme stockée
+    const d=String(r.date).trim();
+    let iso=d;
+    if(d.includes('/')){const p=d.split('/');iso=p[2]+'-'+p[1].padStart(2,'0')+'-'+p[0].padStart(2,'0');}
+    else if(d.length<=5){return false;} // format invalide
+    const rdvTs=new Date(iso+'T00:00:00').getTime();
+    return !isNaN(rdvTs)&&rdvTs>=todayTs;
   }).sort((a,b)=>((a.date||'')+(a.heure||'')).localeCompare((b.date||'')+(b.heure||'')));
-  const dashList=upcoming.length?upcoming:visRdvs.slice().sort((a,b)=>((b.date||'')+(b.heure||'')).localeCompare((a.date||'')+(a.heure||'')));
+  const dashList=upcoming.slice(0,8);
   const actives=users.filter(u=>u.active&&(u.role==='telepro'||u.role==='commercial')).length;
   // pipeline counts
   const counts={};sts.forEach(s=>counts[s.id]=0);recs.forEach(r=>{if(counts[r.statusId]!=null)counts[r.statusId]++;});
@@ -1837,9 +1837,9 @@ function renderDash(){
     <div class="panel"><div class="panel-h"><h3>Pipeline commercial</h3></div><div class="panel-b">`;
   sts.forEach(s=>{const n=counts[s.id]||0;h+=`<div class="pipe-row"><div class="pl"><span class="pdot" style="background:${s.color}"></span>${esc(s.name)}</div><div class="pbar"><div class="pfill" style="width:${n/maxC*100}%;background:${s.color}"></div></div><div class="pn">${n}</div></div>`;});
   h+=`</div></div>
-    <div class="panel"><div class="panel-h"><h3>${upcoming.length?'Prochains RDV':'Derniers RDV'}</h3></div><div class="panel-b">`;
-  if(!dashList.length){h+=`<div class="empty"><div class="big">🗓️</div>Aucun RDV planifié</div>`;}
-  else{h+=`<div class="rdv-list">`;dashList.slice(0,8).forEach(r=>{const s=statById(r.statusId);const col=s?s.color:'#7CC242';
+    <div class="panel"><div class="panel-h"><h3>Prochains RDV</h3></div><div class="panel-b">`;
+  if(!dashList.length){h+=`<div class="empty"><div class="big">🗓️</div>Aucun RDV à venir</div>`;}
+  else{h+=`<div class="rdv-list">`;dashList.forEach(r=>{const s=statById(r.statusId);const col=s?s.color:'#7CC242';
     h+=`<div class="rdv-card" style="border-left-color:${col}" onclick="openRdv('${r.id}')"><div class="rt"><span class="rn">${esc(r.client||'RDV')}</span><span class="rtime">${fmtDate(r.date)} ${r.heure||''}</span></div><div class="rm">${esc(r.type||'')}${r.ville?' • '+esc(r.ville):''}${rdvWho(r)?' • '+esc(rdvWho(r)):''}</div></div>`;});h+=`</div>`;}
   h+=`</div></div></div>`;
 
