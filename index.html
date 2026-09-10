@@ -1810,7 +1810,17 @@ function renderDash(){
   const now=new Date();
   const todayStr=now.getFullYear()+'-'+String(now.getMonth()+1).padStart(2,'0')+'-'+String(now.getDate()).padStart(2,'0');
   const visRdvs=rdvs.filter(rdvVisible);
-  const upcoming=visRdvs.filter(r=>(r.date||'')>=todayStr).sort((a,b)=>((a.date||'')+(a.heure||'')).localeCompare((b.date||'')+(b.heure||'')));
+  // Comparaison robuste : convertir les dates en timestamp pour éviter les problèmes de format
+  const todayTs=new Date(todayStr+'T00:00:00').getTime();
+  const upcoming=visRdvs.filter(r=>{
+    if(!r.date)return false;
+    const d=r.date.trim();
+    // Accepter ISO (2026-09-10) ou FR (10/09/2026)
+    const parts=d.includes('-')?d.split('-'):d.split('/').reverse();
+    if(parts.length<3)return false;
+    const rdvTs=new Date(`${parts[0].padStart(4,'20')}-${parts[1].padStart(2,'0')}-${parts[2].padStart(2,'0')}T00:00:00`).getTime();
+    return rdvTs>=todayTs;
+  }).sort((a,b)=>((a.date||'')+(a.heure||'')).localeCompare((b.date||'')+(b.heure||'')));
   const dashList=upcoming.length?upcoming:visRdvs.slice().sort((a,b)=>((b.date||'')+(b.heure||'')).localeCompare((a.date||'')+(a.heure||'')));
   const actives=users.filter(u=>u.active&&(u.role==='telepro'||u.role==='commercial')).length;
   // pipeline counts
