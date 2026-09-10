@@ -1686,7 +1686,11 @@ function globalSearch(q){
   if(!q||q.trim().length<2){box.style.display='none';return;}
   GSEARCH_T=setTimeout(()=>{
     const qq=q.trim().toLowerCase();
-    const recs=visibleRecs().filter(r=>(recName(r)+' '+(r.tel||'')+' '+(r.telFixe||'')+' '+(r.ville||'')+' '+(r.dossier||'')+' '+(r.email||'')+' '+(r.siret||'')).toLowerCase().includes(qq)).slice(0,12);
+    const recs=visibleRecs().filter(r=>{
+      const fields=[recName(r),r.tel||'',r.telFixe||'',r.ville||'',r.dossier||'',r.email||'',r.siret||'',r.crmDevis||'',
+        (r.opFields&&r.opFields.nom_site)||r.nomSite||''];
+      return fields.join(' ').toLowerCase().includes(qq);
+    }).slice(0,12);
     if(!recs.length){box.innerHTML='<div class="notif-empty">Aucun résultat</div>';box.style.display='block';return;}
     box.innerHTML=recs.map(r=>{const op=getProducts().find(o=>o.id===r.productId);return `<div class="gsearch-item" onclick="closeGsearch();openDossier('${r.id}')">
       <span class="gs-name">${esc(recName(r))}</span>
@@ -1844,7 +1848,7 @@ function fmtDateLong(d){if(!d)return '';const dt=new Date(d);return dt.toLocaleD
 /* ====================================================================
    LEADS / CLIENTS
    ==================================================================== */
-let LF={q:'',status:'',prod:'',src:''};
+let LF={q:'',status:'',prod:'',src:'',user:'',sousstatut:'',zone:'',crmDevis:''};
 function ownScope(){return [ME.id,...((ME&&ME.assignedUsers)||[])];}
 function recVisible(r){return can('leads_view_all')||ownScope().includes(r.userId);}
 function rdvVisible(r){return can('planning_view_all')||ownScope().includes(r.userId)||ownScope().includes(r.ownerId);}
@@ -1894,10 +1898,14 @@ function drawRecTable(mode){
   const opts=arr=>arr.map(x=>`<option value="${x.id}">${esc(x.name)}</option>`).join('');
   let h=`<div class="tbl-wrap">
     <div class="tbl-toolbar">
-      <div class="srch"><input id="recSrch" placeholder="Rechercher nom, téléphone, ville, dossier…" oninput="LF.q=this.value;applyRecFilter('${mode}')"></div>
+      <div class="srch"><input id="recSrch" placeholder="Rechercher nom, téléphone, ville, dossier, nom du site…" oninput="LF.q=this.value;applyRecFilter('${mode}')"></div>
       <select id="recStatus" onchange="LF.status=this.value;applyRecFilter('${mode}')"><option value="">Tous les statuts</option>${opts(sts)}</select>
       <select id="recProd" onchange="LF.prod=this.value;applyRecFilter('${mode}')"><option value="">Toutes les opérations</option>${opts(getProducts())}</select>
       <select id="recSrc" onchange="LF.src=this.value;applyRecFilter('${mode}')"><option value="">Toutes les sources</option>${opts(getSources())}</select>
+      <select id="recUser" onchange="LF.user=this.value;applyRecFilter('${mode}')"><option value="">Tous les intervenants</option>${getUsers().filter(u=>u.active).map(u=>`<option value="${u.id}">${esc(u.prenom+' '+u.nom)}</option>`).join('')}</select>
+      ${can('sousstatut_view')?`<select id="recSousStatut" onchange="LF.sousstatut=this.value;applyRecFilter('${mode}')"><option value="">Tous les sous-statuts</option>${load('egncrm_sousstatuts',[]).map(s=>`<option value="${s.id}">${esc(s.name)}</option>`).join('')}</select>`:''}
+      <select id="recZone" onchange="LF.zone=this.value;applyRecFilter('${mode}')"><option value="">Toutes les zones</option><option value="H1">Zone H1</option><option value="H2">Zone H2</option><option value="H3">Zone H3</option></select>
+      <select id="recCrmDevis" onchange="LF.crmDevis=this.value;applyRecFilter('${mode}')"><option value="">Tous les CRM devis</option><option value="Qhare CRM">Qhare CRM</option><option value="Pixel CRM">Pixel CRM</option><option value="">Non renseigné</option></select>
       <button class="btn btn-ghost btn-sm" onclick="openExportModal()" title="Exporter en Excel / CSV">⬇️ Exporter</button>
       <button class="btn btn-ghost btn-sm" style="margin-left:auto" onclick="openColsModal('${mode}')" title="Choisir les colonnes affichées">⚙ Colonnes</button>
     </div>
@@ -1908,6 +1916,10 @@ function drawRecTable(mode){
   document.getElementById('recStatus').value=LF.status;
   document.getElementById('recProd').value=LF.prod;
   document.getElementById('recSrc').value=LF.src;
+  const recUser=document.getElementById('recUser');if(recUser)recUser.value=LF.user;
+  const recSS=document.getElementById('recSousStatut');if(recSS)recSS.value=LF.sousstatut;
+  const recZone=document.getElementById('recZone');if(recZone)recZone.value=LF.zone;
+  const recCrm=document.getElementById('recCrmDevis');if(recCrm)recCrm.value=LF.crmDevis;
   renderRecRows(mode,recs);
 }
 function applyRecFilter(mode){
@@ -1922,7 +1934,11 @@ function renderRecRows(mode,recs){
   if(LF.status)f=f.filter(r=>r.statusId===LF.status);
   if(LF.prod)f=f.filter(r=>r.productId===LF.prod);
   if(LF.src)f=f.filter(r=>r.sourceId===LF.src);
-  if(LF.q){const q=LF.q.toLowerCase();f=f.filter(r=>(recName(r)+' '+(r.tel||'')+' '+(r.telFixe||'')+' '+(r.ville||'')+' '+(r.dossier||'')+' '+(r.email||'')+' '+(r.siret||'')).toLowerCase().includes(q));}
+  if(LF.user)f=f.filter(r=>r.userId===LF.user);
+  if(LF.sousstatut)f=f.filter(r=>r.sousStatutId===LF.sousstatut);
+  if(LF.zone){f=f.filter(r=>{const wz=recWorkAddr(r);return zoneOf(wz.dept)===LF.zone;});}
+  if(LF.crmDevis)f=f.filter(r=>(r.crmDevis||'')===LF.crmDevis);
+  if(LF.q){const q=LF.q.toLowerCase();f=f.filter(r=>{const nomSite=(r.opFields&&Object.values(r.opFields).join(' '))||r.nomSite||'';return(recName(r)+' '+(r.tel||'')+' '+(r.telFixe||'')+' '+(r.ville||'')+' '+(r.dossier||'')+' '+(r.email||'')+' '+(r.siret||'')+' '+nomSite).toLowerCase().includes(q);});}
   f.sort((a,b)=>(b.created||0)-(a.created||0));
   REC_LAST_LIST=f;
   const isAdminCompta=ME&&(ME.role==='superadmin'||ME.role==='admin');
