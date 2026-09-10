@@ -860,16 +860,26 @@ async function loadFactures(){
   try{
     const{data,error}=await SUPA.from('factures_agents').select('*').order('created_at',{ascending:false});
     if(error)throw error;
-    FACTURES_CACHE=(data||[]).map(f=>({id:f.id,apfNum:f.apf_num,type:f.type,date:new Date(f.created_at).getTime(),poseurId:f.agent_id,poseurName:f.agent_name,total:f.total,lignes:f.lignes||[],html:f.html,user:''}));
+    FACTURES_CACHE=(data||[]).map(f=>({
+      id:f.id,apfNum:f.apf_num,type:f.type,
+      date:new Date(f.created_at).getTime(),
+      poseurId:f.agent_id,poseurName:f.agent_name,
+      total:f.total,lignes:f.lignes||[],html:f.html,user:'',
+      paiements:f.paiements||{}
+    }));
   }catch(e){console.error('[factures] chargement échoué',e);FACTURES_CACHE=[];toast('⚠️ Impossible de charger l\'historique des factures','err');}
   return FACTURES_CACHE;
 }
 async function persistFacture(f){
   try{
-    await SUPA.from('factures_agents').insert({
-      id:f.id,apf_num:f.apfNum,type:f.type,agent_id:f.poseurId,agent_name:f.poseurName,total:f.total,lignes:f.lignes,html:f.html,created_by:ME?ME.id:null
-    });
-  }catch(e){console.error('[facture] enregistrement échoué',e);toast('⚠️ Facture générée mais non archivée sur Supabase : '+e.message,'err');}
+    await SUPA.from('factures_agents').upsert({
+      id:f.id,apf_num:f.apfNum,type:f.type,
+      agent_id:f.poseurId,agent_name:f.poseurName,
+      total:f.total,lignes:f.lignes,html:f.html,
+      paiements:f.paiements||{},
+      created_by:ME?ME.id:null
+    },{onConflict:'id'});
+  }catch(e){console.error('[facture] enregistrement échoué',e);toast('⚠️ Facture non sauvegardée sur Supabase : '+e.message,'err');}
 }
 async function deleteFactureRemote(id){
   try{await SUPA.from('factures_agents').delete().eq('id',id);}
