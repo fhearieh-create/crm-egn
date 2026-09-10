@@ -700,6 +700,24 @@ const htOf=n=>(n||0)/(1+tvaRate()/100);
 const tvaOf=n=>(n||0)-htOf(n);
 const fmtEur=n=>(n||0).toLocaleString('fr-FR',{maximumFractionDigits:2})+' €';
 const htSub=n=>`<span style="display:block;font-size:.64rem;font-weight:500;color:var(--text-mut)">HT ${fmtEur(htOf(n))} · TVA ${fmtEur(tvaOf(n))}</span>`;
+/* ---- Gestion HT/TTC par ligne de charge ---- */
+function getDefaultTvaMode(r,key){
+  if(key==='poseur'){const fam=load('egncrm_poseurs',[]).find(f=>(f.userIds||[]).includes(comptaOf(r).poseurUserId));return fam?fam.tvaMode||'ttc':'ttc';}
+  if(key==='callcenter'){const src=getSources().find(s=>s.id===r.sourceId);return src?src.tvaMode||'ttc':'ttc';}
+  if(key==='vt'){const vt=load('egncrm_vt',[]).find(v=>v.id===comptaOf(r).vtSubId);return vt?vt.tvaMode||'ttc':'ttc';}
+  if(key==='audit'){const aud=load('egncrm_auditeurs',[]).find(a=>a.id===comptaOf(r).auditSubId);return aud?aud.tvaMode||'ttc':'ttc';}
+  return 'ttc';
+}
+function effectiveTvaMode(r,key){const c=comptaOf(r);return(c.tvaModes||{})[key]||getDefaultTvaMode(r,key);}
+function tvaLine(r,key,montantTTC){
+  const mode=effectiveTvaMode(r,key);
+  return mode==='ht'?{paye:htOf(montantTTC),tvaRecup:tvaOf(montantTTC),mode:'ht'}:{paye:montantTTC,tvaRecup:0,mode:'ttc'};
+}
+async function saveTvaMode(recId,key,mode){
+  const r=recById(recId);if(!r)return;
+  const c=comptaOf(r);c.tvaModes=c.tvaModes||{};c.tvaModes[key]=mode;
+  await persistCompta(recId);openDossier(recId);toast('Mode TVA mis à jour ✓','ok');
+}
 const statById=id=>getStatuses().find(s=>s.id===id);
 const userById=id=>getUsers().find(u=>u.id===id);
 const recById=id=>getRecs().find(r=>r.id===id);
@@ -2611,8 +2629,14 @@ function ovLine(r,key,label,autoMontant,c){
     ?`<button class="btn btn-ghost btn-sm" style="padding:1px 6px;font-size:.7rem;margin-left:4px" onclick="clearOverrideCompta('${r.id}','${key}')">🔄</button>`
     :`<button class="iconbtn" title="Modifier" onclick="openOverrideCompta('${r.id}','${key}',${autoMontant})" style="font-size:.7rem;padding:2px 5px;margin-left:4px">✏️</button>`;
   const montant=isManuel?(parseFloat(ovr)||0):autoMontant;
-  const htStr=`<span class="muted" style="font-size:.6rem;display:block;text-align:right">HT ${eur(montant/1.2)} · TVA ${eur(montant/6)}</span>`;
-  return `<span class="il" style="display:flex;align-items:center;flex-wrap:wrap;gap:.2rem;min-width:0">${label}${badge}${editBtn}</span><span class="iv" style="flex-shrink:0">${eur(montant)}${htStr}</span>`;
+  // Toggle HT/TTC
+  const tvaMode=effectiveTvaMode(r,key);
+  const tl=tvaLine(r,key,montant);
+  const tvaBadge=`<button onclick="saveTvaMode('${r.id}','${key}','${tvaMode==='ht'?'ttc':'ht'}')" style="font-size:.62rem;font-weight:700;border:1px solid;border-radius:5px;padding:1px 6px;margin-left:4px;cursor:pointer;${tvaMode==='ht'?'background:#EAF3DE;color:#3D7A1E;border-color:#7CC242':'background:#EEF0F2;color:#6b7785;border-color:#d8dde0'}" title="Cliquer pour basculer HT/TTC">${tvaMode==='ht'?'HT ✓':'TTC'}</button>`;
+  const tvaInfo=tvaMode==='ht'
+    ?`<span class="muted" style="font-size:.6rem;display:block;text-align:right">Payé HT : ${eur(tl.paye)} · TVA récup. : ${eur(tl.tvaRecup)}</span>`
+    :`<span class="muted" style="font-size:.6rem;display:block;text-align:right">HT ${eur(htOf(montant))} · TVA ${eur(tvaOf(montant))}</span>`;
+  return `<span class="il" style="display:flex;align-items:center;flex-wrap:wrap;gap:.2rem;min-width:0">${label}${badge}${editBtn}${tvaBadge}</span><span class="iv" style="flex-shrink:0">${eur(montant)}${tvaInfo}</span>`;
 }
 function openOverrideCompta(recId,key,autoMontant){
   const r=recById(recId);if(!r)return;
@@ -2804,6 +2828,23 @@ function renderComptaResume(){
     <div class="kpi"><div class="kico">🧰</div><div class="klab">À verser aux VT</div><div class="kval">${eur(sumVt)}</div><div class="ksub">HT ${eur(htOf(sumVt))} · ${Object.keys(byVt).length} société${Object.keys(byVt).length>1?'s':''}</div></div>
     <div class="kpi"><div class="kico">📝</div><div class="klab">À verser aux auditeurs</div><div class="kval">${eur(sumAud)}</div><div class="ksub">HT ${eur(htOf(sumAud))} · ${Object.keys(byAud).length} auditeur${Object.keys(byAud).length>1?'s':''}</div></div>
   </div>`;
+  // Calculer la TVA récupérable sur toutes les lignes en mode HT
+  let totTvaRecup=0;
+  recs.forEach(r=>{
+    const m=recordComptaMetrics(r);
+    ['poseur','callcenter','vt','audit'].forEach(key=>{
+      const montant=key==='poseur'?m.pc.montant:key==='callcenter'?m.ccC.montant:key==='vt'?m.vtC.montant:m.auditC.montant;
+      const tl=tvaLine(r,key,montant);
+      totTvaRecup+=tl.tvaRecup;
+    });
+  });
+  if(totTvaRecup>0){
+    h+=`<div style="background:rgba(45,125,210,.07);border:1px solid rgba(45,125,210,.2);border-radius:10px;padding:.8rem 1.1rem;margin-bottom:1rem;display:flex;align-items:center;gap:1rem;flex-wrap:wrap">
+      <span style="font-size:1.2rem">🏦</span>
+      <div><div style="font-size:.72rem;font-weight:700;color:#1A5FD4;text-transform:uppercase;letter-spacing:.4px">TVA récupérable sur charges payées HT</div>
+      <div style="font-size:1.1rem;font-weight:800;color:#1A5FD4">${eur(totTvaRecup)}</div>
+      <div style="font-size:.7rem;color:var(--text-mut)">Correspond aux lignes de charge configurées en mode « Paiement HT » — TVA déductible sur votre déclaration.</div></div>
+    </div>`;}
   // par poseur
   h+=`<div class="panel"><div class="panel-h"><h3>Rentabilité par poseur</h3></div><div class="panel-b">`;
   const poseurKeys=Object.keys(byPoseur);
@@ -4912,7 +4953,7 @@ function openVt(id){
   if(!VTDRAFT.prices)VTDRAFT.prices=[];
   renderVtEditor();
 }
-function vtCaptureName(){const e=document.getElementById('vt_name');if(e)VTDRAFT.name=e.value.trim();const em=document.getElementById('vt_email');if(em)VTDRAFT.email=em.value.trim();}
+function vtCaptureName(){const e=document.getElementById('vt_name');if(e)VTDRAFT.name=e.value.trim();const em=document.getElementById('vt_email');if(em)VTDRAFT.email=em.value.trim();const tv=document.querySelector('input[name="vt_tva"]:checked');if(tv)VTDRAFT.tvaMode=tv.value;}
 function vtCaptureRows(){
   document.querySelectorAll('#vt_rows [data-vtrow]').forEach(row=>{
     const i=+row.dataset.vtrow;const p=VTDRAFT.prices[i];if(!p)return;
@@ -4938,6 +4979,12 @@ function renderVtEditor(){
     <div class="fld"><label>Nom de la société</label><input id="vt_name" value="${esc(o.name)}" placeholder="Ex : Bureau de contrôle XYZ"></div>
     <div class="fld"><label>Email de contact <span class="muted" style="font-size:.62rem">(pour l'envoi des appels à facturation)</span></label><input id="vt_email" value="${esc(o.email||'')}" placeholder="contact@bureau-controle.fr"></div>
   </div>
+    <div class="fld" style="margin-top:.6rem"><label>Mode de paiement par défaut <span class="muted" style="font-size:.62rem">(modifiable dossier par dossier)</span></label>
+      <div style="display:flex;gap:.5rem;flex-wrap:wrap">
+        <label style="display:flex;align-items:center;gap:.4rem;cursor:pointer;font-size:.85rem"><input type="radio" name="vt_tva" value="ttc" ${(o.tvaMode||'ttc')==='ttc'?'checked':''}>Paiement TTC</label>
+        <label style="display:flex;align-items:center;gap:.4rem;cursor:pointer;font-size:.85rem"><input type="radio" name="vt_tva" value="ht" ${o.tvaMode==='ht'?'checked':''}>Paiement HT <span class="muted" style="font-size:.72rem">(TVA récupérable)</span></label>
+      </div>
+    </div>
     <div class="sectitle" style="margin-top:.8rem">Tarification <span style="font-weight:500;text-transform:none;letter-spacing:0;color:var(--text-mut)">(montant fixe par opération)</span></div>
     <div id="vt_rows">${rows}</div>
     <button class="btn btn-ghost btn-sm" style="margin-top:.7rem" onclick="vtCaptureRows();vtAddPrice()">+ Ajouter un tarif</button>
@@ -4962,7 +5009,7 @@ function openAuditeur(id){
   if(!AUDDRAFT.prices)AUDDRAFT.prices=[];
   renderAudEditor();
 }
-function audCaptureName(){const e=document.getElementById('aud_name');if(e)AUDDRAFT.name=e.value.trim();const em=document.getElementById('aud_email');if(em)AUDDRAFT.email=em.value.trim();}
+function audCaptureName(){const e=document.getElementById('aud_name');if(e)AUDDRAFT.name=e.value.trim();const em=document.getElementById('aud_email');if(em)AUDDRAFT.email=em.value.trim();const tv=document.querySelector('input[name="aud_tva"]:checked');if(tv)AUDDRAFT.tvaMode=tv.value;}
 function audCaptureRows(){
   document.querySelectorAll('#aud_rows [data-audrow]').forEach(row=>{
     const i=+row.dataset.audrow;const p=AUDDRAFT.prices[i];if(!p)return;
@@ -4988,6 +5035,12 @@ function renderAudEditor(){
     <div class="fld"><label>Nom de l'auditeur</label><input id="aud_name" value="${esc(o.name)}" placeholder="Ex : Jean Dupont Audit"></div>
     <div class="fld"><label>Email de contact <span class="muted" style="font-size:.62rem">(pour l'envoi des appels à facturation)</span></label><input id="aud_email" value="${esc(o.email||'')}" placeholder="jean.dupont@audit.fr"></div>
   </div>
+    <div class="fld" style="margin-top:.6rem"><label>Mode de paiement par défaut <span class="muted" style="font-size:.62rem">(modifiable dossier par dossier)</span></label>
+      <div style="display:flex;gap:.5rem;flex-wrap:wrap">
+        <label style="display:flex;align-items:center;gap:.4rem;cursor:pointer;font-size:.85rem"><input type="radio" name="aud_tva" value="ttc" ${(o.tvaMode||'ttc')==='ttc'?'checked':''}>Paiement TTC</label>
+        <label style="display:flex;align-items:center;gap:.4rem;cursor:pointer;font-size:.85rem"><input type="radio" name="aud_tva" value="ht" ${o.tvaMode==='ht'?'checked':''}>Paiement HT <span class="muted" style="font-size:.72rem">(TVA récupérable)</span></label>
+      </div>
+    </div>
     <div class="sectitle" style="margin-top:.8rem">Tarification <span style="font-weight:500;text-transform:none;letter-spacing:0;color:var(--text-mut)">(montant fixe par opération)</span></div>
     <div id="aud_rows">${rows}</div>
     <button class="btn btn-ghost btn-sm" style="margin-top:.7rem" onclick="audCaptureRows();audAddPrice()">+ Ajouter un tarif</button>
@@ -5013,7 +5066,7 @@ function openSource(id){
   if(!SRCDRAFT.prices)SRCDRAFT.prices=[];
   renderSourceEditor();
 }
-function srcCaptureTop(){const n=document.getElementById('src_name');if(n)SRCDRAFT.name=n.value.trim();const e=document.getElementById('src_email');if(e)SRCDRAFT.email=e.value.trim();}
+function srcCaptureTop(){const n=document.getElementById('src_name');if(n)SRCDRAFT.name=n.value.trim();const e=document.getElementById('src_email');if(e)SRCDRAFT.email=e.value.trim();const tv=document.querySelector('input[name="src_tva"]:checked');if(tv)SRCDRAFT.tvaMode=tv.value;}
 function srcCaptureRows(){
   document.querySelectorAll('#src_rows [data-srcrow]').forEach(row=>{
     const i=+row.dataset.srcrow;const p=SRCDRAFT.prices[i];if(!p)return;
@@ -5042,6 +5095,12 @@ function renderSourceEditor(){
     <div class="fld"><label>Nom de la source / régie</label><input id="src_name" value="${esc(o.name)}" placeholder="Ex : Régie Web Partenaire, Call Center Interne…"></div>
     <div class="fld"><label>Email de contact <span class="muted" style="font-size:.62rem">(pour l'appel à facturation)</span></label><input id="src_email" value="${esc(o.email||'')}" placeholder="contact@regie.fr"></div>
   </div>
+    <div class="fld" style="margin-top:.6rem"><label>Mode de paiement par défaut <span class="muted" style="font-size:.62rem">(modifiable dossier par dossier)</span></label>
+      <div style="display:flex;gap:.5rem;flex-wrap:wrap">
+        <label style="display:flex;align-items:center;gap:.4rem;cursor:pointer;font-size:.85rem"><input type="radio" name="src_tva" value="ttc" ${(o.tvaMode||'ttc')==='ttc'?'checked':''}>Paiement TTC</label>
+        <label style="display:flex;align-items:center;gap:.4rem;cursor:pointer;font-size:.85rem"><input type="radio" name="src_tva" value="ht" ${o.tvaMode==='ht'?'checked':''}>Paiement HT <span class="muted" style="font-size:.72rem">(TVA récupérable)</span></label>
+      </div>
+    </div>
     <div class="sectitle" style="margin-top:.8rem">Tarification call center <span style="font-weight:500;text-transform:none;letter-spacing:0;color:var(--text-mut)">(par opération — prix fixe par RDV, au m² selon la surface habitable, ou % du devis)</span></div>
     <div id="src_rows">${rows}</div>
     <button class="btn btn-ghost btn-sm" style="margin-top:.7rem" onclick="srcCaptureRows();srcAddPrice()">+ Ajouter un tarif</button>
@@ -5079,7 +5138,7 @@ function renderPzAssignChips(){
 }
 function addPzAssign(id){if(!id)return;if(!PZ_ASSIGN.includes(id))PZ_ASSIGN.push(id);renderPzAssignChips();}
 function removePzAssign(id){PZ_ASSIGN=PZ_ASSIGN.filter(x=>x!==id);renderPzAssignChips();}
-function pzCaptureName(){const e=document.getElementById('pz_name');if(e)PZDRAFT.name=e.value.trim();}
+function pzCaptureName(){const e=document.getElementById('pz_name');if(e)PZDRAFT.name=e.value.trim();const tv=document.querySelector('input[name="pz_tva"]:checked');if(tv)PZDRAFT.tvaMode=tv.value;}
 function pzCaptureRows(){
   document.querySelectorAll('#pz_rows [data-pzrow]').forEach(row=>{
     const i=+row.dataset.pzrow;const p=PZDRAFT.prices[i];if(!p)return;
@@ -5106,6 +5165,12 @@ function renderPoseurEditor(){
       <button class="iconbtn del" title="Supprimer" onclick="pzCaptureRows();pzDelPrice(${i})">🗑️</button>
     </div>`;}).join(''):`<div class="muted" style="font-size:.82rem;padding:.5rem 0">Aucun tarif configuré. Ajoutez une ligne par opération / mode de rémunération.</div>`;
   let body=`<div class="fld"><label>Nom de la famille</label><input id="pz_name" value="${esc(o.name)}" placeholder="Ex : Équipe Nord, Sté Dupont Isolation…"></div>
+    <div class="fld" style="margin-top:.6rem"><label>Mode de paiement par défaut <span class="muted" style="font-size:.62rem">(modifiable dossier par dossier)</span></label>
+      <div style="display:flex;gap:.5rem;flex-wrap:wrap">
+        <label style="display:flex;align-items:center;gap:.4rem;cursor:pointer;font-size:.85rem"><input type="radio" name="pz_tva" id="pz_tva_ttc" value="ttc" ${(o.tvaMode||'ttc')==='ttc'?'checked':''}>Paiement TTC <span class="muted" style="font-size:.72rem">(le montant inclut la TVA — tu ne récupères pas la TVA)</span></label>
+        <label style="display:flex;align-items:center;gap:.4rem;cursor:pointer;font-size:.85rem"><input type="radio" name="pz_tva" id="pz_tva_ht" value="ht" ${o.tvaMode==='ht'?'checked':''}>Paiement HT <span class="muted" style="font-size:.72rem">(le montant est HT — la TVA est récupérable)</span></label>
+      </div>
+    </div>
     <div class="sectitle">Tarification <span style="font-weight:500;text-transform:none;letter-spacing:0;color:var(--text-mut)">(par opération — % du devis, prix fixe, tarif journalier, ou au m²)</span></div>
     <div id="pz_rows">${rows}</div>
     <button class="btn btn-ghost btn-sm" style="margin-top:.7rem" onclick="pzCaptureRows();pzAddPrice()">+ Ajouter un tarif</button>
