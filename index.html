@@ -2785,12 +2785,14 @@ async function renderComptaGlobal(){
   renderComptaTabs();
 }
 function renderComptaTabs(){
-  const tabs=[['resume','Résumé global'],['facturation','Appels à facturation'],['paiements','Suivi des paiements'],['historique','Historique des factures']];
+  const tabs=[['resume','Résumé global'],['facturation','Appels à facturation'],['paiements','Suivi des paiements'],['tva_payer','TVA à payer'],['tva_recup','TVA à récupérer'],['historique','Historique des factures']];
   let h=`<div class="tabs">`+tabs.map(t=>`<button class="tab ${COMPTA_TAB===t[0]?'act':''}" onclick="COMPTA_TAB='${t[0]}';renderComptaTabs()">${t[1]}</button>`).join('')+`</div><div id="comptaBody"></div>`;
   document.getElementById('content').innerHTML=h;
   if(COMPTA_TAB==='resume')renderComptaResume();
   else if(COMPTA_TAB==='facturation')renderComptaFacturation();
   else if(COMPTA_TAB==='paiements')renderComptaPaiements();
+  else if(COMPTA_TAB==='tva_payer')renderComptaTvaPayer();
+  else if(COMPTA_TAB==='tva_recup')renderComptaTvaRecup();
   else renderComptaHistorique();
 }
 function renderComptaResume(){
@@ -3160,6 +3162,101 @@ function exportPaiementsCSV(){
   const blob=new Blob(['\uFEFF'+csv],{type:'text/csv;charset=utf-8'});
   const url=URL.createObjectURL(blob);const a=document.createElement('a');
   a.href=url;a.download='suivi_paiements_egn.csv';a.click();URL.revokeObjectURL(url);
+}
+/* ============================================================
+   TVA À PAYER — TVA collectée sur les recettes (prime CEE)
+   ============================================================ */
+function renderComptaTvaPayer(){
+  const recs=getRecs().filter(hasComptaData);
+  const eur=n=>(n||0).toLocaleString('fr-FR',{maximumFractionDigits:2})+' €';
+  const tva=tvaRate();
+  let totTTC=0,totHT=0,totTVA=0;
+  const rows=recs.map(r=>{
+    const prime=dealOf(r).prime||0;
+    const ht=htOf(prime);const tvaM=tvaOf(prime);
+    totTTC+=prime;totHT+=ht;totTVA+=tvaM;
+    const op=getProducts().find(o=>o.id===r.productId);
+    return{r,prime,ht,tvaM,op};
+  }).filter(x=>x.prime>0).sort((a,b)=>(b.r.updated||0)-(a.r.updated||0));
+  let h=`<p class="muted" style="font-size:.72rem;margin-bottom:.8rem">🏛️ TVA collectée sur les recettes (prime CEE) au taux de <b>${tva}%</b>. Ces montants sont à reverser à l'administration fiscale.</p>`;
+  h+=`<div class="kpis">
+    <div class="kpi"><div class="kico">💶</div><div class="klab">Recettes TTC totales</div><div class="kval">${eur(totTTC)}</div><div class="ksub">${rows.length} dossier${rows.length>1?'s':''}</div></div>
+    <div class="kpi"><div class="kico">📊</div><div class="klab">Base HT (hors TVA)</div><div class="kval">${eur(totHT)}</div><div class="ksub">Taux ${tva}%</div></div>
+    <div class="kpi" style="border:1.5px solid rgba(230,57,70,.3)"><div class="kico">🏛️</div><div class="klab">TVA à reverser</div><div class="kval" style="color:var(--coral)">${eur(totTVA)}</div><div class="ksub">= Recettes TTC − base HT</div></div>
+  </div>`;
+  h+=`<div class="panel"><div class="panel-h"><h3>Détail par dossier</h3><div class="sp"><span class="muted">${rows.length} dossier${rows.length>1?'s':''}</span></div></div><div class="panel-b">`;
+  if(!rows.length)h+=`<div class="empty"><div class="big">🏛️</div>Aucun dossier avec prime CEE renseignée.</div>`;
+  else{
+    h+=`<div class="tbl-wrap"><table class="tbl">
+      <thead><tr><th>N° Dossier</th><th>Client</th><th>Opération</th><th class="r">Prime TTC</th><th class="r">Base HT</th><th class="r" style="color:var(--coral)">TVA à reverser</th></tr></thead><tbody>`;
+    rows.forEach(({r,prime,ht,tvaM,op})=>{
+      h+=`<tr>
+        <td><span class="dossier-tag" style="cursor:pointer" onclick="openDossier('${r.id}')">${esc(r.dossier||'—')}</span></td>
+        <td>${esc(clientNameOf(r))}</td>
+        <td class="muted">${op?esc(op.name):'—'}</td>
+        <td style="text-align:right;font-weight:700">${eur(prime)}</td>
+        <td style="text-align:right">${eur(ht)}</td>
+        <td style="text-align:right;font-weight:700;color:var(--coral)">${eur(tvaM)}</td>
+      </tr>`;
+    });
+    h+=`<tr style="background:#f8faf5;font-weight:800"><td colspan="3">Total</td><td style="text-align:right">${eur(totTTC)}</td><td style="text-align:right">${eur(totHT)}</td><td style="text-align:right;color:var(--coral)">${eur(totTVA)}</td></tr>`;
+    h+=`</tbody></table></div>`;
+  }
+  h+=`</div></div>`;
+  document.getElementById('comptaBody').innerHTML=h;
+}
+/* ============================================================
+   TVA À RÉCUPÉRER — TVA déductible sur les charges payées HT
+   ============================================================ */
+function renderComptaTvaRecup(){
+  const recs=getRecs().filter(hasComptaData);
+  const eur=n=>(n||0).toLocaleString('fr-FR',{maximumFractionDigits:2})+' €';
+  const KEYS=['poseur','callcenter','vt','audit'];
+  const LABELS={poseur:'Poseur',callcenter:'Call Center',vt:'Visite Technique',audit:'Audit'};
+  let totRecup=0;
+  const byKey={};KEYS.forEach(k=>{byKey[k]={montantHT:0,tvaRecup:0,nb:0};});
+  const rows=[];
+  recs.forEach(r=>{
+    const m=recordComptaMetrics(r);
+    const montants={poseur:m.pc.montant,callcenter:m.ccC.montant,vt:m.vtC.montant,audit:m.auditC.montant};
+    let rowTva=0;const details=[];
+    KEYS.forEach(k=>{
+      const montant=montants[k]||0;if(!montant)return;
+      const tl=tvaLine(r,k,montant);
+      if(tl.tvaRecup>0){
+        byKey[k].montantHT+=tl.paye;byKey[k].tvaRecup+=tl.tvaRecup;byKey[k].nb++;
+        rowTva+=tl.tvaRecup;totRecup+=tl.tvaRecup;
+        details.push({label:LABELS[k],montantHT:tl.paye,tvaRecup:tl.tvaRecup});
+      }
+    });
+    if(rowTva>0)rows.push({r,rowTva,details});
+  });
+  let h=`<p class="muted" style="font-size:.72rem;margin-bottom:.8rem">🟢 TVA déductible sur les charges payées en mode <b>HT</b>. Ces montants sont récupérables sur votre déclaration TVA.</p>`;
+  h+=`<div class="kpis">`;
+  KEYS.forEach(k=>{if(byKey[k].nb>0)h+=`<div class="kpi"><div class="kico">${k==='poseur'?'🔧':k==='callcenter'?'📞':k==='vt'?'🧰':'📝'}</div><div class="klab">TVA récup. — ${LABELS[k]}</div><div class="kval" style="color:var(--green-deep)">${eur(byKey[k].tvaRecup)}</div><div class="ksub">Base HT ${eur(byKey[k].montantHT)} · ${byKey[k].nb} dossier${byKey[k].nb>1?'s':''}</div></div>`;});
+  if(totRecup>0)h+=`<div class="kpi" style="border:1.5px solid rgba(91,186,84,.4)"><div class="kico">✅</div><div class="klab">Total TVA récupérable</div><div class="kval" style="color:var(--green-deep)">${eur(totRecup)}</div><div class="ksub">Sur toutes les charges HT</div></div>`;
+  h+=`</div>`;
+  if(!rows.length){
+    h+=`<div class="empty"><div class="big">🟢</div>Aucune charge en mode HT pour le moment.<br><span class="muted" style="font-size:.8rem">Configurez le mode de paiement HT dans Paramètres ▸ Poseurs / Sources / VT / Auditeurs.</span></div>`;
+  } else {
+    h+=`<div class="panel"><div class="panel-h"><h3>Détail par dossier</h3><div class="sp"><span class="muted">${rows.length} dossier${rows.length>1?'s':''}</span></div></div><div class="panel-b">`;
+    h+=`<div class="tbl-wrap"><table class="tbl">
+      <thead><tr><th>N° Dossier</th><th>Client</th><th>Poste</th><th class="r">Montant HT payé</th><th class="r" style="color:var(--green-deep)">TVA récupérable</th></tr></thead><tbody>`;
+    rows.forEach(({r,rowTva,details})=>{
+      details.forEach((d,i)=>{
+        h+=`<tr>
+          ${i===0?`<td rowspan="${details.length}" style="vertical-align:top"><span class="dossier-tag" style="cursor:pointer" onclick="openDossier('${r.id}')">${esc(r.dossier||'—')}</span></td>
+          <td rowspan="${details.length}" style="vertical-align:top">${esc(clientNameOf(r))}</td>`:''}
+          <td>${d.label}</td>
+          <td style="text-align:right">${eur(d.montantHT)}</td>
+          <td style="text-align:right;font-weight:700;color:var(--green-deep)">${eur(d.tvaRecup)}</td>
+        </tr>`;
+      });
+    });
+    h+=`<tr style="background:#f8faf5;font-weight:800"><td colspan="3">Total</td><td style="text-align:right">—</td><td style="text-align:right;color:var(--green-deep)">${eur(totRecup)}</td></tr>`;
+    h+=`</tbody></table></div></div></div>`;
+  }
+  document.getElementById('comptaBody').innerHTML=h;
 }
 function renderComptaHistorique(){
   const factures=FACTURES_CACHE||[];
