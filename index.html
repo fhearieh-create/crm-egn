@@ -3092,7 +3092,8 @@ function renderComptaPaiements(){
         <th>N° APF</th><th>Type</th><th>Bénéficiaire</th><th>Dossier</th>
         <th class="r">Montant TTC</th>
         <th style="width:130px">Statut</th>
-        <th style="width:170px">N° facture reçue</th>
+        <th style="width:160px">N° facture reçue</th>
+        <th style="width:120px">Pièce jointe</th>
       </tr></thead><tbody>`;
     filtered.forEach(x=>{
       const statColors={payer:'background:#FFF4E5;color:#B96A0A',paye:'background:#E6F7F0;color:#0F6E56',annule:'background:#FEE8E8;color:#A32D2D'};
@@ -3110,6 +3111,17 @@ function renderComptaPaiements(){
         :`<input type="text" value="${esc(x.facRef)}" placeholder="Ex : FAC-2026-041"
             onchange="savePaiementFacRef('${x.f.id}','${x.pKey}',this.value)"
             style="font-family:'Saira',sans-serif;font-size:.78rem;border:1.5px solid var(--border-grey);border-radius:7px;padding:3px 8px;width:100%;outline:none">`;
+      const pj=(x.f.paiements||{})[x.pKey]||{};
+      const pjCell=pj.fileUrl
+        ?`<div style="display:flex;align-items:center;gap:.4rem">
+            <a href="${pj.fileUrl}" target="_blank" style="font-size:.75rem;color:var(--blue);font-weight:600;text-decoration:none" title="${esc(pj.fileName||'Voir la facture')}">📎 ${esc(pj.fileName||'Voir')}</a>
+            ${!PAIEMENTS_LOCKED?`<button class="iconbtn del" style="font-size:.7rem;padding:1px 4px" onclick="deletePaiementFile('${x.f.id}','${x.pKey}')" title="Supprimer">✕</button>`:''}
+          </div>`
+        :PAIEMENTS_LOCKED?`<span class="muted" style="font-size:.75rem">—</span>`
+        :`<label style="cursor:pointer;display:inline-flex;align-items:center;gap:.3rem;font-size:.75rem;font-weight:600;color:var(--blue)">
+            <input type="file" accept=".pdf,image/*" style="display:none" onchange="uploadPaiementFile('${x.f.id}','${x.pKey}',this)">
+            📎 Joindre
+          </label>`;
       h+=`<tr>
         <td><span class="dossier-tag">${esc(x.f.apfNum||'—')}</span></td>
         <td>${x.at.icon} <span style="font-size:.75rem">${x.at.label}</span></td>
@@ -3118,12 +3130,38 @@ function renderComptaPaiements(){
         <td style="text-align:right;font-weight:700">${eur(x.l.montant)}<div class="muted" style="font-size:.65rem">HT ${eur(htOf(x.l.montant))}</div></td>
         <td>${statutCell}</td>
         <td>${facRefCell}</td>
+        <td>${pjCell}</td>
       </tr>`;
     });
     h+=`</tbody></table></div>`;
     h+=`<div style="display:flex;justify-content:flex-end;margin-top:.8rem"><button class="btn btn-navy btn-sm" onclick="exportPaiementsCSV()">📤 Exporter CSV</button></div>`;
   }
   document.getElementById('comptaBody').innerHTML=h;
+}
+async function uploadPaiementFile(factureId,pKey,input){
+  const file=input.files[0];if(!file)return;
+  if(file.size>10*1024*1024){toast('Fichier trop lourd (max 10 Mo)','err');return;}
+  toast('Envoi en cours…','ok');
+  try{
+    const fid=uid();
+    const ext=file.name.split('.').pop();
+    const path=`paiements/${factureId}/${pKey}-${fid}.${ext}`;
+    const{error}=await SUPA.storage.from(ATTACH_BUCKET).upload(path,file,{contentType:file.type});
+    if(error)throw error;
+    const{data:urlData}=await SUPA.storage.from(ATTACH_BUCKET).createSignedUrl(path,60*60*24*365*5);
+    const f=FACTURES_CACHE&&FACTURES_CACHE.find(x=>x.id===factureId);if(!f)return;
+    f.paiements=f.paiements||{};f.paiements[pKey]=f.paiements[pKey]||{};
+    f.paiements[pKey].fileUrl=urlData.signedUrl;f.paiements[pKey].filePath=path;f.paiements[pKey].fileName=file.name;
+    await persistFacture(f);toast('Facture jointe ✓','ok');renderComptaPaiements();
+  }catch(e){console.error('[uploadPaiementFile]',e);toast('Échec : '+(e.message||e),'err');}
+}
+async function deletePaiementFile(factureId,pKey){
+  const f=FACTURES_CACHE&&FACTURES_CACHE.find(x=>x.id===factureId);if(!f)return;
+  const pj=(f.paiements||{})[pKey]||{};
+  if(pj.filePath){try{await SUPA.storage.from(ATTACH_BUCKET).remove([pj.filePath]);}catch(e){console.warn('[deletePaiementFile]',e);}}
+  f.paiements=f.paiements||{};
+  if(f.paiements[pKey]){delete f.paiements[pKey].fileUrl;delete f.paiements[pKey].filePath;delete f.paiements[pKey].fileName;}
+  await persistFacture(f);toast('Pièce jointe supprimée ✓','ok');renderComptaPaiements();
 }
 async function savePaiementStatut(factureId,pKey,statut){
   if(!FACTURES_CACHE)return;
