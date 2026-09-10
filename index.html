@@ -2843,12 +2843,13 @@ async function renderComptaGlobal(){
   renderComptaTabs();
 }
 function renderComptaTabs(){
-  const tabs=[['resume','Résumé global'],['facturation','Appels à facturation'],['paiements','Suivi des paiements'],['tva_payer','TVA à payer'],['tva_recup','TVA à récupérer'],['historique','Historique des factures']];
+  const tabs=[['resume','Résumé global'],['facturation','Appels à facturation'],['paiements','Suivi des paiements'],['delegataires','Paiements délégataires'],['tva_payer','TVA à payer'],['tva_recup','TVA à récupérer'],['historique','Historique des factures']];
   let h=`<div class="tabs">`+tabs.map(t=>`<button class="tab ${COMPTA_TAB===t[0]?'act':''}" onclick="COMPTA_TAB='${t[0]}';renderComptaTabs()">${t[1]}</button>`).join('')+`</div><div id="comptaBody"></div>`;
   document.getElementById('content').innerHTML=h;
   if(COMPTA_TAB==='resume')renderComptaResume();
   else if(COMPTA_TAB==='facturation')renderComptaFacturation();
   else if(COMPTA_TAB==='paiements')renderComptaPaiements();
+  else if(COMPTA_TAB==='delegataires')renderComptaDelegataires();
   else if(COMPTA_TAB==='tva_payer')renderComptaTvaPayer();
   else if(COMPTA_TAB==='tva_recup')renderComptaTvaRecup();
   else renderComptaHistorique();
@@ -3262,6 +3263,174 @@ function exportPaiementsCSV(){
 /* ============================================================
    TVA À PAYER — TVA collectée sur les recettes (prime CEE)
    ============================================================ */
+/* ============================================================
+   PAIEMENTS DÉLÉGATAIRES
+   Regroupe les dossiers par délégataire, création d'APF délégataire,
+   suivi En attente de virement / Virement reçu.
+   Quand virement reçu → sous-statut administratif "Payé" sur les dossiers.
+   ============================================================ */
+let DELEG_DRAFT_APF=null; // APF délégataire en cours de création
+function renderComptaDelegataires(){
+  const delegs=getDelegataires();
+  const apfs=load('egncrm_apf_deleg',[]);
+  const eur=n=>(n||0).toLocaleString('fr-FR',{maximumFractionDigits:2})+' €';
+  // Sélecteur délégataire
+  const curDeleg=(DELEG_DRAFT_APF&&DELEG_DRAFT_APF.delegId)||load('egncrm_deleg_tab_sel','');
+  const filtreNonAffilie=load('egncrm_deleg_tab_filter','1')==='1';
+  let h=`<div class="panel"><div class="panel-h"><h3>Sélectionner un délégataire</h3></div><div class="panel-b">
+    <div style="display:flex;gap:.7rem;align-items:center;flex-wrap:wrap">
+      <select id="deleg_sel" onchange="selectDelegTab(this.value)" style="font-family:'Saira',sans-serif;font-size:.88rem;border:1.5px solid var(--border-grey);border-radius:9px;padding:.45rem .8rem;flex:1;min-width:200px">
+        <option value="">— Choisir un délégataire —</option>
+        ${delegs.map(d=>`<option value="${d.id}" ${d.id===curDeleg?'selected':''}>${esc(d.name)}</option>`).join('')}
+      </select>
+      <label style="display:flex;align-items:center;gap:.4rem;font-size:.82rem;cursor:pointer;white-space:nowrap">
+        <input type="checkbox" ${filtreNonAffilie?'checked':''} onchange="toggleDelegFilter(this.checked)">
+        Afficher seulement les dossiers sans APF délégataire
+      </label>
+    </div>
+  </div></div>`;
+  if(!curDeleg){document.getElementById('comptaBody').innerHTML=h;return;}
+  const deleg=delegs.find(d=>d.id===curDeleg);
+  if(!deleg){document.getElementById('comptaBody').innerHTML=h;return;}
+  // Dossiers valorisés chez ce délégataire
+  const recs=getRecs().filter(r=>{
+    const deal=dealOf(r);
+    return deal&&deal.delegataireId===curDeleg&&(deal.prime||0)>0;
+  });
+  // APFs délégataire existants pour ce délégataire
+  const myApfs=apfs.filter(a=>a.delegId===curDeleg).sort((a,b)=>(b.date||0)-(a.date||0));
+  // IDs déjà affiliés
+  const affilieIds=new Set(myApfs.flatMap(a=>a.recIds||[]));
+  const filtered=filtreNonAffilie?recs.filter(r=>!affilieIds.has(r.id)):recs;
+  // Stats
+  const totPrime=filtered.reduce((s,r)=>s+(dealOf(r).prime||0),0);
+  // Grouper par opération
+  const byOp={};
+  filtered.forEach(r=>{const k=r.productId||'';byOp[k]=byOp[k]||[];byOp[k].push(r);});
+  h+=`<div class="kpis">
+    <div class="kpi"><div class="kico">🏦</div><div class="klab">Dossiers affichés</div><div class="kval">${filtered.length}</div><div class="ksub">${recs.length} total chez ${esc(deleg.name)}</div></div>
+    <div class="kpi accent"><div class="kico">💶</div><div class="klab">Total prime affiché</div><div class="kval">${eur(totPrime)}</div><div class="ksub">HT ${eur(htOf(totPrime))}</div></div>
+    <div class="kpi"><div class="kico">📄</div><div class="klab">APF délégataires créés</div><div class="kval">${myApfs.length}</div><div class="ksub">${myApfs.filter(a=>a.statut==='recu').length} virements reçus</div></div>
+  </div>`;
+  // Tableau des dossiers
+  h+=`<div class="panel"><div class="panel-h"><h3>Dossiers valorisés — ${esc(deleg.name)}</h3>
+    <div class="sp"><button class="btn btn-pri btn-sm" onclick="ouvrirCreerApfDeleg('${curDeleg}')">+ Créer un APF délégataire</button></div>
+  </div><div class="panel-b">`;
+  if(!filtered.length)h+=`<div class="empty"><div class="big">📋</div>Aucun dossier à afficher.</div>`;
+  else{
+    h+=`<div class="tbl-wrap"><table class="tbl">
+      <thead><tr>
+        <th style="width:36px"><input type="checkbox" id="deleg_chk_all" onchange="delegToggleAll(this.checked)"></th>
+        <th>N° Dossier</th><th>Client</th><th>Opération</th>
+        <th class="r">Prime TTC</th><th>APF délégataire</th>
+      </tr></thead><tbody>`;
+    filtered.forEach(r=>{
+      const deal=dealOf(r);const op=getProducts().find(o=>o.id===r.productId);
+      const apfLie=myApfs.find(a=>(a.recIds||[]).includes(r.id));
+      const apfBadge=apfLie
+        ?`<span style="font-size:.72rem;font-weight:700;background:${apfLie.statut==='recu'?'#E6F7F0':'#FFF4E5'};color:${apfLie.statut==='recu'?'#0F6E56':'#B96A0A'};border-radius:6px;padding:2px 8px">${esc(apfLie.numApf||'—')} · ${apfLie.statut==='recu'?'✅ Reçu':'⏳ En attente'}</span>`
+        :`<span class="muted" style="font-size:.72rem">—</span>`;
+      h+=`<tr>
+        <td><input type="checkbox" class="deleg_chk" data-rid="${r.id}" ${apfLie?'disabled title="Déjà affilié à un APF"':''}></td>
+        <td><span class="dossier-tag" style="cursor:pointer" onclick="openDossier('${r.id}')">${esc(r.dossier||'—')}</span></td>
+        <td>${esc(clientNameOf(r))}</td>
+        <td class="muted">${op?esc(op.name):'—'}</td>
+        <td style="text-align:right;font-weight:700">${eur(deal.prime||0)}<div class="muted" style="font-size:.65rem">HT ${eur(htOf(deal.prime||0))}</div></td>
+        <td>${apfBadge}</td>
+      </tr>`;
+    });
+    h+=`</tbody></table></div>`;
+    h+=`<div style="display:flex;align-items:center;justify-content:flex-end;margin-top:.7rem">
+      <button class="btn btn-navy btn-sm" onclick="ouvrirCreerApfDelegSelection('${curDeleg}')">📄 Créer un APF avec la sélection</button>
+    </div>`;
+  }
+  h+=`</div></div>`;
+  // Liste des APFs délégataires existants
+  if(myApfs.length){
+    h+=`<div class="panel"><div class="panel-h"><h3>APF délégataires — ${esc(deleg.name)}</h3></div><div class="panel-b">
+      <div class="tbl-wrap"><table class="tbl">
+        <thead><tr><th>N° APF délégataire</th><th>Date</th><th>Dossiers</th><th class="r">Total prime</th><th>Statut</th><th class="r">Actions</th></tr></thead><tbody>`;
+    myApfs.forEach(a=>{
+      const tot=( a.recIds||[]).reduce((s,rid)=>{const r=recById(rid);return s+(r?dealOf(r).prime||0:0);},0);
+      const statSel=`<select onchange="saveApfDelegStatut('${a.id}',this.value)" style="font-family:'Saira',sans-serif;font-size:.75rem;font-weight:700;border:none;border-radius:7px;padding:3px 8px;cursor:pointer;${a.statut==='recu'?'background:#E6F7F0;color:#0F6E56':'background:#FFF4E5;color:#B96A0A'}">
+        <option value="attente" ${a.statut!=='recu'?'selected':''}>⏳ En attente de virement</option>
+        <option value="recu" ${a.statut==='recu'?'selected':''}>✅ Virement reçu</option>
+      </select>`;
+      h+=`<tr>
+        <td><span class="dossier-tag">${esc(a.numApf||'—')}</span></td>
+        <td class="muted">${new Date(a.date).toLocaleDateString('fr-FR')}</td>
+        <td>${(a.recIds||[]).length} dossier${(a.recIds||[]).length>1?'s':''}</td>
+        <td style="text-align:right;font-weight:700">${eur(tot)}</td>
+        <td>${statSel}</td>
+        <td style="text-align:right"><button class="iconbtn del" onclick="supprimerApfDeleg('${a.id}')" title="Supprimer">🗑️</button></td>
+      </tr>`;
+    });
+    h+=`</tbody></table></div></div></div>`;
+  }
+  document.getElementById('comptaBody').innerHTML=h;
+}
+function selectDelegTab(val){save('egncrm_deleg_tab_sel',val);renderComptaDelegataires();}
+function toggleDelegFilter(val){save('egncrm_deleg_tab_filter',val?'1':'0');renderComptaDelegataires();}
+function delegToggleAll(checked){document.querySelectorAll('.deleg_chk:not(:disabled)').forEach(c=>c.checked=checked);}
+function ouvrirCreerApfDeleg(delegId){
+  const body=`<div class="fld"><label>Numéro d'APF fourni par le délégataire</label><input id="apf_deleg_num" placeholder="Ex : APF-DEL-2026-041" autofocus></div>
+    <p class="muted" style="margin-top:.6rem;font-size:.78rem">Cochez les dossiers dans le tableau, puis cliquez sur "📄 Créer un APF avec la sélection", ou créez un APF vide ici.</p>`;
+  openModal('Créer un APF délégataire',body,`<button class="btn btn-ghost" onclick="closeModal()">Annuler</button><button class="btn btn-pri" onclick="creerApfDeleg('${delegId}',[])">📄 Créer APF vide</button>`);
+}
+function ouvrirCreerApfDelegSelection(delegId){
+  const checks=[...document.querySelectorAll('.deleg_chk:checked')];
+  if(!checks.length){toast('Cochez au moins un dossier','err');return;}
+  const recIds=checks.map(c=>c.dataset.rid);
+  const eur=n=>(n||0).toLocaleString('fr-FR',{maximumFractionDigits:2})+' €';
+  const tot=recIds.reduce((s,rid)=>{const r=recById(rid);return s+(r?dealOf(r).prime||0:0);},0);
+  const body=`<div class="fld"><label>Numéro d'APF fourni par le délégataire</label><input id="apf_deleg_num" placeholder="Ex : APF-DEL-2026-041" autofocus></div>
+    <div style="margin-top:.8rem;background:var(--bg-soft);border-radius:9px;padding:.7rem .9rem;font-size:.82rem">
+      <b>${recIds.length} dossier${recIds.length>1?'s':''} sélectionné${recIds.length>1?'s':''}</b> — Total prime : <b>${eur(tot)}</b>
+    </div>`;
+  openModal('Créer un APF délégataire',body,`<button class="btn btn-ghost" onclick="closeModal()">Annuler</button><button class="btn btn-pri" onclick="creerApfDeleg('${delegId}',[${recIds.map(id=>`'${id}'`).join(',')}])">📄 Créer l'APF</button>`);
+}
+function creerApfDeleg(delegId,recIds){
+  const num=(document.getElementById('apf_deleg_num')||{}).value||'';
+  if(!num.trim()){toast('Saisissez le numéro d\'APF fourni par le délégataire','err');return;}
+  const apfs=load('egncrm_apf_deleg',[]);
+  const apf={id:uid(),delegId,numApf:num.trim(),recIds,date:Date.now(),statut:'attente',user:(ME.prenom+' '+ME.nom).trim()};
+  apfs.push(apf);save('egncrm_apf_deleg',apfs);
+  closeModal();toast(`APF ${num} créé ✓`,'ok');
+  logActivity('action',`📄 APF délégataire créé : ${num} — ${recIds.length} dossier${recIds.length>1?'s':''}`);
+  renderComptaDelegataires();
+}
+async function saveApfDelegStatut(apfId,statut){
+  const apfs=load('egncrm_apf_deleg',[]);
+  const apf=apfs.find(a=>a.id===apfId);if(!apf)return;
+  apf.statut=statut;
+  if(statut==='recu'){
+    // Trouver le sous-statut administratif "Payé"
+    const sousStatuts=load('egncrm_sousstatuts',[]);
+    const payeSS=sousStatuts.find(s=>s.name&&s.name.toLowerCase().includes('pay'));
+    if(payeSS){
+      const recs=getRecs();let nb=0;
+      (apf.recIds||[]).forEach(rid=>{
+        const r=recs.find(x=>x.id===rid);if(!r)return;
+        r.sousStatutId=payeSS.id;r.updated=Date.now();
+        r.history=r.history||[];r.history.unshift({date:Date.now(),user:ME.prenom,text:`Virement délégataire reçu (APF ${apf.numApf}) → ${payeSS.name}`});
+        nb++;
+      });
+      if(nb>0){save(K.recs,recs);toast(`✅ Virement reçu — ${nb} dossier${nb>1?'s':''} passé${nb>1?'s':''} en "${payeSS.name}"`, 'ok');}
+      else toast('Statut mis à jour — aucun sous-statut "Payé" trouvé dans les paramètres','ok');
+    } else {
+      toast('Virement reçu enregistré — configurez un sous-statut "Payé" dans Paramètres ▸ Statuts pour la mise à jour automatique','ok');
+    }
+  } else {
+    toast('Statut mis à jour ✓','ok');
+  }
+  save('egncrm_apf_deleg',apfs);renderComptaDelegataires();
+}
+function supprimerApfDeleg(apfId){
+  modalConfirm('Supprimer cet APF délégataire ?','Les dossiers affiliés repasseront comme non affiliés.',()=>{
+    save('egncrm_apf_deleg',load('egncrm_apf_deleg',[]).filter(a=>a.id!==apfId));
+    closeModal();renderComptaDelegataires();toast('APF supprimé ✓','ok');
+  });
+}
 function renderComptaTvaPayer(){
   const recs=getRecs().filter(hasComptaData);
   const eur=n=>(n||0).toLocaleString('fr-FR',{maximumFractionDigits:2})+' €';
