@@ -5106,8 +5106,8 @@ function openMatModal(id){
   const opsOpts=getProducts().map(p=>`<option value="${p.id}" ${(o.operationId===p.id||(o.operation&&o.operation===p.name))?'selected':''}>${esc(p.name)}</option>`).join('');
   const typeOpts=Object.entries(STOCK_TYPES).map(([k,v])=>`<option value="${k}" ${(o.typeStock||'stock_fixe')===k?'selected':''}>${v.icon} ${v.label}</option>`).join('');
   // Champs de l'opération sélectionnée
-  const opFields=selectedOp?(selectedOp.fields||[]).filter(f=>f.type==='number'||f.type==='text'):[];
-  const fieldOpts=opFields.map(f=>`<option value="${esc(f.key)}" ${o.champDossier===f.key?'selected':''}>${esc(f.label||f.key)}</option>`).join('');
+  const opFields=selectedOp?(selectedOp.fields||[]).filter(f=>['number','select','text',''].includes(f.type||'')):[];
+  const fieldOpts=opFields.map(f=>`<option value="${esc(f.id)}" ${o.champDossier===f.id?'selected':''}>${esc(f.label||f.key||f.id)}</option>`).join('');
   // Statuts
   const statOpts=getStatuses().map(s=>`<option value="${s.id}" ${o.statutDeclencheur===s.id?'selected':''}>${esc(s.name)}</option>`).join('');
   STOCK_DRAFT=id?{...o}:{id:uid()};
@@ -5140,11 +5140,11 @@ function updateMatTypeDesc(val){const d=document.getElementById('mat_type_desc')
 function updateMatOpFields(){
   const opId=(document.getElementById('mat_op_id')||{}).value;
   const op=getProducts().find(p=>p.id===opId);
-  const fields=(op?op.fields||[]:[] ).filter(f=>f.type==='number'||f.type==='text'||!f.type);
+  const fields=(op?op.fields||[]:[]);
   const sel=document.getElementById('mat_champ');if(!sel)return;
   sel.innerHTML=fields.length
-    ?fields.map(f=>`<option value="${esc(f.key)}">${esc(f.label||f.key)}</option>`).join('')
-    :`<option value="">— Aucun champ numérique disponible —</option>`;
+    ?fields.map(f=>`<option value="${esc(f.id)}">${esc(f.label||f.key||f.id)}</option>`).join('')
+    :`<option value="">— Aucun champ disponible —</option>`;
 }
 function saveMat(){
   const id=STOCK_DRAFT.id;
@@ -5174,7 +5174,6 @@ function saveMat(){
 /* Calcule les sorties automatiques depuis les dossiers */
 function calcSortiesAuto(mat){
   if(!mat.champDossier||!mat.statutDeclencheur)return 0;
-  // Récupérer l'ordre du statut déclencheur
   const stats=getStatuses();
   const triggerStat=stats.find(s=>s.id===mat.statutDeclencheur);
   if(!triggerStat)return 0;
@@ -5185,18 +5184,22 @@ function calcSortiesAuto(mat){
     const s=stats.find(x=>x.id===r.statusId);
     return s&&(s.order??999)>=triggerOrder;
   });
-  // Sommer le champ
+  // Sommer le champ — les valeurs sont dans r.opFields[champId]
+  // mat.champDossier peut être un id ou une key, on cherche les deux
   let total=0;
   recs.forEach(r=>{
-    const op=getProducts().find(p=>p.id===r.productId);
-    const fields=op?op.fields||[]:[];
-    const field=fields.find(f=>f.key===mat.champDossier);
-    if(!field)return;
-    // Chercher la valeur dans les opFields du dossier (data jsonb)
-    const val=r.opFields?r.opFields[mat.champDossier]:null;
+    if(!r.opFields)return;
+    // Chercher directement par l'id du champ
+    let val=r.opFields[mat.champDossier];
+    // Si pas trouvé, chercher par key dans les fields de l'opération
+    if(val==null){
+      const op=getProducts().find(p=>p.id===r.productId);
+      const field=(op?op.fields||[]:[] ).find(f=>f.key===mat.champDossier||f.label===mat.champDossier);
+      if(field)val=r.opFields[field.id];
+    }
     total+=parseFloat(val)||0;
   });
-  return total;
+  return Math.round(total*100)/100;
 }
 
 function supprimerMat(id){
