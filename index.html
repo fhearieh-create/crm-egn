@@ -3099,10 +3099,12 @@ function renderComptaPaiements(){
   const tot=factures.reduce((s,f)=>s+f.total,0);
   const totPaye=factures.filter(f=>(f.paiements||{}).statut_apf==='paye').reduce((s,f)=>s+f.total,0);
   const totAttente=tot-totPaye;
+  const nbPaye=factures.filter(f=>(f.paiements||{}).statut_apf==='paye').length;
+  const nbAttente=factures.length-nbPaye;
   let h=`<div class="kpis">
     <div class="kpi"><div class="kico">💳</div><div class="klab">Total APF</div><div class="kval">${factures.length}</div><div class="ksub">${eur(tot)} engagés</div></div>
-    <div class="kpi"><div class="kico">⏳</div><div class="klab">En attente</div><div class="kval" style="color:var(--orange)">${eur(totAttente)}</div><div class="ksub">${factures.filter(f=>(f.paiements||{}).statut_apf!=='paye').length} APF</div></div>
-    <div class="kpi accent"><div class="kico">✅</div><div class="klab">Validés</div><div class="kval">${eur(totPaye)}</div><div class="ksub">${factures.filter(f=>(f.paiements||{}).statut_apf==='paye').length} APF</div></div>
+    <div class="kpi" style="border:1.5px solid rgba(230,148,57,.3)"><div class="kico">⏳</div><div class="klab">En attente de paiement</div><div class="kval" style="color:#B96A0A">${eur(totAttente)}</div><div class="ksub">${nbAttente} APF</div></div>
+    <div class="kpi accent"><div class="kico">✅</div><div class="klab">Payé</div><div class="kval">${eur(totPaye)}</div><div class="ksub">${nbPaye} APF</div></div>
   </div>`;
   // Filtres
   h+=`<div style="display:flex;gap:.5rem;flex-wrap:wrap;align-items:center;margin-bottom:.9rem">
@@ -3138,42 +3140,45 @@ function renderComptaPaiements(){
       <th>Opération(s)</th>
       <th>Dossiers</th>
       <th class="r">Montant TTC</th>
-      <th style="width:110px">Statut</th>
+      <th style="width:120px">Statut paiement</th>
       <th style="width:150px">N° facture reçue</th>
       <th style="width:110px">Pièce jointe</th>
-      <th style="width:90px">Valider</th>
+      <th style="width:110px">Actions</th>
     </tr></thead><tbody>`;
   filtered.forEach(f=>{
     const at=AGENT_TYPES[f.type||'poseur'];
     const p=f.paiements||{};
-    const locked=p.statut_apf==='paye';
-    const statColors={attente:'background:#FFF4E5;color:#B96A0A',paye:'background:#E6F7F0;color:#0F6E56'};
+    const locked=p.statut_apf==='paye'; // verrouille N° facture et PJ uniquement
     const recs=getRecs();
-    // Opérations distinctes
     const ops=[...new Set((f.lignes||[]).map(l=>{const r=recs.find(x=>x.id===l.recId);const op=r?getProducts().find(o=>o.id===r.productId):null;return op?op.name:'—';}))].join(', ');
-    const statCell=locked
-      ?`<span style="display:inline-block;border-radius:7px;padding:3px 9px;font-size:.72rem;font-weight:700;${statColors.paye}">✅ Validé</span>`
-      :`<span style="display:inline-block;border-radius:7px;padding:3px 9px;font-size:.72rem;font-weight:700;${statColors.attente}">⏳ En attente</span>`;
+    // Statut = select modifiable (pas bloqué par validate)
+    const statSel=`<select onchange="savePaiementApf('${f.id}','statut_apf',this.value)" style="font-family:'Saira',sans-serif;font-size:.75rem;font-weight:700;border:none;border-radius:7px;padding:3px 8px;cursor:pointer;${p.statut_apf==='paye'?'background:#E6F7F0;color:#0F6E56':'background:#FFF4E5;color:#B96A0A'};width:100%">
+      <option value="attente" ${p.statut_apf!=='paye'?'selected':''}>⏳ En attente</option>
+      <option value="paye" ${p.statut_apf==='paye'?'selected':''}>✅ Payé</option>
+    </select>`;
+    // N° facture — verrouillé après validate
     const facRefCell=locked
-      ?`<span style="font-size:.78rem">${p.facRef||'—'}</span>`
+      ?`<span style="font-size:.78rem;font-weight:600">${p.facRef||'—'}</span>`
       :`<input type="text" value="${esc(p.facRef||'')}" placeholder="FAC-2026-…" onchange="savePaiementApf('${f.id}','facRef',this.value)" style="font-family:'Saira',sans-serif;font-size:.78rem;border:1.5px solid var(--border-grey);border-radius:7px;padding:3px 7px;width:100%;outline:none">`;
+    // PJ — verrouillée après validate
     const pjCell=p.fileUrl
       ?`<div style="display:flex;align-items:center;gap:.3rem"><a href="${p.fileUrl}" target="_blank" style="font-size:.72rem;color:var(--blue);font-weight:600;text-decoration:none">📎 ${esc(p.fileName||'Voir')}</a>${!locked?`<button class="iconbtn del" style="font-size:.65rem;padding:1px 3px" onclick="deletePaiementApfFile('${f.id}')">✕</button>`:''}</div>`
       :locked?`<span class="muted" style="font-size:.72rem">—</span>`
       :`<label style="cursor:pointer;display:inline-flex;align-items:center;gap:.2rem;font-size:.72rem;font-weight:600;color:var(--blue)"><input type="file" accept=".pdf,image/*" style="display:none" onchange="uploadPaiementApfFile('${f.id}',this)">📎 Joindre</label>`;
-    const validateBtn=locked
-      ?`<button class="btn btn-ghost btn-sm" style="font-size:.72rem;color:var(--text-mut)" onclick="savePaiementApf('${f.id}','statut_apf','attente')">🔓 Rouvrir</button>`
-      :`<button class="btn btn-pri btn-sm" style="font-size:.72rem" onclick="savePaiementApf('${f.id}','statut_apf','paye')">✅ Valider</button>`;
+    // Bouton valider/rouvrir + supprimer
+    const actions=locked
+      ?`<div style="display:flex;flex-direction:column;gap:3px"><button class="btn btn-ghost btn-sm" style="font-size:.7rem" onclick="savePaiementApf('${f.id}','statut_apf_lock',false)">🔓 Déverrouiller</button><button class="iconbtn del" onclick="supprimerApfPaiement('${f.id}')" title="Supprimer l'APF">🗑️</button></div>`
+      :`<div style="display:flex;flex-direction:column;gap:3px"><button class="btn btn-pri btn-sm" style="font-size:.7rem" onclick="savePaiementApf('${f.id}','statut_apf_lock',true)">🔒 Verrouiller</button><button class="iconbtn del" onclick="supprimerApfPaiement('${f.id}')" title="Supprimer l'APF">🗑️</button></div>`;
     h+=`<tr style="${locked?'background:#F0FBF0':''}">
       <td><span class="dossier-tag">${esc(f.apfNum||'—')}</span></td>
       <td><div style="font-weight:700;font-size:.83rem">${at.icon} ${esc(f.poseurName)}</div><div class="muted" style="font-size:.68rem">${at.label}</div></td>
       <td class="muted" style="font-size:.75rem">${esc(ops)}</td>
       <td style="text-align:center;font-weight:700">${(f.lignes||[]).length}</td>
       <td style="text-align:right;font-weight:700">${eur(f.total)}<div class="muted" style="font-size:.62rem">HT ${eur(htOf(f.total))}</div></td>
-      <td>${statCell}</td>
+      <td>${statSel}</td>
       <td>${facRefCell}</td>
       <td>${pjCell}</td>
-      <td>${validateBtn}</td>
+      <td>${actions}</td>
     </tr>`;
   });
   h+=`</tbody></table></div>`;
@@ -3182,10 +3187,45 @@ function renderComptaPaiements(){
 }
 async function savePaiementApf(factureId,key,val){
   const f=FACTURES_CACHE&&FACTURES_CACHE.find(x=>x.id===factureId);if(!f)return;
-  f.paiements=f.paiements||{};f.paiements[key]=val;
+  f.paiements=f.paiements||{};
+  if(key==='statut_apf_lock'){
+    // Verrouillage/déverrouillage du N° facture et PJ uniquement
+    f.paiements.statut_apf=val?'paye':'attente';
+    toast(val?'N° facture verrouillé 🔒':'Déverrouillé 🔓','ok');
+  } else {
+    f.paiements[key]=val;
+    if(key==='statut_apf')toast(val==='paye'?'Marqué comme payé ✅':'Marqué en attente ⏳','ok');
+    else toast('Enregistré ✓','ok');
+  }
   await persistFacture(f);
-  toast(key==='statut_apf'?(val==='paye'?'APF validé ✅':'APF rouvert 🔓'):'Enregistré ✓','ok');
   renderComptaPaiements();
+}
+async function supprimerApfPaiement(factureId){
+  modalConfirm('Supprimer cet APF ?','Les dossiers concernés repasseront en "non facturés" et pourront être refacturés.',async()=>{
+    // Remettre les dossiers en non facturés
+    const f=FACTURES_CACHE&&FACTURES_CACHE.find(x=>x.id===factureId);
+    if(f){
+      const at=AGENT_TYPES[f.type||'poseur'];
+      const recs=getRecs();let changed=false;
+      (f.lignes||[]).forEach(l=>{
+        const r=recs.find(x=>x.id===l.recId);if(!r)return;
+        const c=comptaOf(r);
+        if(c[at.factureField]&&c[at.factureField].factureId===factureId){
+          c[at.factureField]=null;changed=true;
+        }
+      });
+      if(changed){
+        save(K.recs,recs);
+        // Persister dans Supabase pour chaque dossier modifié
+        for(const l of f.lignes||[]){await persistCompta(l.recId).catch(()=>{});}
+      }
+      await deleteFactureRemote(factureId);
+      FACTURES_CACHE=FACTURES_CACHE.filter(x=>x.id!==factureId);
+    }
+    closeModal();renderComptaPaiements();
+    toast('APF supprimé — dossiers repassés en non facturés ✓','ok');
+    logActivity('action',`🗑️ APF supprimé : ${f?f.apfNum:'?'}`);
+  });
 }
 async function uploadPaiementApfFile(factureId,input){
   const file=input.files[0];if(!file)return;
