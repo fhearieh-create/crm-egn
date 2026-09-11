@@ -3170,7 +3170,7 @@ function renderComptaPaiements(){
       ?`<div style="display:flex;flex-direction:column;gap:3px"><button class="btn btn-ghost btn-sm" style="font-size:.7rem" onclick="savePaiementApf('${f.id}','statut_apf_lock',false)">🔓 Déverrouiller</button><button class="iconbtn del" onclick="supprimerApfPaiement('${f.id}')" title="Supprimer l'APF">🗑️</button></div>`
       :`<div style="display:flex;flex-direction:column;gap:3px"><button class="btn btn-pri btn-sm" style="font-size:.7rem" onclick="savePaiementApf('${f.id}','statut_apf_lock',true)">🔒 Verrouiller</button><button class="iconbtn del" onclick="supprimerApfPaiement('${f.id}')" title="Supprimer l'APF">🗑️</button></div>`;
     h+=`<tr style="${locked?'background:#F0FBF0':''}">
-      <td><span class="dossier-tag">${esc(f.apfNum||'—')}</span></td>
+      <td><span class="dossier-tag" style="cursor:pointer" onclick="voirApfPdf('${f.id}')" title="Voir le PDF">${esc(f.apfNum||'—')} 📄</span></td>
       <td><div style="font-weight:700;font-size:.83rem">${at.icon} ${esc(f.poseurName)}</div><div class="muted" style="font-size:.68rem">${at.label}</div></td>
       <td class="muted" style="font-size:.75rem">${esc(ops)}</td>
       <td style="text-align:center;font-weight:700">${(f.lignes||[]).length}</td>
@@ -3184,6 +3184,13 @@ function renderComptaPaiements(){
   h+=`</tbody></table></div>`;
   h+=`<div style="display:flex;justify-content:flex-end;margin-top:.5rem"><button class="btn btn-navy btn-sm" onclick="exportPaiementsCSV()">📤 Exporter CSV</button></div>`;
   document.getElementById('comptaBody').innerHTML=h;
+}
+function voirApfPdf(factureId){
+  const f=FACTURES_CACHE&&FACTURES_CACHE.find(x=>x.id===factureId);
+  if(!f||!f.html){toast('PDF non disponible pour cet APF','err');return;}
+  const w=window.open('','_blank');
+  if(!w){toast('Autorisez les pop-ups pour voir le PDF','err');return;}
+  w.document.write(f.html);w.document.close();
 }
 async function savePaiementApf(factureId,key,val){
   const f=FACTURES_CACHE&&FACTURES_CACHE.find(x=>x.id===factureId);if(!f)return;
@@ -3234,13 +3241,24 @@ async function uploadPaiementApfFile(factureId,input){
   try{
     const fid=uid();const ext=file.name.split('.').pop();
     const path=`paiements/${factureId}/${fid}.${ext}`;
-    const{error}=await SUPA.storage.from(ATTACH_BUCKET).upload(path,file,{contentType:file.type});
-    if(error)throw error;
-    const{data:urlData}=await SUPA.storage.from(ATTACH_BUCKET).createSignedUrl(path,60*60*24*365*5);
+    const{error:upErr}=await SUPA.storage.from(ATTACH_BUCKET).upload(path,file,{contentType:file.type||'application/octet-stream'});
+    if(upErr)throw upErr;
+    // Essayer d'abord une URL publique, sinon signed URL
+    let fileUrl='';
+    try{
+      const{data:pub}=SUPA.storage.from(ATTACH_BUCKET).getPublicUrl(path);
+      fileUrl=pub.publicUrl;
+    }catch{
+      const{data:sig,error:sigErr}=await SUPA.storage.from(ATTACH_BUCKET).createSignedUrl(path,60*60*24*365);
+      if(sigErr)throw sigErr;
+      fileUrl=sig.signedUrl;
+    }
     const f=FACTURES_CACHE&&FACTURES_CACHE.find(x=>x.id===factureId);if(!f)return;
-    f.paiements=f.paiements||{};f.paiements.fileUrl=urlData.signedUrl;f.paiements.filePath=path;f.paiements.fileName=file.name;
-    await persistFacture(f);toast('Facture jointe ✓','ok');renderComptaPaiements();
-  }catch(e){toast('Échec : '+(e.message||e),'err');}
+    f.paiements=f.paiements||{};
+    f.paiements.fileUrl=fileUrl;f.paiements.filePath=path;f.paiements.fileName=file.name;
+    await persistFacture(f);
+    toast('Facture jointe ✓','ok');renderComptaPaiements();
+  }catch(e){console.error('[uploadPaiementApfFile]',e);toast('Échec upload : '+(e.message||e),'err');}
 }
 async function deletePaiementApfFile(factureId){
   const f=FACTURES_CACHE&&FACTURES_CACHE.find(x=>x.id===factureId);if(!f)return;
