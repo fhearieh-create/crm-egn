@@ -5289,7 +5289,7 @@ function renderStockMouvements(){
       <td>${r?`<span class="dossier-tag" style="cursor:pointer" onclick="openDossier('${r.id}')">${esc(r.dossier||'—')}</span><div class="muted" style="font-size:.7rem">${esc(clientNameOf(r))}</div>`:`<span class="muted">${esc(v.lieu||'—')}</span>`}</td>
       <td class="muted" style="font-size:.75rem">${esc(v.notes||'')}</td>
       <td>${v.factureUrl?`<a href="${v.factureUrl}" target="_blank" style="font-size:.72rem;color:var(--blue);font-weight:600;text-decoration:none">📄 ${esc(v.factureNom||'Facture')}</a>`:'<span class="muted" style="font-size:.72rem">—</span>'}</td>
-      <td><button class="iconbtn del" onclick="supprimerMvt('${v.id}')">🗑️</button></td>
+      <td><div style="display:flex;gap:.3rem"><button class="iconbtn" onclick="editMvt('${v.id}')" title="Modifier">✏️</button><button class="iconbtn del" onclick="supprimerMvt('${v.id}')">🗑️</button></div></td>
     </tr>`;
   });
   h+=`</tbody></table></div>`;
@@ -5564,12 +5564,17 @@ async function saveMvt(){
   const lieu=((document.getElementById('mvt_lieu')||{}).value||'').trim();
   const notes=((document.getElementById('mvt_notes')||{}).value||'').trim();
   const r=dossierNum?getRecs().find(x=>x.dossier===dossierNum):null;
-  const mvtId=uid();
+  const editId=((document.getElementById('mvt_edit_id')||{}).value||'').trim();
+  const mvtId=editId||uid();
   const mvts=getMvts();
-  mvts.push({id:mvtId,materielId:matId,sens,qte,date:Date.now(),
+  const newMvt={id:mvtId,materielId:matId,sens,qte,date:editId?(mvts.find(x=>x.id===editId)?.date||Date.now()):Date.now(),
     fournisseurNom:fourn,prixUnitaireHT:prixU,remise,totalHT:totalHTGlobal,tvaRecup,
     frais,totalFraisHT,
-    dossierId:r?r.id:null,lieu,notes,user:ME.prenom});
+    dossierId:r?r.id:null,lieu,notes,user:ME.prenom};
+  // Conserver factureUrl existante si pas de nouveau fichier
+  if(editId){const old=mvts.find(x=>x.id===editId);if(old){newMvt.factureUrl=old.factureUrl;newMvt.facturePath=old.facturePath;newMvt.factureNom=old.factureNom;}}
+  const idx=mvts.findIndex(x=>x.id===mvtId);
+  if(idx>=0)mvts[idx]=newMvt;else mvts.push(newMvt);
   save('egncrm_stock_mvt',mvts);
   // Upload facture si présente
   const fileInput=document.getElementById('mvt_facture_file');
@@ -5590,6 +5595,59 @@ async function saveMvt(){
     closeModal();toast('Mouvement enregistré ✓','ok');
   }
   renderStock();
+}
+function editMvt(id){
+  const v=getMvts().find(x=>x.id===id);if(!v)return;
+  // Ouvrir le modal de mouvement pré-rempli
+  const mats=getMats();
+  if(!mats.length){toast('Aucun matériel dans le catalogue','err');return;}
+  const matOpts=mats.map(m=>`<option value="${m.id}" ${v.materielId===m.id?'selected':''}>${STOCK_TYPES[m.typeStock]?.icon||''} ${esc(m.nom)}</option>`).join('');
+  const mat=mats.find(m=>m.id===v.materielId);
+  const fournOpts=(mat?mat.fournisseurs||[]:[] ).map(f=>`<option value="${esc(f.nom)}" data-prix="${f.prix||0}" ${v.fournisseurNom===f.nom?'selected':''}>${esc(f.nom)} — ${(f.prix||0).toLocaleString('fr-FR',{maximumFractionDigits:2})} €/u</option>`).join('');
+  const fraisHtml=(v.frais||[]).map(f=>`<div style="display:flex;gap:.4rem;align-items:center;margin-bottom:.35rem"><input placeholder="Nature" class="frais-label" value="${esc(f.label||'')}" style="flex:2;font-family:'Saira',sans-serif;font-size:.82rem;border:1px solid var(--border-grey);border-radius:7px;padding:.3rem .6rem"><input type="number" placeholder="Montant HT" class="frais-ht" value="${f.ht||''}" step="any" oninput="updateMvtCalc()" style="width:120px;font-family:'Saira',sans-serif;font-size:.82rem;border:1px solid var(--border-grey);border-radius:7px;padding:.3rem .6rem"><span class="muted" style="font-size:.72rem;white-space:nowrap">€ HT</span><button onclick="this.parentElement.remove();updateMvtCalc()" style="background:none;border:none;cursor:pointer;color:var(--coral);font-size:1rem">✕</button></div>`).join('');
+  const r=v.dossierId?recById(v.dossierId):null;
+  const isEntree=['entree','reception','commande'].includes(v.sens);
+  const body=`<input type="hidden" id="mvt_edit_id" value="${v.id}">
+  <div class="fgrid">
+    <div class="fld"><label>Matériel</label><select id="mvt_mat" onchange="updateMvtSens();updateMvtFourns()">${matOpts}</select></div>
+    <div class="fld"><label>Type de mouvement</label><select id="mvt_sens" onchange="updateMvtSensFields()">
+      <option value="entree" ${v.sens==='entree'?'selected':''}>📥 Entrée (achat)</option>
+      <option value="sortie" ${v.sens==='sortie'?'selected':''}>📤 Sortie manuelle</option>
+      <option value="commande" ${v.sens==='commande'?'selected':''}>🛒 Commande passée</option>
+      <option value="reception" ${v.sens==='reception'?'selected':''}>✅ Commande reçue</option>
+      <option value="localisation" ${v.sens==='localisation'?'selected':''}>📍 Localisation</option>
+    </select></div>
+    <div id="mvt_fourn_block" class="fld" style="grid-column:1/-1;${isEntree?'':'display:none'}"><label>Fournisseur</label>
+      <select id="mvt_fourn" onchange="updateMvtPrixFromFourn()" style="font-family:'Saira',sans-serif;font-size:.85rem;border:1.5px solid var(--border-grey);border-radius:9px;padding:.5rem .8rem">
+        <option value="">— Choisir —</option>${fournOpts}
+      </select>
+    </div>
+    <div id="mvt_prix_block" class="fld" style="${isEntree?'':'display:none'}"><label>Prix unitaire HT (€)</label><input id="mvt_prix_u" type="number" step="any" value="${v.prixUnitaireHT||''}" oninput="updateMvtCalc()"></div>
+    <div class="fld"><label>Quantité</label><input id="mvt_qte" type="number" min="1" value="${v.qte||1}" oninput="updateMvtCalc()"></div>
+    <div id="mvt_remise_block" class="fld" style="${isEntree?'':'display:none'}"><label>Remise (€ HT)</label><input id="mvt_remise" type="number" step="any" value="${v.remise||''}" placeholder="0" oninput="updateMvtCalc()"></div>
+    <div id="mvt_tot_block" class="fld" style="${isEntree?'':'display:none'}"><label>Total HT (après remise)</label><div id="mvt_tot" style="font-size:1rem;font-weight:800;padding:.5rem .8rem;background:var(--bg-soft);border-radius:9px">—</div></div>
+    <div id="mvt_tva_block" class="fld" style="display:none"></div>
+    <div id="mvt_frais_block" style="grid-column:1/-1;${isEntree?'':'display:none'}">
+      <div class="sectitle" style="margin-top:.3rem">Frais externes</div>
+      <div id="mvt_frais_list">${fraisHtml}</div>
+      <button class="btn btn-ghost btn-sm" style="margin-top:.3rem" onclick="addFraisRow()">+ Ajouter un frais</button>
+      <div style="display:flex;gap:.8rem;margin-top:.6rem;padding:.5rem .8rem;background:var(--bg-soft);border-radius:9px">
+        <div style="flex:1"><span class="muted" style="font-size:.72rem">Total frais HT</span><div id="mvt_frais_tot" style="font-weight:800">—</div></div>
+        <div style="flex:1"><span class="muted" style="font-size:.72rem">Total HT global</span><div id="mvt_total_global" style="font-weight:800;font-size:1.05rem;color:var(--green-deep)">—</div></div>
+        <div style="flex:1"><span class="muted" style="font-size:.72rem">TVA récupérable (${tvaRate()}%)</span><div id="mvt_tva" style="font-weight:800;color:var(--blue)">—</div></div>
+      </div>
+    </div>
+    <div class="fld"><label>Dossier lié</label><input id="mvt_dossier" value="${r?esc(r.dossier||''):''}"></div>
+    <div id="mvt_lieu_block" class="fld" style="${v.sens==='localisation'?'':'display:none'}"><label>Localisation / Lieu</label><input id="mvt_lieu" value="${esc(v.lieu||'')}"></div>
+    <div class="fld" style="grid-column:1/-1"><label>Notes</label><input id="mvt_notes" value="${esc(v.notes||'')}"></div>
+    <div id="mvt_facture_block" class="fld" style="grid-column:1/-1;${isEntree?'':'display:none'}"><label>📄 Facture fournisseur</label>
+      <div style="font-size:.82rem;margin-bottom:.3rem">${v.factureUrl?`<a href="${v.factureUrl}" target="_blank" style="color:var(--blue);font-weight:600;text-decoration:none">📄 ${esc(v.factureNom||'Voir la facture')}</a> <span class="muted">— remplacer :</span>`:'Aucune facture jointe'}</div>
+      <input type="file" id="mvt_facture_file" accept=".pdf,image/*" style="font-size:.8rem">
+    </div>
+  </div>`;
+  openModal('Modifier le mouvement',body,
+    `<button class="btn btn-ghost" onclick="closeModal()">Annuler</button><button class="btn btn-pri" onclick="saveMvt()">💾 Enregistrer</button>`,'wide');
+  setTimeout(()=>updateMvtCalc(),100);
 }
 function supprimerMvt(id){
   save('egncrm_stock_mvt',getMvts().filter(v=>v.id!==id));
