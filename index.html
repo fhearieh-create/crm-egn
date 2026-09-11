@@ -747,7 +747,7 @@ let ME=null;
 let COMPTA_CACHE={},FACTURES_CACHE=null;
 function rowToCompta(row){
   if(!row)return{devisTTC:0,poseurUserId:'',jours:0,nbRdv:0,vtSubId:'',auditSubId:'',produits:[],fauxFrais:[],facturePoseur:null,factureCallCenter:null,factureVt:null,factureAudit:null,overrides:{}};
-  return{devisTTC:row.devis_ttc||0,poseurUserId:row.poseur_user_id||'',jours:row.jours||0,nbRdv:row.nb_rdv||0,vtSubId:row.vt_sub_id||'',auditSubId:row.audit_sub_id||'',produits:row.produits||[],fauxFrais:row.faux_frais||[],facturePoseur:row.facture_poseur||null,factureCallCenter:row.facture_callcenter||null,factureVt:row.facture_vt||null,factureAudit:row.facture_audit||null,overrides:row.overrides||{}};
+  return{devisTTC:row.devis_ttc||0,poseurUserId:row.poseur_user_id||'',jours:row.jours||0,nbRdv:row.nb_rdv||0,vtSubId:row.vt_sub_id||'',auditSubId:row.audit_sub_id||'',produits:row.produits||[],fauxFrais:row.faux_frais||[],facturePoseur:row.facture_poseur||null,factureCallCenter:row.facture_callcenter||null,factureVt:row.facture_vt||null,factureAudit:row.facture_audit||null,overrides:row.overrides||{},tvaModes:row.tva_modes||{}};
 }
 async function loadComptaFor(recId){
   if(COMPTA_CACHE[recId])return COMPTA_CACHE[recId];
@@ -774,6 +774,7 @@ async function persistCompta(recId){
       vt_sub_id:c.vtSubId||null,audit_sub_id:c.auditSubId||null,
       produits:c.produits||[],faux_frais:c.fauxFrais||[],facture_poseur:c.facturePoseur,facture_callcenter:c.factureCallCenter,
       facture_vt:c.factureVt,facture_audit:c.factureAudit,overrides:c.overrides||{},
+      tva_modes:c.tvaModes||{},
       updated_at:new Date().toISOString(),updated_by:ME?ME.id:null
     });
   }catch(e){console.error('[compta] sauvegarde échouée',e);toast('⚠️ Sauvegarde Supabase échouée : '+e.message,'err');}
@@ -2700,16 +2701,17 @@ function ovLine(r,key,label,autoMontant,c){
   // Toggle HT/TTC
   const tvaMode=effectiveTvaMode(r,key);
   const tl=tvaLine(r,key,montant);
-  const nextMode=tvaMode==='ttc'?'ht':tvaMode==='ht'?'sans_tva':'ttc';
-  const tvaBadgeLabel=tvaMode==='ht'?'HT ✓':tvaMode==='sans_tva'?'Sans TVA':' TTC';
-  const tvaBadgeColor=tvaMode==='ht'?'background:#EAF3DE;color:#3D7A1E;border-color:#7CC242':tvaMode==='sans_tva'?'background:#EFE9FC;color:#5B3AAA;border-color:#9B72E8':'background:#EEF0F2;color:#6b7785;border-color:#d8dde0';
-  const tvaBadge=`<button onclick="saveTvaMode('${r.id}','${key}','${nextMode}')" style="font-size:.62rem;font-weight:700;border:1px solid;border-radius:5px;padding:1px 6px;margin-left:4px;cursor:pointer;${tvaBadgeColor}" title="Cliquer pour changer (TTC → HT → Sans TVA)">${tvaBadgeLabel}</button>`;
+  const tvaSel=`<select onchange="saveTvaMode('${r.id}','${key}',this.value)" style="font-family:'Saira',sans-serif;font-size:.68rem;font-weight:700;border:1px solid var(--border-grey);border-radius:5px;padding:1px 5px;margin-left:4px;cursor:pointer;background:#fff">
+    <option value="ttc" ${tvaMode==='ttc'?'selected':''}>TTC</option>
+    <option value="ht" ${tvaMode==='ht'?'selected':''}>HT</option>
+    <option value="sans_tva" ${tvaMode==='sans_tva'?'selected':''}>Sans TVA</option>
+  </select>`;
   const tvaInfo=tvaMode==='ht'
     ?`<span class="muted" style="font-size:.6rem;display:block;text-align:right">Payé HT : ${eur(tl.paye)} · TVA récup. : ${eur(tl.tvaRecup)}</span>`
     :tvaMode==='sans_tva'
     ?`<span class="muted" style="font-size:.6rem;display:block;text-align:right">Sans TVA (autoentrepreneur)</span>`
     :`<span class="muted" style="font-size:.6rem;display:block;text-align:right">HT ${eur(htOf(montant))} · TVA ${eur(tvaOf(montant))}</span>`;
-  return `<span class="il" style="display:flex;align-items:center;flex-wrap:wrap;gap:.2rem;min-width:0">${label}${badge}${editBtn}${tvaBadge}</span><span class="iv" style="flex-shrink:0">${eur(montant)}${tvaInfo}</span>`;
+  return `<span class="il" style="display:flex;align-items:center;flex-wrap:wrap;gap:.2rem;min-width:0">${label}${badge}${editBtn}${tvaSel}</span><span class="iv" style="flex-shrink:0">${eur(montant)}${tvaInfo}</span>`;
 }
 function openOverrideCompta(recId,key,autoMontant){
   const r=recById(recId);if(!r)return;
