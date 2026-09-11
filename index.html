@@ -5274,7 +5274,7 @@ function renderStockMouvements(){
   </div>`;
   if(!mvts.length){h+=`<div class="empty"><div class="big">📋</div>Aucun mouvement enregistré.</div>`;document.getElementById('stockBody').innerHTML=h;return;}
   h+=`<div class="tbl-wrap"><table class="tbl">
-    <thead><tr><th>Date</th><th>Matériel</th><th>Type</th><th>Fournisseur</th><th class="r">Qté</th><th class="r">Total HT</th><th class="r">TVA récup.</th><th>Dossier</th><th>Notes</th><th></th></tr></thead><tbody>`;
+    <thead><tr><th>Date</th><th>Matériel</th><th>Type</th><th>Fournisseur</th><th class="r">Qté</th><th class="r">Total HT</th><th class="r">TVA récup.</th><th>Dossier</th><th>Notes</th><th>Facture</th><th></th></tr></thead><tbody>`;
   mvts.forEach(v=>{
     const mat=mats.find(m=>m.id===v.materielId);
     const r=v.dossierId?recById(v.dossierId):null;
@@ -5284,10 +5284,11 @@ function renderStockMouvements(){
       <td><span style="border-radius:6px;padding:2px 8px;font-size:.7rem;font-weight:700;${sensBg[v.sens]||''}">${sensLabels[v.sens]||v.sens}</span></td>
       <td>${v.fournisseurNom?`<span style="font-size:.75rem;font-weight:700;color:var(--purple)">${esc(v.fournisseurNom)}</span>`:'<span class="muted">—</span>'}</td>
       <td style="text-align:right;font-weight:700">${v.qte||'—'} ${mat?esc(mat.unite||''):''}</td>
-      <td style="text-align:right">${v.totalHT?eur(v.totalHT)+'<div class="muted" style="font-size:.65rem">'+eur((v.prixUnitaireHT||0))+'/u</div>':'<span class="muted">—</span>'}</td>
+      <td style="text-align:right">${v.totalHT?eur(v.totalHT)+(v.remise?`<div style="font-size:.65rem;color:var(--coral)">-${eur(v.remise)} remise</div>`:'')+(v.totalFraisHT?`<div class="muted" style="font-size:.65rem">dont ${eur(v.totalFraisHT)} frais</div>`:'')+`<div class="muted" style="font-size:.65rem">${eur(v.prixUnitaireHT||0)}/u</div>`:'<span class="muted">—</span>'}</td>
       <td style="text-align:right;font-weight:700;color:var(--green-deep)">${v.tvaRecup?eur(v.tvaRecup):'<span class="muted">—</span>'}</td>
       <td>${r?`<span class="dossier-tag" style="cursor:pointer" onclick="openDossier('${r.id}')">${esc(r.dossier||'—')}</span><div class="muted" style="font-size:.7rem">${esc(clientNameOf(r))}</div>`:`<span class="muted">${esc(v.lieu||'—')}</span>`}</td>
       <td class="muted" style="font-size:.75rem">${esc(v.notes||'')}</td>
+      <td>${v.factureUrl?`<a href="${v.factureUrl}" target="_blank" style="font-size:.72rem;color:var(--blue);font-weight:600;text-decoration:none">📄 ${esc(v.factureNom||'Facture')}</a>`:'<span class="muted" style="font-size:.72rem">—</span>'}</td>
       <td><button class="iconbtn del" onclick="supprimerMvt('${v.id}')">🗑️</button></td>
     </tr>`;
   });
@@ -5459,7 +5460,8 @@ function openMvtModal(dossierId,preMatId){
     </div>
     <div id="mvt_prix_block" class="fld"><label>Prix unitaire HT (€)</label><input id="mvt_prix_u" type="number" step="any" placeholder="0" oninput="updateMvtCalc()"></div>
     <div class="fld"><label>Quantité</label><input id="mvt_qte" type="number" min="1" value="1" oninput="updateMvtCalc()"></div>
-    <div id="mvt_tot_block" class="fld"><label>Total HT marchandise</label><div id="mvt_tot" style="font-size:1rem;font-weight:800;padding:.5rem .8rem;background:var(--bg-soft);border-radius:9px">—</div></div>
+    <div id="mvt_remise_block" class="fld"><label>Remise (€ HT) <span class="muted" style="font-size:.62rem">facultatif</span></label><input id="mvt_remise" type="number" step="any" placeholder="0" oninput="updateMvtCalc()"></div>
+    <div id="mvt_tot_block" class="fld"><label>Total HT marchandise (après remise)</label><div id="mvt_tot" style="font-size:1rem;font-weight:800;padding:.5rem .8rem;background:var(--bg-soft);border-radius:9px">—</div></div>
     <div id="mvt_tva_block" class="fld" style="display:none"></div>
     <div id="mvt_frais_block" style="grid-column:1/-1;display:none">
       <div class="sectitle" style="margin-top:.3rem">Frais externes (transport, livraison, manutention…)</div>
@@ -5474,6 +5476,10 @@ function openMvtModal(dossierId,preMatId){
     <div class="fld"><label>Dossier lié</label><input id="mvt_dossier" value="${r?esc(r.dossier||''):''}"></div>
     <div id="mvt_lieu_block" class="fld" style="display:none"><label>Localisation / Lieu</label><input id="mvt_lieu" placeholder="Chez quel client ou dépôt ?"></div>
     <div class="fld" style="grid-column:1/-1"><label>Notes</label><input id="mvt_notes"></div>
+    <div id="mvt_facture_block" class="fld" style="grid-column:1/-1"><label>📄 Facture fournisseur (PDF / image)</label>
+      <div id="mvt_facture_preview" style="font-size:.82rem;color:var(--text-mut);padding:.3rem 0">Aucune facture jointe — sera uploadée après enregistrement</div>
+      <input type="file" id="mvt_facture_file" accept=".pdf,image/*" style="margin-top:.3rem;font-size:.8rem">
+    </div>
   </div>`;
   openModal('Nouveau mouvement de stock',body,
     `<button class="btn btn-ghost" onclick="closeModal()">Annuler</button><button class="btn btn-pri" onclick="saveMvt()">💾 Enregistrer</button>`,'wide');
@@ -5509,7 +5515,7 @@ function updateMvtSensFields(){
   const sens=(document.getElementById('mvt_sens')||{}).value;
   const isEntree=['entree','reception','commande'].includes(sens);
   const isLoc=sens==='localisation';
-  ['mvt_fourn_block','mvt_prix_block','mvt_tot_block','mvt_tva_block','mvt_frais_block'].forEach(id=>{const el=document.getElementById(id);if(el)el.style.display=isEntree?'':'none';});
+  ['mvt_fourn_block','mvt_prix_block','mvt_remise_block','mvt_tot_block','mvt_tva_block','mvt_frais_block','mvt_facture_block'].forEach(id=>{const el=document.getElementById(id);if(el)el.style.display=isEntree?'':'none'});
   const lieu=document.getElementById('mvt_lieu_block');if(lieu)lieu.style.display=isLoc?'':'none';
 }
 function addFraisRow(){
@@ -5525,9 +5531,11 @@ function addFraisRow(){
 function updateMvtCalc(){
   const qte=parseInt((document.getElementById('mvt_qte')||{}).value||1)||1;
   const pu=parseFloat((document.getElementById('mvt_prix_u')||{}).value||0)||0;
-  const tot=qte*pu;
+  const remise=parseFloat((document.getElementById('mvt_remise')||{}).value||0)||0;
+  const tot=Math.max(0,qte*pu-remise);
   const eur=n=>n.toLocaleString('fr-FR',{minimumFractionDigits:2,maximumFractionDigits:2})+' €';
-  const totEl=document.getElementById('mvt_tot');if(totEl)totEl.textContent=pu?eur(tot):'—';
+  const totEl=document.getElementById('mvt_tot');
+  if(totEl)totEl.innerHTML=pu?eur(tot)+(remise>0?` <span style="font-size:.7rem;color:var(--coral)">(-${eur(remise)} remise)</span>`:''):'—';
   // Frais externes
   const fraisRows=[...document.querySelectorAll('.frais-ht')];
   const totalFraisHT=fraisRows.reduce((s,el)=>s+(parseFloat(el.value)||0),0);
@@ -5542,9 +5550,10 @@ async function saveMvt(){
   const sens=(document.getElementById('mvt_sens')||{}).value;
   const qte=parseInt((document.getElementById('mvt_qte')||{}).value||1)||1;
   const prixU=parseFloat((document.getElementById('mvt_prix_u')||{}).value||0)||0;
+  const remise=parseFloat((document.getElementById('mvt_remise')||{}).value||0)||0;
   const fourn=(document.getElementById('mvt_fourn')||{}).value||'';
-  const totalHT=qte*prixU;
-  // Frais externes — calculés avant tvaRecup
+  const totalHT=Math.max(0,qte*prixU-remise);
+  // Frais externes
   const fraisRows=[...document.querySelectorAll('.frais-ht')];
   const fraisLabels=[...document.querySelectorAll('.frais-label')];
   const frais=fraisRows.map((el,i)=>({label:(fraisLabels[i]||{}).value||'Frais',ht:parseFloat(el.value)||0})).filter(f=>f.ht>0);
@@ -5555,13 +5564,32 @@ async function saveMvt(){
   const lieu=((document.getElementById('mvt_lieu')||{}).value||'').trim();
   const notes=((document.getElementById('mvt_notes')||{}).value||'').trim();
   const r=dossierNum?getRecs().find(x=>x.dossier===dossierNum):null;
+  const mvtId=uid();
   const mvts=getMvts();
-  mvts.push({id:uid(),materielId:matId,sens,qte,date:Date.now(),
-    fournisseurNom:fourn,prixUnitaireHT:prixU,totalHT:totalHTGlobal,tvaRecup,
+  mvts.push({id:mvtId,materielId:matId,sens,qte,date:Date.now(),
+    fournisseurNom:fourn,prixUnitaireHT:prixU,remise,totalHT:totalHTGlobal,tvaRecup,
     frais,totalFraisHT,
     dossierId:r?r.id:null,lieu,notes,user:ME.prenom});
   save('egncrm_stock_mvt',mvts);
-  closeModal();renderStock();toast('Mouvement enregistré ✓','ok');
+  // Upload facture si présente
+  const fileInput=document.getElementById('mvt_facture_file');
+  if(fileInput&&fileInput.files[0]){
+    closeModal();toast('Enregistrement + upload de la facture…','ok');
+    try{
+      const file=fileInput.files[0];
+      const ext=file.name.split('.').pop();
+      const path=`stock_factures/${mvtId}.${ext}`;
+      const{error}=await SUPA.storage.from('attachments').upload(path,file,{cacheControl:'3600',upsert:false});
+      if(error)throw error;
+      const{data:pub}=SUPA.storage.from('attachments').getPublicUrl(path);
+      const idx=getMvts().findIndex(v=>v.id===mvtId);
+      if(idx>=0){const mvts2=getMvts();mvts2[idx].factureUrl=pub.publicUrl;mvts2[idx].facturePath=path;mvts2[idx].factureNom=file.name;save('egncrm_stock_mvt',mvts2);}
+      toast('Facture jointe ✓','ok');
+    }catch(e){toast('Mouvement enregistré mais facture non uploadée : '+(e.message||e),'err');}
+  } else {
+    closeModal();toast('Mouvement enregistré ✓','ok');
+  }
+  renderStock();
 }
 function supprimerMvt(id){
   save('egncrm_stock_mvt',getMvts().filter(v=>v.id!==id));
