@@ -2510,6 +2510,14 @@ function renderComptaPanel(r){
   const aPayerVt=vtAnnule?0:vtC.montant;
   const aPayerAudit=audAnnule?0:auditC.montant;
   const eur=n=>(n||0).toLocaleString('fr-FR',{maximumFractionDigits:2})+' €';
+  const tvaModePoseur=effectiveTvaMode(r,'poseur');
+  const tvaModeCC=effectiveTvaMode(r,'callcenter');
+  const tvaModeLine=(key,n)=>{
+    const mode=effectiveTvaMode(r,key);
+    if(mode==='sans_tva')return eur(n)+`<span style="display:block;font-size:.64rem;font-weight:500;color:#5B3AAA">Sans TVA (autoentrepreneur)</span>`;
+    if(mode==='ht')return eur(n)+`<span style="display:block;font-size:.64rem;font-weight:500;color:var(--text-mut)">HT (payé HT) · TVA récup. ${eur(tvaOf(n*(1+tvaRate()/100)))}</span>`;
+    return eur(n)+htSub(n);
+  };
   const ttcHt=n=>eur(n)+htSub(n);
   let ffRows=ff.length?ff.map(x=>`<div class="cfg-item"><span class="nm">${esc(x.label)}</span><span class="tag" style="background:${x.origin==='poseur'?'rgba(230,148,57,.15);color:#B96A0A':'rgba(90,110,130,.12);color:#5A6E82'}">${x.origin==='poseur'?'🔧 Poseur':'🏢 Société'}</span><span class="tag" style="background:rgba(230,57,70,.1);color:#E63946">${eur(x.amount)} <span style="font-size:.62rem;font-weight:500">· HT ${eur(htOf(x.amount))}</span></span><span class="sp"><button class="iconbtn del" onclick="delFauxFrais('${r.id}','${x.id}')">🗑️</button></span></div>`).join(''):`<div class="muted" style="font-size:.82rem;padding:.4rem 0">Aucun faux frais.</div>`;
   let prRows=prC.lignes.length?prC.lignes.map(l=>`<div class="cfg-item"><span class="nm">${l.calc.qty}× ${esc(l.calc.label)}</span><span class="tag" style="background:#eef0f2;color:#6b7785">${l.calc.mode==='m2'?'au m²':'à la pièce'}</span><span class="tag" style="background:rgba(45,125,210,.12);color:#2D7DD2">${eur(l.calc.montant)} <span style="font-size:.62rem;font-weight:500">· HT ${eur(htOf(l.calc.montant))}</span></span><span class="sp"><button class="iconbtn del" onclick="delProduitLigne('${r.id}','${l.id}')">🗑️</button></span></div>`).join(''):`<div class="muted" style="font-size:.82rem;padding:.4rem 0">Aucun produit ajouté.</div>`;
@@ -2569,9 +2577,9 @@ function renderComptaPanel(r){
       <div class="info-row"><span class="il">Faux frais — Poseur</span><span class="iv">${ttcHt(ffPoseur)}</span></div>
       <div class="info-row" style="font-weight:700"><span class="il">Charges totales</span><span class="iv" style="font-weight:700">${ttcHt(charges)}</span></div>
       <div class="info-row" style="margin-top:.4rem;border-top:1.5px solid var(--border-soft);padding-top:.5rem"><span class="il" style="font-weight:800">Marge nette</span><span class="iv" style="font-weight:800;color:${marge>=0?'var(--green-deep)':'#E63946'}">${eur(marge)}${recettes>0?' ('+margePct.toFixed(1)+'%)':''}${htSub(marge)}</span></div>
-      <div class="info-row" style="margin-top:.3rem"><span class="il" style="font-weight:800;color:#B96A0A">💰 Total à verser au poseur${poseurAnnule?' (annulé)':''}</span><span class="iv" style="font-weight:800;color:${poseurAnnule?'var(--text-mut)':'#B96A0A'}">${ttcHt(aPayerPoseur)}</span></div>
+      <div class="info-row" style="margin-top:.3rem"><span class="il" style="font-weight:800;color:#B96A0A">💰 Total à verser au poseur${poseurAnnule?' (annulé)':''}</span><span class="iv" style="font-weight:800;color:${poseurAnnule?'var(--text-mut)':'#B96A0A'}">${tvaModeLine('poseur',aPayerPoseur)}</span></div>
       ${ffPoseur&&!poseurAnnule?`<p class="muted" style="font-size:.7rem;margin-top:.2rem">Inclut le tarif de base (${eur(pc.montant)}) + ${eur(ffPoseur)} de faux frais qui lui sont imputables.</p>`:''}
-      <div class="info-row" style="margin-top:.3rem"><span class="il" style="font-weight:800;color:#2D7DD2">📞 Total à verser au call center${ccAnnule?' (annulé)':''}</span><span class="iv" style="font-weight:800;color:${ccAnnule?'var(--text-mut)':'#2D7DD2'}">${ttcHt(aPayerCallCenter)}</span></div>
+      <div class="info-row" style="margin-top:.3rem"><span class="il" style="font-weight:800;color:#2D7DD2">📞 Total à verser au call center${ccAnnule?' (annulé)':''}</span><span class="iv" style="font-weight:800;color:${ccAnnule?'var(--text-mut)':'#2D7DD2'}">${tvaModeLine('callcenter',aPayerCallCenter)}</span></div>
       <div class="info-row" style="margin-top:.3rem"><span class="il" style="font-weight:800;color:#3D9970">🧰 Total à verser au VT${vtAnnule?' (annulé)':''}</span><span class="iv" style="font-weight:800;color:${vtAnnule?'var(--text-mut)':'#3D9970'}">${ttcHt(aPayerVt)}</span></div>
       <div class="info-row" style="margin-top:.3rem"><span class="il" style="font-weight:800;color:#8E44AD">📝 Total à verser à l'auditeur${audAnnule?' (annulé)':''}</span><span class="iv" style="font-weight:800;color:${audAnnule?'var(--text-mut)':'#8E44AD'}">${ttcHt(aPayerAudit)}</span></div>
       <div style="margin-top:.4rem;display:flex;gap:.4rem;flex-wrap:wrap;align-items:center">${factureStatutBadge(r,'callcenter')}${c.factureCallCenter?statutComptaSelect(r,'callcenter'):''}</div>
@@ -3036,6 +3044,9 @@ async function genererFactureAgent(){
   const checks=[...document.querySelectorAll('.fact_chk')].filter(c=>c.checked);
   if(!checks.length){toast('Sélectionnez au moins un dossier','err');return;}
   const agent=at.getAgent(agentId);const agentName=at.agentName(agent);const s=getSettings();
+  // Charger la compta de tous les dossiers sélectionnés avant de lire les modes TVA
+  toast('Préparation…','ok');
+  await Promise.all(checks.map(c=>loadComptaFor(c.dataset.rid)));
   const apfNum=await nextApfNum();
   const lignes=checks.map(c=>{
     const r=recById(c.dataset.rid);
