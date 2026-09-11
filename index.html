@@ -3466,19 +3466,29 @@ function renderComptaTvaPayer(){
   const recs=getRecs().filter(hasComptaData);
   const eur=n=>(n||0).toLocaleString('fr-FR',{maximumFractionDigits:2})+' €';
   const tva=tvaRate();
+  // Construire l'index des dossiers dont le virement délégataire est reçu
+  const apfsDeleg=load('egncrm_apf_deleg',[]);
+  const recIdsVirementRecu=new Set(
+    apfsDeleg.filter(a=>a.statut==='recu').flatMap(a=>a.recIds||[])
+  );
   let totTTC=0,totHT=0,totTVA=0;
   const rows=recs.map(r=>{
     const prime=dealOf(r).prime||0;
+    const deal=dealOf(r);
+    // Inclure seulement si virement délégataire reçu (ou pas de délégataire)
+    const hasDelegataire=!!deal.delegataireId;
+    const virementRecu=recIdsVirementRecu.has(r.id);
+    if(hasDelegataire&&!virementRecu)return null;
     const ht=htOf(prime);const tvaM=tvaOf(prime);
     totTTC+=prime;totHT+=ht;totTVA+=tvaM;
     const op=getProducts().find(o=>o.id===r.productId);
-    return{r,prime,ht,tvaM,op};
-  }).filter(x=>x.prime>0).sort((a,b)=>(b.r.updated||0)-(a.r.updated||0));
+    return{r,prime,ht,tvaM,op,hasDelegataire,virementRecu};
+  }).filter(x=>x&&x.prime>0).sort((a,b)=>(b.r.updated||0)-(a.r.updated||0));
   // Versements déjà effectués
   const tvaSettings=load('egncrm_tva_settings',{});
   const dejaVerse=parseFloat(tvaSettings.tva_payer_verse||0)||0;
   const solde=totTVA-dejaVerse;
-  let h=`<p class="muted" style="font-size:.72rem;margin-bottom:.8rem">🏛️ TVA collectée sur les recettes (prime CEE) au taux de <b>${tva}%</b>. Ces montants sont à reverser à l'administration fiscale.</p>`;
+  let h=`<p class="muted" style="font-size:.72rem;margin-bottom:.8rem">🏛️ TVA collectée sur les primes CEE au taux de <b>${tva}%</b>. Pour les dossiers avec délégataire, seuls les virements <b>reçus</b> sont comptabilisés.</p>`;
   h+=`<div class="kpis">
     <div class="kpi"><div class="kico">💶</div><div class="klab">Recettes TTC totales</div><div class="kval">${eur(totTTC)}</div><div class="ksub">${rows.length} dossier${rows.length>1?'s':''}</div></div>
     <div class="kpi"><div class="kico">📊</div><div class="klab">Base HT</div><div class="kval">${eur(totHT)}</div><div class="ksub">Taux ${tva}%</div></div>
@@ -3502,11 +3512,14 @@ function renderComptaTvaPayer(){
       <thead><tr><th>N° Dossier</th><th>Client</th><th>Opération</th><th>Délégataire</th><th class="r">Prime TTC</th><th class="r">Base HT</th><th class="r" style="color:var(--coral)">TVA collectée</th></tr></thead><tbody>`;
     rows.forEach(({r,prime,ht,tvaM,op})=>{
       const deal=dealOf(r);
+      const delegBadge=deal.delegataireId
+        ?`<span style="font-size:.68rem;background:#E6F7F0;color:#0F6E56;border-radius:5px;padding:1px 6px">✅ Virement reçu</span>`
+        :`<span class="muted" style="font-size:.72rem">—</span>`;
       h+=`<tr>
         <td><span class="dossier-tag" style="cursor:pointer" onclick="openDossier('${r.id}')">${esc(r.dossier||'—')}</span></td>
         <td>${esc(clientNameOf(r))}</td>
         <td class="muted">${op?esc(op.name):'—'}</td>
-        <td class="muted">${esc(deal.delegataireName||'—')}</td>
+        <td>${esc(deal.delegataireName||'—')} ${delegBadge}</td>
         <td style="text-align:right;font-weight:700">${eur(prime)}</td>
         <td style="text-align:right">${eur(ht)}</td>
         <td style="text-align:right;font-weight:700;color:var(--coral)">${eur(tvaM)}</td>
