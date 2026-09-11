@@ -5427,8 +5427,10 @@ function saveMat(){
   closeModal();renderStock();toast('Matériel enregistré ✓','ok');
 }
 function supprimerMat(id){
-  modalConfirm('Supprimer ce matériel ?','Les mouvements associés ne seront pas supprimés.',()=>{
+  modalConfirm('Supprimer ce matériel ?','Les mouvements associés ne seront pas supprimés.',async()=>{
     save('egncrm_materiels',getMats().filter(m=>m.id!==id));
+    // Supprimer aussi dans Supabase
+    try{await SUPA.from('cfg_materiels').delete().eq('id',id);}catch(e){console.warn('[supprimerMat Supabase]',e);}
     closeModal();renderStock();toast('Matériel supprimé ✓','ok');
   });
 }
