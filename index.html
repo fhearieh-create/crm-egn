@@ -5226,22 +5226,17 @@ function saveMat(){
 
 /* Calcule les sorties automatiques depuis les dossiers */
 function calcSortiesAuto(mat){
-  if(!mat.champDossier||!mat.statutDeclencheur)return 0;
-  const stats=getStatuses();
+  const champs=[].concat(mat.champsDossier||mat.champDossier||[]).filter(Boolean);
   const triggerIds=[].concat(mat.statutsDeclencheur||mat.statutDeclencheur||[]).filter(Boolean);
-  if(!triggerIds.length)return 0;
-  // Ordre minimum parmi les statuts déclencheurs
+  if(!champs.length||!triggerIds.length)return 0;
+  const stats=getStatuses();
   const triggerOrders=triggerIds.map(id=>{const s=stats.find(x=>x.id===id);return s?s.order??999:999;});
   const minOrder=Math.min(...triggerOrders);
-  // Dossiers de l'opération concernée ayant atteint ou dépassé un des statuts déclencheurs
   const recs=getRecs().filter(r=>{
     if(mat.operationId&&r.productId!==mat.operationId)return false;
     const s=stats.find(x=>x.id===r.statusId);
     return s&&(s.order??999)>=minOrder;
   });
-  // Sommer tous les champs configurés (champsDossier = tableau, rétrocompat champDossier)
-  const champs=[].concat(mat.champsDossier||mat.champDossier||[]).filter(Boolean);
-  if(!champs.length)return 0;
   let total=0;
   recs.forEach(r=>{
     if(!r.opFields)return;
