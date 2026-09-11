@@ -487,6 +487,8 @@ const SYNC_TABLES=[
   {key:'egncrm_coefsu',table:'cfg_uvalues',shape:'blob'},
   {key:'egncrm_pac',table:'cfg_pac',shape:'blob'},
   {key:'egncrm_doctemplates',table:'cfg_doc_templates',shape:'blob'},
+  {key:'egncrm_materiels',table:'cfg_materiels',shape:'blob'},
+  {key:'egncrm_stock_mvt',table:'stock_mouvements',shape:'blob'},
   {key:'egncrm_settings',table:'cfg_societe',shape:'single'}
 ];
 function save(k,v){
@@ -886,7 +888,7 @@ async function deleteFactureRemote(id){
   try{await SUPA.from('factures_agents').delete().eq('id',id);}
   catch(e){console.error('[facture] suppression échouée',e);toast('⚠️ Suppression Supabase échouée : '+e.message,'err');}
 }
-function can(p){if(p==='compta_global')return ME&&(ME.role==='superadmin'||ME.role==='admin');if(p==='docs_manage')return ME&&ME.role==='superadmin';return ME&&(ME.role==='superadmin'||(ME.perms&&ME.perms[p]));}
+function can(p){if(p==='compta_global')return ME&&(ME.role==='superadmin'||ME.role==='admin');if(p==='docs_manage')return ME&&ME.role==='superadmin';if(p==='stock_view')return ME&&(ME.role==='superadmin'||ME.role==='admin');return ME&&(ME.role==='superadmin'||(ME.perms&&ME.perms[p]));}
 async function doLogin(){
   const code=document.getElementById('loginCode').value.trim().toUpperCase();
   const pwd=document.getElementById('loginPwd').value;
@@ -1605,6 +1607,7 @@ const NAV=[
   {id:'sav',ic:'🔧',label:'SAV',perm:'sav_view'},
   {sec:'Administration'},
   {id:'compta',ic:'💼',label:'Comptabilité',perm:'compta_global'},
+  {id:'stock',ic:'📦',label:'Stock',perm:'stock_view'},
   {id:'docs',ic:'📄',label:'Documents',perm:'docs_manage'},
   {id:'users',ic:'🔑',label:'Utilisateurs',perm:'users_manage'},
   {id:'settings',ic:'⚙️',label:'Paramètres',perm:'settings_access'}
@@ -1620,6 +1623,7 @@ const PAGES={
   rdvs:{t:'RDVs',s:'Liste des rendez-vous',r:renderRdvs},
   sav:{t:'SAV',s:'Service après-vente',r:renderSav},
   compta:{t:'Comptabilité',s:'Rentabilité globale & appels à facturation poseurs',r:renderComptaGlobal},
+  stock:{t:'Stock',s:'Gestion des matériels et mouvements de stock',r:renderStock},
   users:{t:'Utilisateurs',s:'Comptes, codes d\'accès & permissions',r:renderUsers},
   settings:{t:'Paramètres',s:'Statuts, produits, sources & société',r:renderSettings}
 };
@@ -4962,6 +4966,229 @@ async function delUser(id){const u=userById(id);if(!u)return;
    PARAMÈTRES
    ==================================================================== */
 let SETTAB='statuts';
+/* ============================================================
+   MODULE STOCK
+   3 types : stock_fixe (LED), commande (PAC), circulant (Thermitube)
+   ============================================================ */
+const STOCK_TYPES={
+  stock_fixe:{label:'Stock fixe',icon:'📦',desc:'Acheté en amont, déduit à chaque installation'},
+  commande:{label:'À la commande',icon:'🛒',desc:'Commandé uniquement quand l\'installation est placée'},
+  circulant:{label:'Stock circulant',icon:'🔄',desc:'Matériel qui tourne de chantier en chantier'}
+};
+let STOCK_TAB='etat';
+let STOCK_LOADED=false;
+let STOCK_DRAFT=null;
+
+function getMats(){return load('egncrm_materiels',[]);}
+function getMvts(){return load('egncrm_stock_mvt',[]);}
+
+async function renderStock(){
+  if(!STOCK_LOADED){
+    document.getElementById('content').innerHTML='<div class="empty"><div class="big">⏳</div>Chargement du stock…</div>';
+    STOCK_LOADED=true;
+  }
+  const tabs=[['etat','État du stock'],['mouvements','Mouvements'],['catalogue','Catalogue matériels']];
+  let h=`<div class="tabs">`+tabs.map(t=>`<button class="tab ${STOCK_TAB===t[0]?'act':''}" onclick="STOCK_TAB='${t[0]}';renderStock()">${t[1]}</button>`).join('')+`</div><div id="stockBody"></div>`;
+  document.getElementById('content').innerHTML=h;
+  if(STOCK_TAB==='etat')renderStockEtat();
+  else if(STOCK_TAB==='mouvements')renderStockMouvements();
+  else renderStockCatalogue();
+}
+
+function renderStockEtat(){
+  const mats=getMats();const mvts=getMvts();
+  const eur=n=>(n||0).toLocaleString('fr-FR',{maximumFractionDigits:2})+' €';
+  let h='';
+  if(!mats.length){h=`<div class="empty"><div class="big">📦</div>Aucun matériel dans le catalogue.<br><button class="btn btn-pri" style="margin-top:.8rem" onclick="STOCK_TAB='catalogue';renderStock()">+ Ajouter un matériel</button></div>`;document.getElementById('stockBody').innerHTML=h;return;}
+  h+=`<div class="tbl-wrap"><table class="tbl"><thead><tr><th>Matériel</th><th>Opération</th><th>Type</th><th>Fournisseur</th><th class="c">Stock actuel</th><th class="c">Seuil alerte</th><th class="r">Valeur stock</th><th class="c">Statut</th></tr></thead><tbody>`;
+  mats.forEach(m=>{
+    const stype=STOCK_TYPES[m.typeStock||'stock_fixe'];
+    const entrees=mvts.filter(v=>v.materielId===m.id&&v.sens==='entree').reduce((s,v)=>s+(v.qte||0),0);
+    const sorties=mvts.filter(v=>v.materielId===m.id&&v.sens==='sortie').reduce((s,v)=>s+(v.qte||0),0);
+    const locaux=mvts.filter(v=>v.materielId===m.id&&v.sens==='localisation');
+    const stock=entrees-sorties;
+    const valeur=stock*(m.prixUnitaire||0);
+    const alerte=m.seuilAlerte&&stock<=m.seuilAlerte;
+    let stockCell='';
+    if(m.typeStock==='circulant'){
+      const curLoc=locaux.length?locaux[locaux.length-1]:null;
+      stockCell=`<div style="font-size:.82rem;font-weight:700">${entrees} unité${entrees>1?'s':''}</div><div class="muted" style="font-size:.68rem">${curLoc?'📍 '+esc(curLoc.lieu||'—'):'Non localisé'}</div>`;
+    } else if(m.typeStock==='commande'){
+      const enCours=mvts.filter(v=>v.materielId===m.id&&v.sens==='commande'&&!v.recu).length;
+      stockCell=`<div style="font-size:.82rem;font-weight:700">${enCours} commande${enCours>1?'s':''} en cours</div>`;
+    } else {
+      stockCell=`<div style="font-size:.82rem;font-weight:700;color:${alerte?'var(--coral)':stock>0?'var(--green-deep)':'var(--text-mut)'}">${stock} ${m.unite||'unités'}</div>`;
+    }
+    const statutBadge=m.typeStock==='commande'?`<span style="background:#E8F0FE;color:#1A5FD4;border-radius:6px;padding:2px 8px;font-size:.7rem;font-weight:700">À la commande</span>`:alerte?`<span style="background:#FEE8E8;color:#A32D2D;border-radius:6px;padding:2px 8px;font-size:.7rem;font-weight:700">⚠️ Stock bas</span>`:stock===0?`<span style="background:#EEF0F2;color:#6b7785;border-radius:6px;padding:2px 8px;font-size:.7rem;font-weight:700">Épuisé</span>`:`<span style="background:#E6F7F0;color:#0F6E56;border-radius:6px;padding:2px 8px;font-size:.7rem;font-weight:700">OK</span>`;
+    h+=`<tr>
+      <td><div style="font-weight:700">${esc(m.nom)}</div><div class="muted" style="font-size:.7rem">${esc(m.reference||'')}</div></td>
+      <td class="muted">${esc(m.operation||'—')}</td>
+      <td><span style="font-size:.75rem">${stype.icon} ${stype.label}</span></td>
+      <td class="muted">${esc(m.fournisseur||'—')}</td>
+      <td style="text-align:center">${stockCell}</td>
+      <td style="text-align:center;color:${alerte?'var(--coral)':'var(--text-mut)'}">${m.seuilAlerte||'—'}</td>
+      <td style="text-align:right">${m.typeStock!=='commande'?eur(valeur):'—'}</td>
+      <td style="text-align:center">${statutBadge}</td>
+    </tr>`;
+  });
+  h+=`</tbody></table></div>`;
+  h+=`<div style="display:flex;justify-content:flex-end;margin-top:.7rem"><button class="btn btn-pri btn-sm" onclick="openMvtModal()">+ Ajouter un mouvement</button></div>`;
+  document.getElementById('stockBody').innerHTML=h;
+}
+
+function renderStockMouvements(){
+  const mats=getMats();const mvts=getMvts().slice().reverse();
+  const eur=n=>(n||0).toLocaleString('fr-FR',{maximumFractionDigits:2})+' €';
+  let h=`<div style="display:flex;justify-content:flex-end;margin-bottom:.7rem;gap:.5rem">
+    <button class="btn btn-pri btn-sm" onclick="openMvtModal()">+ Nouveau mouvement</button>
+  </div>`;
+  if(!mvts.length){h+=`<div class="empty"><div class="big">📋</div>Aucun mouvement enregistré.</div>`;document.getElementById('stockBody').innerHTML=h;return;}
+  h+=`<div class="tbl-wrap"><table class="tbl"><thead><tr><th>Date</th><th>Matériel</th><th>Type</th><th>Qté</th><th>Dossier lié</th><th>Notes</th><th>Saisi par</th><th></th></tr></thead><tbody>`;
+  const sensLabels={entree:'📥 Entrée',sortie:'📤 Sortie',commande:'🛒 Commande',reception:'✅ Réception',localisation:'📍 Localisation'};
+  const sensBg={entree:'background:#E6F7F0;color:#0F6E56',sortie:'background:#FFF4E5;color:#B96A0A',commande:'background:#E8F0FE;color:#1A5FD4',reception:'background:#EFF7E8;color:#3D7A1E',localisation:'background:#EFE9FC;color:#5B3AAA'};
+  mvts.forEach(v=>{
+    const mat=mats.find(m=>m.id===v.materielId);
+    const r=v.dossierId?recById(v.dossierId):null;
+    h+=`<tr>
+      <td class="muted">${new Date(v.date).toLocaleDateString('fr-FR')}</td>
+      <td><div style="font-weight:700;font-size:.83rem">${mat?esc(mat.nom):'—'}</div></td>
+      <td><span style="border-radius:6px;padding:2px 8px;font-size:.7rem;font-weight:700;${sensBg[v.sens]||''}">${sensLabels[v.sens]||v.sens}</span></td>
+      <td style="font-weight:700;text-align:center">${v.qte||'—'} ${mat?mat.unite||'':''}</td>
+      <td>${r?`<span class="dossier-tag" style="cursor:pointer" onclick="openDossier('${r.id}')">${esc(r.dossier||'—')}</span><div class="muted" style="font-size:.7rem">${esc(clientNameOf(r))}</div>`:'<span class="muted">—</span>'}</td>
+      <td class="muted" style="font-size:.78rem">${esc(v.notes||v.lieu||'')}</td>
+      <td class="muted" style="font-size:.75rem">${esc(v.user||'')}</td>
+      <td><button class="iconbtn del" onclick="supprimerMvt('${v.id}')">🗑️</button></td>
+    </tr>`;
+  });
+  h+=`</tbody></table></div>`;
+  document.getElementById('stockBody').innerHTML=h;
+}
+
+function renderStockCatalogue(){
+  const mats=getMats();
+  let h=`<div style="display:flex;justify-content:flex-end;margin-bottom:.7rem"><button class="btn btn-pri btn-sm" onclick="openMatModal()">+ Nouveau matériel</button></div>`;
+  if(!mats.length){h+=`<div class="empty"><div class="big">📦</div>Aucun matériel. Cliquez sur "+ Nouveau matériel" pour commencer.</div>`;document.getElementById('stockBody').innerHTML=h;return;}
+  h+=`<div class="tbl-wrap"><table class="tbl"><thead><tr><th>Matériel</th><th>Opération</th><th>Type gestion</th><th>Fournisseur</th><th class="r">Prix unitaire</th><th>Unité</th><th>Seuil alerte</th><th class="r">Actions</th></tr></thead><tbody>`;
+  mats.forEach(m=>{
+    const stype=STOCK_TYPES[m.typeStock||'stock_fixe'];
+    h+=`<tr>
+      <td><div style="font-weight:700">${esc(m.nom)}</div><div class="muted" style="font-size:.7rem">${esc(m.reference||'')}</div></td>
+      <td class="muted">${esc(m.operation||'—')}</td>
+      <td><span style="font-size:.75rem">${stype.icon} ${stype.label}</span><div class="muted" style="font-size:.65rem">${stype.desc}</div></td>
+      <td><div>${esc(m.fournisseur||'—')}</div>${m.contactFournisseur?`<div class="muted" style="font-size:.68rem">${esc(m.contactFournisseur)}</div>`:''}</td>
+      <td style="text-align:right;font-weight:700">${m.prixUnitaire?(m.prixUnitaire.toLocaleString('fr-FR',{maximumFractionDigits:2})+' €'):'—'}</td>
+      <td class="muted">${esc(m.unite||'unités')}</td>
+      <td style="text-align:center;color:var(--text-mut)">${m.seuilAlerte||'—'}</td>
+      <td style="text-align:right"><div style="display:flex;gap:.3rem;justify-content:flex-end"><button class="iconbtn" onclick="openMatModal('${m.id}')">✏️</button><button class="iconbtn del" onclick="supprimerMat('${m.id}')">🗑️</button></div></td>
+    </tr>`;
+  });
+  h+=`</tbody></table></div>`;
+  document.getElementById('stockBody').innerHTML=h;
+}
+
+function openMatModal(id){
+  const mats=getMats();const o=id?mats.find(m=>m.id===id)||{}:{};
+  const ops=getProducts().map(p=>`<option value="${esc(p.name)}" ${o.operation===p.name?'selected':''}>${esc(p.name)}</option>`).join('');
+  const typeOpts=Object.entries(STOCK_TYPES).map(([k,v])=>`<option value="${k}" ${(o.typeStock||'stock_fixe')===k?'selected':''}>${v.icon} ${v.label}</option>`).join('');
+  STOCK_DRAFT=id?{...o}:{id:uid()};
+  const body=`<div class="fgrid">
+    <div class="fld"><label>Nom du matériel</label><input id="mat_nom" value="${esc(o.nom||'')}" placeholder="Ex : Kit LED 150W"></div>
+    <div class="fld"><label>Référence</label><input id="mat_ref" value="${esc(o.reference||'')}" placeholder="SKU / Ref fournisseur"></div>
+    <div class="fld"><label>Opération liée</label><select id="mat_op"><option value="">— Toutes —</option>${ops}</select></div>
+    <div class="fld"><label>Type de gestion</label><select id="mat_type" onchange="updateMatTypeDesc(this.value)">${typeOpts}</select></div>
+    <div class="fld" id="mat_type_desc" style="grid-column:1/-1"><p class="muted" style="font-size:.78rem">${STOCK_TYPES[o.typeStock||'stock_fixe'].desc}</p></div>
+    <div class="fld"><label>Fournisseur</label><input id="mat_fourn" value="${esc(o.fournisseur||'')}" placeholder="Nom du fournisseur"></div>
+    <div class="fld"><label>Contact fournisseur</label><input id="mat_fourn_contact" value="${esc(o.contactFournisseur||'')}" placeholder="Tel / Email"></div>
+    <div class="fld"><label>Prix unitaire HT (€)</label><input id="mat_prix" type="number" value="${o.prixUnitaire||''}" placeholder="0"></div>
+    <div class="fld"><label>Unité</label><input id="mat_unite" value="${esc(o.unite||'unités')}" placeholder="unités, m², rouleaux…"></div>
+    <div class="fld"><label>Seuil alerte stock bas</label><input id="mat_seuil" type="number" value="${o.seuilAlerte||''}" placeholder="Ex : 5"></div>
+    <div class="fld"><label>Notes</label><input id="mat_notes" value="${esc(o.notes||'')}" placeholder="Informations complémentaires"></div>
+  </div>`;
+  openModal(id?'Modifier le matériel':'Nouveau matériel',body,`<button class="btn btn-ghost" onclick="closeModal()">Annuler</button><button class="btn btn-pri" onclick="saveMat()">💾 Enregistrer</button>`,'wide');
+}
+function updateMatTypeDesc(val){const d=document.getElementById('mat_type_desc');if(d&&STOCK_TYPES[val])d.innerHTML=`<p class="muted" style="font-size:.78rem">${STOCK_TYPES[val].desc}</p>`;}
+function saveMat(){
+  const id=STOCK_DRAFT.id;
+  const mat={...STOCK_DRAFT,
+    nom:(document.getElementById('mat_nom')||{}).value||'',
+    reference:(document.getElementById('mat_ref')||{}).value||'',
+    operation:(document.getElementById('mat_op')||{}).value||'',
+    typeStock:(document.getElementById('mat_type')||{}).value||'stock_fixe',
+    fournisseur:(document.getElementById('mat_fourn')||{}).value||'',
+    contactFournisseur:(document.getElementById('mat_fourn_contact')||{}).value||'',
+    prixUnitaire:parseFloat((document.getElementById('mat_prix')||{}).value||0)||0,
+    unite:(document.getElementById('mat_unite')||{}).value||'unités',
+    seuilAlerte:parseInt((document.getElementById('mat_seuil')||{}).value||0)||null,
+    notes:(document.getElementById('mat_notes')||{}).value||''
+  };
+  if(!mat.nom){toast('Saisissez un nom de matériel','err');return;}
+  const mats=getMats().filter(m=>m.id!==id);
+  mats.push(mat);save('egncrm_materiels',mats);
+  closeModal();renderStock();toast('Matériel enregistré ✓','ok');
+}
+function supprimerMat(id){
+  modalConfirm('Supprimer ce matériel ?','Les mouvements associés ne seront pas supprimés.',()=>{
+    save('egncrm_materiels',getMats().filter(m=>m.id!==id));
+    closeModal();renderStock();toast('Matériel supprimé ✓','ok');
+  });
+}
+
+function openMvtModal(dossierId){
+  const mats=getMats();
+  if(!mats.length){toast('Ajoutez d\'abord des matériels dans le catalogue','err');return;}
+  const r=dossierId?recById(dossierId):null;
+  const matOpts=mats.map(m=>`<option value="${m.id}">${m.typeStock?STOCK_TYPES[m.typeStock]?.icon+' ':''} ${esc(m.nom)}</option>`).join('');
+  const body=`<div class="fgrid">
+    <div class="fld"><label>Matériel</label><select id="mvt_mat" onchange="updateMvtSens()">${matOpts}</select></div>
+    <div class="fld"><label>Type de mouvement</label><select id="mvt_sens" onchange="updateMvtSensFields()">
+      <option value="entree">📥 Entrée (achat / réception)</option>
+      <option value="sortie">📤 Sortie (installation)</option>
+      <option value="commande">🛒 Commande passée</option>
+      <option value="reception">✅ Commande reçue</option>
+      <option value="localisation">📍 Localisation (circulant)</option>
+    </select></div>
+    <div class="fld"><label>Quantité</label><input id="mvt_qte" type="number" min="1" value="1"></div>
+    <div class="fld"><label>Dossier lié</label><input id="mvt_dossier" value="${r?esc(r.dossier||''):''}"></div>
+    <div id="mvt_lieu_block" class="fld" style="display:none"><label>Lieu / Localisation</label><input id="mvt_lieu" placeholder="Chez quel client ou dépôt ?"></div>
+    <div class="fld" style="grid-column:1/-1"><label>Notes</label><input id="mvt_notes" placeholder="Notes complémentaires"></div>
+  </div>`;
+  openModal('Nouveau mouvement de stock',body,`<button class="btn btn-ghost" onclick="closeModal()">Annuler</button><button class="btn btn-pri" onclick="saveMvt()">💾 Enregistrer</button>`,'wide');
+  updateMvtSens();
+}
+function updateMvtSens(){
+  const matId=(document.getElementById('mvt_mat')||{}).value;
+  const mat=getMats().find(m=>m.id===matId);
+  if(!mat)return;
+  const sensEl=document.getElementById('mvt_sens');if(!sensEl)return;
+  // Adapter les options selon le type de gestion
+  const opts={stock_fixe:['entree','sortie'],commande:['commande','reception'],circulant:['entree','sortie','localisation']};
+  const allowed=opts[mat.typeStock||'stock_fixe']||['entree','sortie'];
+  [...sensEl.options].forEach(o=>o.style.display=allowed.includes(o.value)?'':'none');
+  if(!allowed.includes(sensEl.value))sensEl.value=allowed[0];
+  updateMvtSensFields();
+}
+function updateMvtSensFields(){
+  const sens=(document.getElementById('mvt_sens')||{}).value;
+  const lieu=document.getElementById('mvt_lieu_block');
+  if(lieu)lieu.style.display=sens==='localisation'?'':'none';
+}
+async function saveMvt(){
+  const matId=(document.getElementById('mvt_mat')||{}).value;
+  const sens=(document.getElementById('mvt_sens')||{}).value;
+  const qte=parseInt((document.getElementById('mvt_qte')||{}).value||1)||1;
+  const dossierNum=((document.getElementById('mvt_dossier')||{}).value||'').trim();
+  const lieu=((document.getElementById('mvt_lieu')||{}).value||'').trim();
+  const notes=((document.getElementById('mvt_notes')||{}).value||'').trim();
+  const r=dossierNum?getRecs().find(x=>x.dossier===dossierNum):null;
+  const mvts=getMvts();
+  mvts.push({id:uid(),materielId:matId,sens,qte,date:Date.now(),dossierId:r?r.id:null,lieu,notes,user:ME.prenom});
+  save('egncrm_stock_mvt',mvts);
+  closeModal();renderStock();toast('Mouvement enregistré ✓','ok');
+}
+function supprimerMvt(id){
+  save('egncrm_stock_mvt',getMvts().filter(v=>v.id!==id));
+  renderStock();toast('Mouvement supprimé ✓','ok');
+}
 function renderSettings(){
   const tabs=[['statuts','Statuts'],['operations','Opérations'],['produits','Produits'],['delegataires','Délégataires'],['sources','Sources / Régies'],['vt','Visite technique'],['poseurs','Poseur'],['auditeurs','Auditeur'],['equipes','Équipes'],['documents','Types de docs'],['mails','Modèles e-mail'],['coefsu','Coefficients U'],['pac','Solutions PAC'],['societe','Société']];
   let h=`<div class="tabs">`+tabs.map(t=>`<button class="tab ${SETTAB===t[0]?'act':''}" onclick="SETTAB='${t[0]}';renderSettings()">${t[1]}</button>`).join('')+`</div><div id="setBody"></div>`;
