@@ -2883,6 +2883,7 @@ function renderComptaResume(){
   const eur=n=>(n||0).toLocaleString('fr-FR',{maximumFractionDigits:2})+' €';
   let totRecettes=0,totCharges=0,totMarge=0;
   const byPoseur={},byCc={},byVt={},byAud={},byOp={};
+  const tvaModesByFam={poseur:{},cc:{},vt:{},aud:{}};
   const rows=recs.map(r=>{
     const m=recordComptaMetrics(r);
     totRecettes+=m.recettes;totCharges+=m.charges;totMarge+=m.marge;
@@ -2891,10 +2892,10 @@ function renderComptaResume(){
     const ccAnnule=cc.factureCallCenter&&cc.factureCallCenter.statut==='annule';
     const vtAnnule=cc.factureVt&&cc.factureVt.statut==='annule';
     const audAnnule=cc.factureAudit&&cc.factureAudit.statut==='annule';
-    if(cc.poseurUserId){const k=cc.poseurUserId;byPoseur[k]=byPoseur[k]||{nb:0,aPayer:0};byPoseur[k].nb++;if(!poseurAnnule)byPoseur[k].aPayer+=m.aPayerPoseur;}
-    if(r.sourceId&&m.aPayerCallCenter>0){const k=r.sourceId;byCc[k]=byCc[k]||{nb:0,aPayer:0};byCc[k].nb++;if(!ccAnnule)byCc[k].aPayer+=m.aPayerCallCenter;}
-    if(m.vtC.sub&&m.aPayerVt>0){const k=m.vtC.sub.id;byVt[k]=byVt[k]||{nb:0,aPayer:0};byVt[k].nb++;if(!vtAnnule)byVt[k].aPayer+=m.aPayerVt;}
-    if(m.auditC.sub&&m.aPayerAudit>0){const k=m.auditC.sub.id;byAud[k]=byAud[k]||{nb:0,aPayer:0};byAud[k].nb++;if(!audAnnule)byAud[k].aPayer+=m.aPayerAudit;}
+    if(cc.poseurUserId){const k=cc.poseurUserId;byPoseur[k]=byPoseur[k]||{nb:0,aPayer:0};byPoseur[k].nb++;if(!poseurAnnule)byPoseur[k].aPayer+=m.aPayerPoseur;tvaModesByFam.poseur[k]=effectiveTvaMode(r,'poseur');}
+    if(r.sourceId&&m.aPayerCallCenter>0){const k=r.sourceId;byCc[k]=byCc[k]||{nb:0,aPayer:0};byCc[k].nb++;if(!ccAnnule)byCc[k].aPayer+=m.aPayerCallCenter;tvaModesByFam.cc[k]=effectiveTvaMode(r,'callcenter');}
+    if(m.vtC.sub&&m.aPayerVt>0){const k=m.vtC.sub.id;byVt[k]=byVt[k]||{nb:0,aPayer:0};byVt[k].nb++;if(!vtAnnule)byVt[k].aPayer+=m.aPayerVt;tvaModesByFam.vt[k]=effectiveTvaMode(r,'vt');}
+    if(m.auditC.sub&&m.aPayerAudit>0){const k=m.auditC.sub.id;byAud[k]=byAud[k]||{nb:0,aPayer:0};byAud[k].nb++;if(!audAnnule)byAud[k].aPayer+=m.aPayerAudit;tvaModesByFam.aud[k]=effectiveTvaMode(r,'audit');}
     const opk=r.productId||'';byOp[opk]=byOp[opk]||{nb:0,recettes:0,charges:0,marge:0};byOp[opk].nb++;byOp[opk].recettes+=m.recettes;byOp[opk].charges+=m.charges;byOp[opk].marge+=m.marge;
     return{r,m};
   }).sort((a,b)=>(b.r.updated||0)-(a.r.updated||0));
@@ -2904,14 +2905,22 @@ function renderComptaResume(){
   const sumCc=Object.values(byCc).reduce((s,x)=>s+x.aPayer,0);
   const sumVt=Object.values(byVt).reduce((s,x)=>s+x.aPayer,0);
   const sumAud=Object.values(byAud).reduce((s,x)=>s+x.aPayer,0);
-  let h=`<p class="muted" style="font-size:.72rem;margin-bottom:.5rem">💶 Montants TTC — TVA ${tvaRate()}% déduite automatiquement, HT affiché sous chaque montant (taux : Paramètres ▸ Société).</p><div class="kpis">
+  // Helper : sous-texte KPI selon mode TVA dominant
+  const kpiSub=(sum,modes,count,label)=>{
+    const vals=Object.values(modes);
+    const allSansTva=vals.length&&vals.every(m=>m==='sans_tva');
+    const allHT=vals.length&&vals.every(m=>m==='ht');
+    const sub=allSansTva?'Sans TVA':allHT?`Payé HT`:`HT ${eur(htOf(sum))}`;
+    return `${sub} · ${count} ${label}`;
+  };
+  let h=`<p class="muted" style="font-size:.72rem;margin-bottom:.5rem">💶 Montants TTC — TVA ${tvaRate()}% déduite automatiquement (taux : Paramètres ▸ Société).</p><div class="kpis">
     <div class="kpi"><div class="kico">💶</div><div class="klab">Recettes totales</div><div class="kval">${eur(totRecettes)}</div><div class="ksub">HT ${eur(htOf(totRecettes))} · ${recs.length} dossier${recs.length>1?'s':''} chiffré${recs.length>1?'s':''}</div></div>
     <div class="kpi"><div class="kico">📤</div><div class="klab">Charges totales</div><div class="kval">${eur(totCharges)}</div><div class="ksub">HT ${eur(htOf(totCharges))} · poseurs + call center + VT + audits + produits + faux frais</div></div>
     <div class="kpi accent"><div class="kico">📈</div><div class="klab">Marge nette</div><div class="kval">${eur(totMarge)}</div><div class="ksub">HT ${eur(htOf(totMarge))}${totRecettes>0?' · '+margePct.toFixed(1)+'% de marge':''}</div></div>
-    <div class="kpi"><div class="kico">🔧</div><div class="klab">À verser aux poseurs</div><div class="kval">${eur(sumPoseur)}</div><div class="ksub">HT ${eur(htOf(sumPoseur))} · ${Object.keys(byPoseur).length} poseur${Object.keys(byPoseur).length>1?'s':''}</div></div>
-    <div class="kpi"><div class="kico">📞</div><div class="klab">À verser au call center</div><div class="kval">${eur(sumCc)}</div><div class="ksub">HT ${eur(htOf(sumCc))} · ${Object.keys(byCc).length} source${Object.keys(byCc).length>1?'s':''}</div></div>
-    <div class="kpi"><div class="kico">🧰</div><div class="klab">À verser aux VT</div><div class="kval">${eur(sumVt)}</div><div class="ksub">HT ${eur(htOf(sumVt))} · ${Object.keys(byVt).length} société${Object.keys(byVt).length>1?'s':''}</div></div>
-    <div class="kpi"><div class="kico">📝</div><div class="klab">À verser aux auditeurs</div><div class="kval">${eur(sumAud)}</div><div class="ksub">HT ${eur(htOf(sumAud))} · ${Object.keys(byAud).length} auditeur${Object.keys(byAud).length>1?'s':''}</div></div>
+    <div class="kpi"><div class="kico">🔧</div><div class="klab">À verser aux poseurs</div><div class="kval">${eur(sumPoseur)}</div><div class="ksub">${kpiSub(sumPoseur,tvaModesByFam.poseur,Object.keys(byPoseur).length,'poseur')}</div></div>
+    <div class="kpi"><div class="kico">📞</div><div class="klab">À verser au call center</div><div class="kval">${eur(sumCc)}</div><div class="ksub">${kpiSub(sumCc,tvaModesByFam.cc,Object.keys(byCc).length,'source')}</div></div>
+    <div class="kpi"><div class="kico">🧰</div><div class="klab">À verser aux VT</div><div class="kval">${eur(sumVt)}</div><div class="ksub">${kpiSub(sumVt,tvaModesByFam.vt,Object.keys(byVt).length,'société')}</div></div>
+    <div class="kpi"><div class="kico">📝</div><div class="klab">À verser aux auditeurs</div><div class="kval">${eur(sumAud)}</div><div class="ksub">${kpiSub(sumAud,tvaModesByFam.aud,Object.keys(byAud).length,'auditeur')}</div></div>
   </div>`;
   // Calculer la TVA récupérable et le détail par mode
   let totTvaRecup=0,totSansTva=0,totTvaNonRecup=0;
@@ -3213,9 +3222,19 @@ function renderComptaPaiements(){
   filtered.forEach(f=>{
     const at=AGENT_TYPES[f.type||'poseur'];
     const p=f.paiements||{};
-    const locked=p.statut_apf==='paye'; // verrouille N° facture et PJ uniquement
+    const locked=p.statut_apf==='paye';
     const recs=getRecs();
     const ops=[...new Set((f.lignes||[]).map(l=>{const r=recs.find(x=>x.id===l.recId);const op=r?getProducts().find(o=>o.id===r.productId):null;return op?op.name:'—';}))].join(', ');
+    // Mode TVA de l'APF
+    const tvaKey=f.type==='callcenter'?'callcenter':f.type==='vt'?'vt':f.type==='auditeur'?'audit':'poseur';
+    const tvaModes=(f.lignes||[]).map(l=>{const r=recs.find(x=>x.id===l.recId);return r?effectiveTvaMode(r,tvaKey):'ttc';});
+    const allSansTva=tvaModes.length&&tvaModes.every(m=>m==='sans_tva');
+    const allHT=tvaModes.length&&tvaModes.every(m=>m==='ht');
+    const montantDisplay=allSansTva
+      ?`${eur(f.total)}<div class="muted" style="font-size:.62rem;color:#5B3AAA">Sans TVA</div>`
+      :allHT
+      ?`${eur(f.total)}<div class="muted" style="font-size:.62rem">Payé HT</div>`
+      :`${eur(f.total)}<div class="muted" style="font-size:.62rem">HT ${eur(htOf(f.total))}</div>`;
     // Statut = select modifiable (pas bloqué par validate)
     const statSel=`<select onchange="savePaiementApf('${f.id}','statut_apf',this.value)" style="font-family:'Saira',sans-serif;font-size:.75rem;font-weight:700;border:none;border-radius:7px;padding:3px 8px;cursor:pointer;${p.statut_apf==='paye'?'background:#E6F7F0;color:#0F6E56':'background:#FFF4E5;color:#B96A0A'};width:100%">
       <option value="attente" ${p.statut_apf!=='paye'?'selected':''}>⏳ En attente</option>
@@ -3239,7 +3258,7 @@ function renderComptaPaiements(){
       <td><div style="font-weight:700;font-size:.83rem">${at.icon} ${esc(f.poseurName)}</div><div class="muted" style="font-size:.68rem">${at.label}</div></td>
       <td class="muted" style="font-size:.75rem">${esc(ops)}</td>
       <td style="text-align:center;font-weight:700">${(f.lignes||[]).length}</td>
-      <td style="text-align:right;font-weight:700">${eur(f.total)}<div class="muted" style="font-size:.62rem">HT ${eur(htOf(f.total))}</div></td>
+      <td style="text-align:right;font-weight:700">${montantDisplay}</td>
       <td>${statSel}</td>
       <td>${facRefCell}</td>
       <td>${pjCell}</td>
