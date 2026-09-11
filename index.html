@@ -872,14 +872,12 @@ async function loadFactures(){
 }
 async function persistFacture(f){
   try{
-    await SUPA.from('factures_agents').upsert({
-      id:f.id,apf_num:f.apfNum,type:f.type,
-      agent_id:f.poseurId,agent_name:f.poseurName,
-      total:f.total,lignes:f.lignes,html:f.html,
-      paiements:f.paiements||{},
-      created_by:ME?ME.id:null
-    },{onConflict:'id'});
-  }catch(e){console.error('[facture] enregistrement échoué',e);toast('⚠️ Facture non sauvegardée sur Supabase : '+e.message,'err');}
+    const payload={id:f.id,apf_num:f.apfNum,type:f.type,agent_id:f.poseurId,agent_name:f.poseurName,total:f.total,lignes:f.lignes,html:f.html,paiements:f.paiements||{},created_by:ME?ME.id:null};
+    console.log('[persistFacture] saving',f.apfNum,JSON.stringify(payload).slice(0,200));
+    const{data,error}=await SUPA.from('factures_agents').upsert(payload,{onConflict:'id'});
+    if(error){console.error('[persistFacture] error',error);alert('Erreur Supabase:\n'+error.message+'\n\nCode: '+error.code+'\nDetails: '+error.details);throw error;}
+    console.log('[persistFacture] success',data);
+  }catch(e){console.error('[facture] enregistrement échoué',e);}
 }
 async function deleteFactureRemote(id){
   try{await SUPA.from('factures_agents').delete().eq('id',id);}
