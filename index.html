@@ -5237,6 +5237,8 @@ function calcSortiesAuto(mat){
     const s=stats.find(x=>x.id===r.statusId);
     return s&&(s.order??999)>=minOrder;
   });
+  console.log('[calcSortiesAuto]',mat.nom,'champs=',champs,'triggerIds=',triggerIds,'minOrder=',minOrder,'recs filtrés=',recs.length);
+  if(recs.length>0)console.log('[calcSortiesAuto] premier dossier opFields=',JSON.stringify(recs[0].opFields));
   let total=0;
   recs.forEach(r=>{
     if(!r.opFields)return;
