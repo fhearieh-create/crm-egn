@@ -5082,17 +5082,26 @@ function renderStockCatalogue(){
   const mats=getMats();
   let h=`<div style="display:flex;justify-content:flex-end;margin-bottom:.7rem"><button class="btn btn-pri btn-sm" onclick="openMatModal()">+ Nouveau matériel</button></div>`;
   if(!mats.length){h+=`<div class="empty"><div class="big">📦</div>Aucun matériel. Cliquez sur "+ Nouveau matériel" pour commencer.</div>`;document.getElementById('stockBody').innerHTML=h;return;}
-  h+=`<div class="tbl-wrap"><table class="tbl"><thead><tr><th>Matériel</th><th>Opération</th><th>Type gestion</th><th>Fournisseur</th><th class="r">Prix unitaire</th><th>Unité</th><th>Seuil alerte</th><th class="r">Actions</th></tr></thead><tbody>`;
+  h+=`<div class="tbl-wrap"><table class="tbl"><thead><tr>
+    <th>Matériel</th><th>Type</th><th>Opération liée</th><th>Champ lu</th><th>Statut déclencheur</th>
+    <th>Fournisseur</th><th class="r">Prix HT</th><th>Unité</th><th class="r">Actions</th>
+  </tr></thead><tbody>`;
   mats.forEach(m=>{
     const stype=STOCK_TYPES[m.typeStock||'stock_fixe'];
+    const op=getProducts().find(p=>p.id===m.operationId||p.name===m.operation);
+    const field=op?(op.fields||[]).find(f=>f.id===m.champDossier):null;
+    const trigStat=m.statutDeclencheur?getStatuses().find(s=>s.id===m.statutDeclencheur):null;
+    const champLabel=field?esc(field.label||field.key||field.id):`<span class="muted">—</span>`;
+    const statLabel=trigStat?`<span style="background:${trigStat.color||'#ddd'}22;color:${trigStat.color||'#666'};border-radius:5px;padding:1px 7px;font-size:.72rem;font-weight:700">${esc(trigStat.name)}</span>`:`<span class="muted">—</span>`;
     h+=`<tr>
       <td><div style="font-weight:700">${esc(m.nom)}</div><div class="muted" style="font-size:.7rem">${esc(m.reference||'')}</div></td>
-      <td class="muted">${esc(m.operation||'—')}</td>
-      <td><span style="font-size:.75rem">${stype.icon} ${stype.label}</span><div class="muted" style="font-size:.65rem">${stype.desc}</div></td>
+      <td><span style="font-size:.78rem">${stype.icon} ${stype.label}</span></td>
+      <td class="muted">${esc(m.operation||'Toutes')}</td>
+      <td style="font-size:.78rem">${champLabel}</td>
+      <td>${statLabel}</td>
       <td><div>${esc(m.fournisseur||'—')}</div>${m.contactFournisseur?`<div class="muted" style="font-size:.68rem">${esc(m.contactFournisseur)}</div>`:''}</td>
       <td style="text-align:right;font-weight:700">${m.prixUnitaire?(m.prixUnitaire.toLocaleString('fr-FR',{maximumFractionDigits:2})+' €'):'—'}</td>
       <td class="muted">${esc(m.unite||'unités')}</td>
-      <td style="text-align:center;color:var(--text-mut)">${m.seuilAlerte||'—'}</td>
       <td style="text-align:right"><div style="display:flex;gap:.3rem;justify-content:flex-end"><button class="iconbtn" onclick="openMatModal('${m.id}')">✏️</button><button class="iconbtn del" onclick="supprimerMat('${m.id}')">🗑️</button></div></td>
     </tr>`;
   });
@@ -5135,6 +5144,18 @@ function openMatModal(id){
     <div class="fld"><label>Notes</label><input id="mat_notes" value="${esc(o.notes||'')}" placeholder="Informations complémentaires"></div>
   </div>`;
   openModal(id?'Modifier le matériel':'Nouveau matériel',body,`<button class="btn btn-ghost" onclick="closeModal()">Annuler</button><button class="btn btn-pri" onclick="saveMat()">💾 Enregistrer</button>`,'wide');
+  // Après rendu DOM, setter la valeur du champ sélectionné
+  setTimeout(()=>{
+    const champSel=document.getElementById('mat_champ');
+    if(champSel&&o.champDossier){
+      // Re-remplir les options si nécessaire
+      if(!champSel.querySelector(`option[value="${o.champDossier}"]`)&&selectedOp){
+        const fields=selectedOp.fields||[];
+        champSel.innerHTML=fields.map(f=>`<option value="${f.id}">${esc(f.label||f.key||f.id)}</option>`).join('');
+      }
+      champSel.value=o.champDossier;
+    }
+  },50);
 }
 function updateMatTypeDesc(val){const d=document.getElementById('mat_type_desc');if(d&&STOCK_TYPES[val])d.innerHTML=`<p class="muted" style="font-size:.78rem">${STOCK_TYPES[val].desc}</p>`;}
 function updateMatOpFields(){
