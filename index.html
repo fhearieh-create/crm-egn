@@ -3647,6 +3647,12 @@ function renderComptaTvaRecup(){
   const LABELS={poseur:'Poseur',callcenter:'Call Center',vt:'Visite Technique',audit:'Audit'};
   let totRecup=0;
   const byKey={};KEYS.forEach(k=>{byKey[k]={montantHT:0,tvaRecup:0,nb:0};});
+  // TVA récupérable sur achats de stock
+  const mvts=getMvts();
+  const mats=getMats();
+  const tvaStock=mvts.filter(v=>['entree','reception'].includes(v.sens)&&v.tvaRecup>0).reduce((s,v)=>s+(v.tvaRecup||0),0);
+  const totalHtStock=mvts.filter(v=>['entree','reception'].includes(v.sens)&&v.totalHT>0).reduce((s,v)=>s+(v.totalHT||0),0);
+  totRecup+=tvaStock;
   const rows=[];
   recs.forEach(r=>{
     const m=recordComptaMetrics(r);
@@ -3677,7 +3683,8 @@ function renderComptaTvaRecup(){
   const solde=totRecup-dejaRecup;
   h+=`<div class="kpis">`;
   KEYS.forEach(k=>{if(byKey[k].nb>0)h+=`<div class="kpi"><div class="kico">${k==='poseur'?'🔧':k==='callcenter'?'📞':k==='vt'?'🧰':'📝'}</div><div class="klab">TVA récup. — ${LABELS[k]}</div><div class="kval" style="color:var(--green-deep)">${eur(byKey[k].tvaRecup)}</div><div class="ksub">Base HT ${eur(byKey[k].montantHT)} · ${byKey[k].nb} dossier${byKey[k].nb>1?'s':''}</div></div>`;});
-  if(totRecup>0)h+=`<div class="kpi" style="border:1.5px solid rgba(91,186,84,.4)"><div class="kico">✅</div><div class="klab">Total récupérable</div><div class="kval" style="color:var(--green-deep)">${eur(totRecup)}</div><div class="ksub">Sur toutes les charges HT</div></div>`;
+  if(totRecup>0)h+=`<div class="kpi" style="border:1.5px solid rgba(91,186,84,.4)"><div class="kico">✅</div><div class="klab">Total TVA récupérable</div><div class="kval" style="color:var(--green-deep)">${eur(totRecup)}</div><div class="ksub">Sur toutes les charges HT</div></div>`;
+  if(tvaStock>0)h+=`<div class="kpi" style="border:1.5px solid rgba(45,125,210,.3)"><div class="kico">📦</div><div class="klab">TVA sur achats stock</div><div class="kval" style="color:var(--blue)">${eur(tvaStock)}</div><div class="ksub">Base HT ${eur(totalHtStock)}</div></div>`;
   if(dejaRecup>0)h+=`<div class="kpi" style="border:1.5px solid rgba(45,125,210,.3)"><div class="kico">💳</div><div class="klab">Déjà récupéré</div><div class="kval" style="color:var(--blue)">${eur(dejaRecup)}</div><div class="ksub">Saisi manuellement</div></div>`;
   if(totRecup>0)h+=`<div class="kpi" style="border:1.5px solid ${solde>0?'rgba(91,186,84,.4)':'rgba(45,125,210,.3)'}"><div class="kico">${solde>0?'⏳':'✅'}</div><div class="klab">Solde à récupérer</div><div class="kval" style="color:${solde>0?'var(--green-deep)':'var(--blue)'}">${eur(Math.abs(solde))}${solde<0?' (tout récupéré)':''}</div><div class="ksub">= Récupérable − Récupéré</div></div>`;
   h+=`</div>`;
@@ -3709,6 +3716,21 @@ function renderComptaTvaRecup(){
       });
     });
     h+=`<tr style="background:#f8faf5;font-weight:800"><td colspan="4">Total</td><td style="text-align:right">—</td><td style="text-align:right;color:var(--green-deep)">${eur(totRecup)}</td></tr>`;
+    // Lignes d'achats de stock
+    if(tvaStock>0){
+      const stockRows=mvts.filter(v=>['entree','reception'].includes(v.sens)&&v.tvaRecup>0);
+      h+=`<tr style="background:#f0f6ff"><td colspan="6" style="font-weight:700;color:var(--blue);padding:.5rem .9rem">📦 Achats de matériels (stock)</td></tr>`;
+      stockRows.forEach(v=>{
+        const mat=mats.find(m=>m.id===v.materielId);
+        h+=`<tr>
+          <td colspan="2"><span class="dossier-tag" style="background:rgba(45,125,210,.1);color:var(--blue)">${new Date(v.date).toLocaleDateString('fr-FR')}</span></td>
+          <td>${mat?esc(mat.nom):'—'}</td>
+          <td>Achat stock</td>
+          <td style="text-align:right">${eur(v.totalHT||0)}</td>
+          <td style="text-align:right;font-weight:700;color:var(--green-deep)">${eur(v.tvaRecup)}</td>
+        </tr>`;
+      });
+    }
     h+=`</tbody></table></div></div></div>`;
   }
   document.getElementById('comptaBody').innerHTML=h;
@@ -5014,7 +5036,8 @@ function renderStockEtat(){
     const stock=entrees-sorties;
     const valeur=Math.max(0,stock)*(m.prixUnitaire||0);
     const alerte=m.seuilAlerte&&stock<=m.seuilAlerte;
-    const triggerStat=m.statutDeclencheur?getStatuses().find(s=>s.id===m.statutDeclencheur):null;
+    const triggerStatIds=[].concat(m.statutsDeclencheur||m.statutDeclencheur||[]).filter(Boolean);
+    const triggerStatNames=triggerStatIds.map(id=>{const s=getStatuses().find(x=>x.id===id);return s?s.name:'';}).filter(Boolean).join(' ou ');
     let stockCell='',sortiesCell='';
     if(m.typeStock==='circulant'){
       const locaux=mvts.filter(v=>v.materielId===m.id&&v.sens==='localisation');
@@ -5027,7 +5050,7 @@ function renderStockEtat(){
       sortiesCell=`<span class="muted">—</span>`;
     } else {
       stockCell=`<div style="font-size:1rem;font-weight:800;color:${alerte?'var(--coral)':stock>0?'var(--green-deep)':'var(--text-mut)'}">${stock} ${m.unite||'unités'}</div>`;
-      sortiesCell=`<div style="font-weight:700">${sorties} ${m.unite||''}</div>${sortiesAuto>0?`<div class="muted" style="font-size:.65rem">↳ ${sortiesAuto} depuis dossiers${triggerStat?' ('+esc(triggerStat.name)+')':''}</div>`:''}`;
+      sortiesCell=`<div style="font-weight:700">${sorties} ${m.unite||''}</div>${sortiesAuto>0?`<div class="muted" style="font-size:.65rem">↳ ${sortiesAuto} depuis dossiers${triggerStatNames?' ('+esc(triggerStatNames)+')':''}</div>`:''}`;
     }
     const statutBadge=m.typeStock==='commande'?`<span style="background:#E8F0FE;color:#1A5FD4;border-radius:6px;padding:2px 8px;font-size:.7rem;font-weight:700">À la commande</span>`:alerte?`<span style="background:#FEE8E8;color:#A32D2D;border-radius:6px;padding:2px 8px;font-size:.7rem;font-weight:700">⚠️ Stock bas</span>`:stock===0?`<span style="background:#EEF0F2;color:#6b7785;border-radius:6px;padding:2px 8px;font-size:.7rem;font-weight:700">Épuisé</span>`:`<span style="background:#E6F7F0;color:#0F6E56;border-radius:6px;padding:2px 8px;font-size:.7rem;font-weight:700">✓ OK</span>`;
     h+=`<tr>
@@ -5095,8 +5118,9 @@ function renderStockCatalogue(){
       return f?esc(f.label||f.key||f.id):cid;
     });
     const champLabel=champLabels.length?champLabels.join(' + '):`<span class="muted">—</span>`;
-    const trigStat=m.statutDeclencheur?getStatuses().find(s=>s.id===m.statutDeclencheur):null;
-    const statLabel=trigStat?`<span style="background:${trigStat.color||'#ddd'}22;color:${trigStat.color||'#666'};border-radius:5px;padding:1px 7px;font-size:.72rem;font-weight:700">${esc(trigStat.name)}</span>`:`<span class="muted">—</span>`;
+    const trigStatIds=[].concat(m.statutsDeclencheur||m.statutDeclencheur||[]).filter(Boolean);
+    const trigStats=trigStatIds.map(id=>getStatuses().find(s=>s.id===id)).filter(Boolean);
+    const statLabel=trigStats.length?trigStats.map(s=>`<span style="background:${s.color||'#ddd'}22;color:${s.color||'#666'};border-radius:5px;padding:1px 7px;font-size:.72rem;font-weight:700;margin-right:2px">${esc(s.name)}</span>`).join(''):`<span class="muted">—</span>`;
     h+=`<tr>
       <td><div style="font-weight:700">${esc(m.nom)}</div><div class="muted" style="font-size:.7rem">${esc(m.reference||'')}</div></td>
       <td><span style="font-size:.78rem">${stype.icon} ${stype.label}</span></td>
@@ -5122,7 +5146,8 @@ function openMatModal(id){
   const opFields=selectedOp?(selectedOp.fields||[]).filter(f=>['number','select','text',''].includes(f.type||'')):[];
   const fieldOpts=opFields.map(f=>`<option value="${esc(f.id)}" ${o.champDossier===f.id?'selected':''}>${esc(f.label||f.key||f.id)}</option>`).join('');
   // Statuts
-  const statOpts=getStatuses().map(s=>`<option value="${s.id}" ${o.statutDeclencheur===s.id?'selected':''}>${esc(s.name)}</option>`).join('');
+  const savedStats=[].concat(o.statutsDeclencheur||o.statutDeclencheur||[]).filter(Boolean);
+  const statOpts=getStatuses().map(s=>`<option value="${s.id}" ${savedStats.includes(s.id)?'selected':''}>${esc(s.name)}</option>`).join('');
   STOCK_DRAFT=id?{...o}:{id:uid()};
   const body=`<div class="fgrid">
     <div class="fld"><label>Nom du matériel</label><input id="mat_nom" value="${esc(o.nom||'')}" placeholder="Ex : Kit LED 150W"></div>
@@ -5136,8 +5161,8 @@ function openMatModal(id){
     <div class="fld" style="grid-column:1/-1"><label>Champ(s) à lire dans le dossier <span class="muted" style="font-size:.62rem">(quantités sommées — Ctrl+clic pour sélectionner plusieurs)</span></label>
       <select id="mat_champ" multiple size="4" style="height:auto;min-height:80px">${fieldOpts||`<option value="">— Sélectionnez une opération d'abord —</option>`}</select>
     </div>
-    <div class="fld" style="grid-column:1/-1"><label>Statut déclencheur <span class="muted" style="font-size:.62rem">(les dossiers à ce statut ou après comptent comme "sortie")</span></label>
-      <select id="mat_statut">${statOpts}</select>
+    <div class="fld" style="grid-column:1/-1"><label>Statut(s) déclencheur <span class="muted" style="font-size:.62rem">(Ctrl+clic pour plusieurs — les dossiers à ces statuts ou après comptent comme "sortie")</span></label>
+      <select id="mat_statut" multiple size="4" style="height:auto;min-height:80px">${statOpts}</select>
     </div>
     <div class="sectitle" style="grid-column:1/-1;margin-top:.5rem">Fournisseur & tarif</div>
     <div class="fld"><label>Fournisseur</label><input id="mat_fourn" value="${esc(o.fournisseur||'')}" placeholder="Nom du fournisseur"></div>
@@ -5183,7 +5208,7 @@ function saveMat(){
     operationId:opId,
     operation:op?op.name:'',
     champsDossier:[...((document.getElementById('mat_champ')||{}).selectedOptions||[])].map(o=>o.value).filter(Boolean),
-    statutDeclencheur:(document.getElementById('mat_statut')||{}).value||'',
+    statutsDeclencheur:[...((document.getElementById('mat_statut')||{}).selectedOptions||[])].map(o=>o.value).filter(Boolean),
     typeStock:(document.getElementById('mat_type')||{}).value||'stock_fixe',
     fournisseur:(document.getElementById('mat_fourn')||{}).value||'',
     contactFournisseur:(document.getElementById('mat_fourn_contact')||{}).value||'',
@@ -5202,14 +5227,16 @@ function saveMat(){
 function calcSortiesAuto(mat){
   if(!mat.champDossier||!mat.statutDeclencheur)return 0;
   const stats=getStatuses();
-  const triggerStat=stats.find(s=>s.id===mat.statutDeclencheur);
-  if(!triggerStat)return 0;
-  const triggerOrder=triggerStat.order??999;
-  // Dossiers de l'opération concernée ayant atteint ou dépassé ce statut
+  const triggerIds=[].concat(mat.statutsDeclencheur||mat.statutDeclencheur||[]).filter(Boolean);
+  if(!triggerIds.length)return 0;
+  // Ordre minimum parmi les statuts déclencheurs
+  const triggerOrders=triggerIds.map(id=>{const s=stats.find(x=>x.id===id);return s?s.order??999:999;});
+  const minOrder=Math.min(...triggerOrders);
+  // Dossiers de l'opération concernée ayant atteint ou dépassé un des statuts déclencheurs
   const recs=getRecs().filter(r=>{
     if(mat.operationId&&r.productId!==mat.operationId)return false;
     const s=stats.find(x=>x.id===r.statusId);
-    return s&&(s.order??999)>=triggerOrder;
+    return s&&(s.order??999)>=minOrder;
   });
   // Sommer tous les champs configurés (champsDossier = tableau, rétrocompat champDossier)
   const champs=[].concat(mat.champsDossier||mat.champDossier||[]).filter(Boolean);
@@ -5251,41 +5278,71 @@ function openMvtModal(dossierId){
       <option value="reception">✅ Commande reçue</option>
       <option value="localisation">📍 Localisation (circulant)</option>
     </select></div>
-    <div class="fld"><label>Quantité</label><input id="mvt_qte" type="number" min="1" value="1"></div>
+    <div class="fld"><label>Quantité</label><input id="mvt_qte" type="number" min="1" value="1" onchange="updateMvtPrix()"></div>
+    <div id="mvt_prix_block" class="fld"><label>Prix unitaire HT (€) <span class="muted" style="font-size:.62rem">facultatif — pour la compta</span></label><input id="mvt_prix_u" type="number" step="any" placeholder="0" onchange="updateMvtPrix()"></div>
+    <div id="mvt_prix_total_block" class="fld"><label>Total HT (€) <span class="muted" style="font-size:.62rem">calculé</span></label>
+      <div id="mvt_prix_calc" style="font-size:.95rem;font-weight:700;padding:.5rem .8rem;background:var(--bg-soft);border-radius:9px">—</div>
+    </div>
+    <div id="mvt_tva_block" class="fld"><label>TVA récupérable (${tvaRate()}%) <span class="muted" style="font-size:.62rem">calculée</span></label>
+      <div id="mvt_tva_calc" style="font-size:.95rem;font-weight:700;color:var(--blue);padding:.5rem .8rem;background:#E8F0FE;border-radius:9px">—</div>
+    </div>
     <div class="fld"><label>Dossier lié</label><input id="mvt_dossier" value="${r?esc(r.dossier||''):''}"></div>
     <div id="mvt_lieu_block" class="fld" style="display:none"><label>Lieu / Localisation</label><input id="mvt_lieu" placeholder="Chez quel client ou dépôt ?"></div>
     <div class="fld" style="grid-column:1/-1"><label>Notes</label><input id="mvt_notes" placeholder="Notes complémentaires"></div>
   </div>`;
   openModal('Nouveau mouvement de stock',body,`<button class="btn btn-ghost" onclick="closeModal()">Annuler</button><button class="btn btn-pri" onclick="saveMvt()">💾 Enregistrer</button>`,'wide');
-  updateMvtSens();
+  setTimeout(()=>{updateMvtSens();updateMvtPrix();},50);
 }
 function updateMvtSens(){
   const matId=(document.getElementById('mvt_mat')||{}).value;
   const mat=getMats().find(m=>m.id===matId);
   if(!mat)return;
   const sensEl=document.getElementById('mvt_sens');if(!sensEl)return;
-  // Adapter les options selon le type de gestion
   const opts={stock_fixe:['entree','sortie'],commande:['commande','reception'],circulant:['entree','sortie','localisation']};
   const allowed=opts[mat.typeStock||'stock_fixe']||['entree','sortie'];
   [...sensEl.options].forEach(o=>o.style.display=allowed.includes(o.value)?'':'none');
   if(!allowed.includes(sensEl.value))sensEl.value=allowed[0];
-  updateMvtSensFields();
+  // Pré-remplir le prix unitaire depuis le catalogue
+  const prixEl=document.getElementById('mvt_prix_u');
+  if(prixEl&&mat.prixUnitaire&&!prixEl.value)prixEl.value=mat.prixUnitaire;
+  updateMvtSensFields();updateMvtPrix();
 }
 function updateMvtSensFields(){
   const sens=(document.getElementById('mvt_sens')||{}).value;
   const lieu=document.getElementById('mvt_lieu_block');
   if(lieu)lieu.style.display=sens==='localisation'?'':'none';
+  // Afficher les champs prix uniquement pour les entrées
+  const isEntree=['entree','reception'].includes(sens);
+  ['mvt_prix_block','mvt_prix_total_block','mvt_tva_block'].forEach(id=>{
+    const el=document.getElementById(id);if(el)el.style.display=isEntree?'':'none';
+  });
+}
+function updateMvtPrix(){
+  const qte=parseInt((document.getElementById('mvt_qte')||{}).value||1)||1;
+  const pu=parseFloat((document.getElementById('mvt_prix_u')||{}).value||0)||0;
+  const totalHT=qte*pu;
+  const tva=totalHT*(tvaRate()/100);
+  const eur=n=>n.toLocaleString('fr-FR',{minimumFractionDigits:2,maximumFractionDigits:2})+' €';
+  const calcEl=document.getElementById('mvt_prix_calc');
+  const tvaEl=document.getElementById('mvt_tva_calc');
+  if(calcEl)calcEl.textContent=pu?eur(totalHT):'—';
+  if(tvaEl)tvaEl.textContent=pu?eur(tva):'—';
 }
 async function saveMvt(){
   const matId=(document.getElementById('mvt_mat')||{}).value;
   const sens=(document.getElementById('mvt_sens')||{}).value;
   const qte=parseInt((document.getElementById('mvt_qte')||{}).value||1)||1;
+  const prixU=parseFloat((document.getElementById('mvt_prix_u')||{}).value||0)||0;
+  const totalHT=qte*prixU;
+  const tvaRecup=totalHT*(tvaRate()/100);
   const dossierNum=((document.getElementById('mvt_dossier')||{}).value||'').trim();
   const lieu=((document.getElementById('mvt_lieu')||{}).value||'').trim();
   const notes=((document.getElementById('mvt_notes')||{}).value||'').trim();
   const r=dossierNum?getRecs().find(x=>x.dossier===dossierNum):null;
   const mvts=getMvts();
-  mvts.push({id:uid(),materielId:matId,sens,qte,date:Date.now(),dossierId:r?r.id:null,lieu,notes,user:ME.prenom});
+  mvts.push({id:uid(),materielId:matId,sens,qte,date:Date.now(),
+    prixUnitaireHT:prixU,totalHT,tvaRecup:['entree','reception'].includes(sens)?tvaRecup:0,
+    dossierId:r?r.id:null,lieu,notes,user:ME.prenom});
   save('egncrm_stock_mvt',mvts);
   closeModal();renderStock();toast('Mouvement enregistré ✓','ok');
 }
