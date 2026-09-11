@@ -5095,6 +5095,7 @@ function renderStockCatalogue(){
       return f?esc(f.label||f.key||f.id):cid;
     });
     const champLabel=champLabels.length?champLabels.join(' + '):`<span class="muted">—</span>`;
+    const trigStat=m.statutDeclencheur?getStatuses().find(s=>s.id===m.statutDeclencheur):null;
     const statLabel=trigStat?`<span style="background:${trigStat.color||'#ddd'}22;color:${trigStat.color||'#666'};border-radius:5px;padding:1px 7px;font-size:.72rem;font-weight:700">${esc(trigStat.name)}</span>`:`<span class="muted">—</span>`;
     h+=`<tr>
       <td><div style="font-weight:700">${esc(m.nom)}</div><div class="muted" style="font-size:.7rem">${esc(m.reference||'')}</div></td>
