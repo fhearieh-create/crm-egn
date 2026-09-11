@@ -5460,15 +5460,15 @@ function openMvtModal(dossierId,preMatId){
     <div id="mvt_prix_block" class="fld"><label>Prix unitaire HT (€)</label><input id="mvt_prix_u" type="number" step="any" placeholder="0" oninput="updateMvtCalc()"></div>
     <div class="fld"><label>Quantité</label><input id="mvt_qte" type="number" min="1" value="1" oninput="updateMvtCalc()"></div>
     <div id="mvt_tot_block" class="fld"><label>Total HT marchandise</label><div id="mvt_tot" style="font-size:1rem;font-weight:800;padding:.5rem .8rem;background:var(--bg-soft);border-radius:9px">—</div></div>
-    <div id="mvt_tva_block" class="fld"><label>TVA récupérable (${tvaRate()}%)</label><div id="mvt_tva" style="font-size:1rem;font-weight:800;color:var(--blue);padding:.5rem .8rem;background:#E8F0FE;border-radius:9px">—</div></div>
+    <div id="mvt_tva_block" class="fld" style="display:none"></div>
     <div id="mvt_frais_block" style="grid-column:1/-1;display:none">
       <div class="sectitle" style="margin-top:.3rem">Frais externes (transport, livraison, manutention…)</div>
       <div id="mvt_frais_list"></div>
       <button class="btn btn-ghost btn-sm" style="margin-top:.3rem" onclick="addFraisRow()">+ Ajouter un frais</button>
       <div style="display:flex;gap:.8rem;margin-top:.6rem;padding:.5rem .8rem;background:var(--bg-soft);border-radius:9px">
         <div style="flex:1"><span class="muted" style="font-size:.72rem">Total frais HT</span><div id="mvt_frais_tot" style="font-weight:800">—</div></div>
-        <div style="flex:1"><span class="muted" style="font-size:.72rem">TVA frais récupérable</span><div id="mvt_frais_tva" style="font-weight:800;color:var(--blue)">—</div></div>
-        <div style="flex:1"><span class="muted" style="font-size:.72rem">Coût total (marchandise + frais)</span><div id="mvt_total_global" style="font-weight:800;font-size:1.05rem;color:var(--green-deep)">—</div></div>
+        <div style="flex:1"><span class="muted" style="font-size:.72rem">Total HT (marchandise + frais)</span><div id="mvt_total_global" style="font-weight:800;font-size:1.05rem;color:var(--green-deep)">—</div></div>
+        <div style="flex:1"><span class="muted" style="font-size:.72rem">TVA récupérable sur le total (${tvaRate()}%)</span><div id="mvt_tva" style="font-weight:800;color:var(--blue)">—</div></div>
       </div>
     </div>
     <div class="fld"><label>Dossier lié</label><input id="mvt_dossier" value="${r?esc(r.dossier||''):''}"></div>
@@ -5525,18 +5525,17 @@ function addFraisRow(){
 function updateMvtCalc(){
   const qte=parseInt((document.getElementById('mvt_qte')||{}).value||1)||1;
   const pu=parseFloat((document.getElementById('mvt_prix_u')||{}).value||0)||0;
-  const tot=qte*pu;const tva=tot*(tvaRate()/100);
+  const tot=qte*pu;
   const eur=n=>n.toLocaleString('fr-FR',{minimumFractionDigits:2,maximumFractionDigits:2})+' €';
   const totEl=document.getElementById('mvt_tot');if(totEl)totEl.textContent=pu?eur(tot):'—';
-  const tvaEl=document.getElementById('mvt_tva');if(tvaEl)tvaEl.textContent=pu?eur(tva):'—';
   // Frais externes
   const fraisRows=[...document.querySelectorAll('.frais-ht')];
   const totalFraisHT=fraisRows.reduce((s,el)=>s+(parseFloat(el.value)||0),0);
-  const tvaFrais=totalFraisHT*(tvaRate()/100);
   const totalGlobal=tot+totalFraisHT;
+  const tvaGlobal=totalGlobal*(tvaRate()/100);
   const fraisTotEl=document.getElementById('mvt_frais_tot');if(fraisTotEl)fraisTotEl.textContent=totalFraisHT>0?eur(totalFraisHT):'—';
-  const fraisTvaEl=document.getElementById('mvt_frais_tva');if(fraisTvaEl)fraisTvaEl.textContent=totalFraisHT>0?eur(tvaFrais):'—';
-  const globalEl=document.getElementById('mvt_total_global');if(globalEl)globalEl.textContent=(tot||totalFraisHT)?eur(totalGlobal):'—';
+  const tvaEl=document.getElementById('mvt_tva');if(tvaEl)tvaEl.textContent=totalGlobal>0?eur(tvaGlobal):'—';
+  const globalEl=document.getElementById('mvt_total_global');if(globalEl)globalEl.textContent=totalGlobal>0?eur(totalGlobal):'—';
 }
 async function saveMvt(){
   const matId=(document.getElementById('mvt_mat')||{}).value;
@@ -5545,8 +5544,8 @@ async function saveMvt(){
   const prixU=parseFloat((document.getElementById('mvt_prix_u')||{}).value||0)||0;
   const fourn=(document.getElementById('mvt_fourn')||{}).value||'';
   const totalHT=qte*prixU;
-  const tvaRecup=['entree','reception'].includes(sens)?totalHT*(tvaRate()/100):0;
-  // Frais externes
+  const tvaRecup=['entree','reception'].includes(sens)?(totalHT+totalFraisHT)*(tvaRate()/100):0;
+  const totalHTGlobal=totalHT+totalFraisHT;
   const fraisRows=[...document.querySelectorAll('.frais-ht')];
   const fraisLabels=[...document.querySelectorAll('.frais-label')];
   const frais=fraisRows.map((el,i)=>({label:(fraisLabels[i]||{}).value||'Frais',ht:parseFloat(el.value)||0})).filter(f=>f.ht>0);
@@ -5558,8 +5557,8 @@ async function saveMvt(){
   const r=dossierNum?getRecs().find(x=>x.dossier===dossierNum):null;
   const mvts=getMvts();
   mvts.push({id:uid(),materielId:matId,sens,qte,date:Date.now(),
-    fournisseurNom:fourn,prixUnitaireHT:prixU,totalHT,tvaRecup,
-    frais,totalFraisHT,tvaFrais,
+    fournisseurNom:fourn,prixUnitaireHT:prixU,totalHT:totalHTGlobal,tvaRecup,
+    frais,totalFraisHT,
     dossierId:r?r.id:null,lieu,notes,user:ME.prenom});
   save('egncrm_stock_mvt',mvts);
   closeModal();renderStock();toast('Mouvement enregistré ✓','ok');
