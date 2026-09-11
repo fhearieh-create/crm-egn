@@ -5089,9 +5089,12 @@ function renderStockCatalogue(){
   mats.forEach(m=>{
     const stype=STOCK_TYPES[m.typeStock||'stock_fixe'];
     const op=getProducts().find(p=>p.id===m.operationId||p.name===m.operation);
-    const field=op?(op.fields||[]).find(f=>f.id===m.champDossier):null;
-    const trigStat=m.statutDeclencheur?getStatuses().find(s=>s.id===m.statutDeclencheur):null;
-    const champLabel=field?esc(field.label||field.key||field.id):`<span class="muted">—</span>`;
+    const champs=[].concat(m.champsDossier||m.champDossier||[]).filter(Boolean);
+    const champLabels=champs.map(cid=>{
+      const f=op?(op.fields||[]).find(x=>x.id===cid):null;
+      return f?esc(f.label||f.key||f.id):cid;
+    });
+    const champLabel=champLabels.length?champLabels.join(' + '):`<span class="muted">—</span>`;
     const statLabel=trigStat?`<span style="background:${trigStat.color||'#ddd'}22;color:${trigStat.color||'#666'};border-radius:5px;padding:1px 7px;font-size:.72rem;font-weight:700">${esc(trigStat.name)}</span>`:`<span class="muted">—</span>`;
     h+=`<tr>
       <td><div style="font-weight:700">${esc(m.nom)}</div><div class="muted" style="font-size:.7rem">${esc(m.reference||'')}</div></td>
@@ -5129,8 +5132,8 @@ function openMatModal(id){
     <div class="fld"><label>Opération liée <span class="muted" style="font-size:.62rem">(filtre les dossiers)</span></label>
       <select id="mat_op_id" onchange="updateMatOpFields()">${opsOpts}</select>
     </div>
-    <div class="fld"><label>Champ à lire dans le dossier <span class="muted" style="font-size:.62rem">(quantité utilisée)</span></label>
-      <select id="mat_champ">${fieldOpts||`<option value="">— Sélectionnez une opération d'abord —</option>`}</select>
+    <div class="fld" style="grid-column:1/-1"><label>Champ(s) à lire dans le dossier <span class="muted" style="font-size:.62rem">(quantités sommées — Ctrl+clic pour sélectionner plusieurs)</span></label>
+      <select id="mat_champ" multiple size="4" style="height:auto;min-height:80px">${fieldOpts||`<option value="">— Sélectionnez une opération d'abord —</option>`}</select>
     </div>
     <div class="fld" style="grid-column:1/-1"><label>Statut déclencheur <span class="muted" style="font-size:.62rem">(les dossiers à ce statut ou après comptent comme "sortie")</span></label>
       <select id="mat_statut">${statOpts}</select>
@@ -5147,13 +5150,14 @@ function openMatModal(id){
   // Après rendu DOM, setter la valeur du champ sélectionné
   setTimeout(()=>{
     const champSel=document.getElementById('mat_champ');
-    if(champSel&&o.champDossier){
-      // Re-remplir les options si nécessaire
-      if(!champSel.querySelector(`option[value="${o.champDossier}"]`)&&selectedOp){
-        const fields=selectedOp.fields||[];
+    if(champSel&&selectedOp){
+      const fields=selectedOp.fields||[];
+      if(!champSel.options.length||champSel.options[0].value===''){
         champSel.innerHTML=fields.map(f=>`<option value="${f.id}">${esc(f.label||f.key||f.id)}</option>`).join('');
       }
-      champSel.value=o.champDossier;
+      // Sélectionner les champs sauvegardés (nouveau format tableau ou ancien format string)
+      const saved=[].concat(o.champsDossier||o.champDossier||[]).filter(Boolean);
+      [...champSel.options].forEach(opt=>{opt.selected=saved.includes(opt.value);});
     }
   },50);
 }
@@ -5163,8 +5167,9 @@ function updateMatOpFields(){
   const op=getProducts().find(p=>p.id===opId);
   const fields=(op?op.fields||[]:[]);
   const sel=document.getElementById('mat_champ');if(!sel)return;
+  const current=STOCK_DRAFT?[].concat(STOCK_DRAFT.champsDossier||STOCK_DRAFT.champDossier||[]):[];
   sel.innerHTML=fields.length
-    ?fields.map(f=>`<option value="${esc(f.id)}">${esc(f.label||f.key||f.id)}</option>`).join('')
+    ?fields.map(f=>`<option value="${esc(f.id)}" ${current.includes(f.id)?'selected':''}>${esc(f.label||f.key||f.id)}</option>`).join('')
     :`<option value="">— Aucun champ disponible —</option>`;
 }
 function saveMat(){
@@ -5176,7 +5181,7 @@ function saveMat(){
     reference:(document.getElementById('mat_ref')||{}).value||'',
     operationId:opId,
     operation:op?op.name:'',
-    champDossier:(document.getElementById('mat_champ')||{}).value||'',
+    champsDossier:[...((document.getElementById('mat_champ')||{}).selectedOptions||[])].map(o=>o.value).filter(Boolean),
     statutDeclencheur:(document.getElementById('mat_statut')||{}).value||'',
     typeStock:(document.getElementById('mat_type')||{}).value||'stock_fixe',
     fournisseur:(document.getElementById('mat_fourn')||{}).value||'',
@@ -5205,20 +5210,21 @@ function calcSortiesAuto(mat){
     const s=stats.find(x=>x.id===r.statusId);
     return s&&(s.order??999)>=triggerOrder;
   });
-  // Sommer le champ — les valeurs sont dans r.opFields[champId]
-  // mat.champDossier peut être un id ou une key, on cherche les deux
+  // Sommer tous les champs configurés (champsDossier = tableau, rétrocompat champDossier)
+  const champs=[].concat(mat.champsDossier||mat.champDossier||[]).filter(Boolean);
+  if(!champs.length)return 0;
   let total=0;
   recs.forEach(r=>{
     if(!r.opFields)return;
-    // Chercher directement par l'id du champ
-    let val=r.opFields[mat.champDossier];
-    // Si pas trouvé, chercher par key dans les fields de l'opération
-    if(val==null){
-      const op=getProducts().find(p=>p.id===r.productId);
-      const field=(op?op.fields||[]:[] ).find(f=>f.key===mat.champDossier||f.label===mat.champDossier);
-      if(field)val=r.opFields[field.id];
-    }
-    total+=parseFloat(val)||0;
+    champs.forEach(champId=>{
+      let val=r.opFields[champId];
+      if(val==null){
+        const op=getProducts().find(p=>p.id===r.productId);
+        const field=(op?op.fields||[]:[] ).find(f=>f.key===champId||f.label===champId);
+        if(field)val=r.opFields[field.id];
+      }
+      total+=parseFloat(val)||0;
+    });
   });
   return Math.round(total*100)/100;
 }
