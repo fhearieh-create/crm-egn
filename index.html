@@ -711,7 +711,9 @@ function getDefaultTvaMode(r,key){
 function effectiveTvaMode(r,key){const c=comptaOf(r);return(c.tvaModes||{})[key]||getDefaultTvaMode(r,key);}
 function tvaLine(r,key,montantTTC){
   const mode=effectiveTvaMode(r,key);
-  return mode==='ht'?{paye:htOf(montantTTC),tvaRecup:tvaOf(montantTTC),mode:'ht'}:{paye:montantTTC,tvaRecup:0,mode:'ttc'};
+  if(mode==='ht')return{paye:htOf(montantTTC),tvaRecup:tvaOf(montantTTC),mode:'ht'};
+  if(mode==='sans_tva')return{paye:montantTTC,tvaRecup:0,tvaNA:true,mode:'sans_tva'};
+  return{paye:montantTTC,tvaRecup:0,mode:'ttc'};
 }
 async function saveTvaMode(recId,key,mode){
   const r=recById(recId);if(!r)return;
@@ -2698,9 +2700,14 @@ function ovLine(r,key,label,autoMontant,c){
   // Toggle HT/TTC
   const tvaMode=effectiveTvaMode(r,key);
   const tl=tvaLine(r,key,montant);
-  const tvaBadge=`<button onclick="saveTvaMode('${r.id}','${key}','${tvaMode==='ht'?'ttc':'ht'}')" style="font-size:.62rem;font-weight:700;border:1px solid;border-radius:5px;padding:1px 6px;margin-left:4px;cursor:pointer;${tvaMode==='ht'?'background:#EAF3DE;color:#3D7A1E;border-color:#7CC242':'background:#EEF0F2;color:#6b7785;border-color:#d8dde0'}" title="Cliquer pour basculer HT/TTC">${tvaMode==='ht'?'HT ✓':'TTC'}</button>`;
+  const nextMode=tvaMode==='ttc'?'ht':tvaMode==='ht'?'sans_tva':'ttc';
+  const tvaBadgeLabel=tvaMode==='ht'?'HT ✓':tvaMode==='sans_tva'?'Sans TVA':' TTC';
+  const tvaBadgeColor=tvaMode==='ht'?'background:#EAF3DE;color:#3D7A1E;border-color:#7CC242':tvaMode==='sans_tva'?'background:#EFE9FC;color:#5B3AAA;border-color:#9B72E8':'background:#EEF0F2;color:#6b7785;border-color:#d8dde0';
+  const tvaBadge=`<button onclick="saveTvaMode('${r.id}','${key}','${nextMode}')" style="font-size:.62rem;font-weight:700;border:1px solid;border-radius:5px;padding:1px 6px;margin-left:4px;cursor:pointer;${tvaBadgeColor}" title="Cliquer pour changer (TTC → HT → Sans TVA)">${tvaBadgeLabel}</button>`;
   const tvaInfo=tvaMode==='ht'
     ?`<span class="muted" style="font-size:.6rem;display:block;text-align:right">Payé HT : ${eur(tl.paye)} · TVA récup. : ${eur(tl.tvaRecup)}</span>`
+    :tvaMode==='sans_tva'
+    ?`<span class="muted" style="font-size:.6rem;display:block;text-align:right">Sans TVA (autoentrepreneur)</span>`
     :`<span class="muted" style="font-size:.6rem;display:block;text-align:right">HT ${eur(htOf(montant))} · TVA ${eur(tvaOf(montant))}</span>`;
   return `<span class="il" style="display:flex;align-items:center;flex-wrap:wrap;gap:.2rem;min-width:0">${label}${badge}${editBtn}${tvaBadge}</span><span class="iv" style="flex-shrink:0">${eur(montant)}${tvaInfo}</span>`;
 }
@@ -5587,6 +5594,7 @@ function renderSourceEditor(){
       <div style="display:flex;gap:.5rem;flex-wrap:wrap">
         <label style="display:flex;align-items:center;gap:.4rem;cursor:pointer;font-size:.85rem"><input type="radio" name="src_tva" value="ttc" ${(o.tvaMode||'ttc')==='ttc'?'checked':''}>Paiement TTC</label>
         <label style="display:flex;align-items:center;gap:.4rem;cursor:pointer;font-size:.85rem"><input type="radio" name="src_tva" value="ht" ${o.tvaMode==='ht'?'checked':''}>Paiement HT <span class="muted" style="font-size:.72rem">(TVA récupérable)</span></label>
+        <label style="display:flex;align-items:center;gap:.4rem;cursor:pointer;font-size:.85rem"><input type="radio" name="src_tva" value="sans_tva" ${o.tvaMode==='sans_tva'?'checked':''}>Sans TVA <span class="muted" style="font-size:.72rem">(autoentrepreneur)</span></label>
       </div>
     </div>
     <div class="sectitle" style="margin-top:.8rem">Tarification call center <span style="font-weight:500;text-transform:none;letter-spacing:0;color:var(--text-mut)">(par opération — prix fixe par RDV, au m² selon la surface habitable, ou % du devis)</span></div>
@@ -5655,8 +5663,9 @@ function renderPoseurEditor(){
   let body=`<div class="fld"><label>Nom de la famille</label><input id="pz_name" value="${esc(o.name)}" placeholder="Ex : Équipe Nord, Sté Dupont Isolation…"></div>
     <div class="fld" style="margin-top:.6rem"><label>Mode de paiement par défaut <span class="muted" style="font-size:.62rem">(modifiable dossier par dossier)</span></label>
       <div style="display:flex;gap:.5rem;flex-wrap:wrap">
-        <label style="display:flex;align-items:center;gap:.4rem;cursor:pointer;font-size:.85rem"><input type="radio" name="pz_tva" id="pz_tva_ttc" value="ttc" ${(o.tvaMode||'ttc')==='ttc'?'checked':''}>Paiement TTC <span class="muted" style="font-size:.72rem">(le montant inclut la TVA — tu ne récupères pas la TVA)</span></label>
-        <label style="display:flex;align-items:center;gap:.4rem;cursor:pointer;font-size:.85rem"><input type="radio" name="pz_tva" id="pz_tva_ht" value="ht" ${o.tvaMode==='ht'?'checked':''}>Paiement HT <span class="muted" style="font-size:.72rem">(le montant est HT — la TVA est récupérable)</span></label>
+        <label style="display:flex;align-items:center;gap:.4rem;cursor:pointer;font-size:.85rem"><input type="radio" name="pz_tva" id="pz_tva_ttc" value="ttc" ${(o.tvaMode||'ttc')==='ttc'?'checked':''}>Paiement TTC <span class="muted" style="font-size:.72rem">(TVA non récupérable)</span></label>
+        <label style="display:flex;align-items:center;gap:.4rem;cursor:pointer;font-size:.85rem"><input type="radio" name="pz_tva" id="pz_tva_ht" value="ht" ${o.tvaMode==='ht'?'checked':''}>Paiement HT <span class="muted" style="font-size:.72rem">(TVA récupérable)</span></label>
+        <label style="display:flex;align-items:center;gap:.4rem;cursor:pointer;font-size:.85rem"><input type="radio" name="pz_tva" value="sans_tva" ${o.tvaMode==='sans_tva'?'checked':''}>Sans TVA <span class="muted" style="font-size:.72rem">(autoentrepreneur — pas de TVA)</span></label>
       </div>
     </div>
     <div class="sectitle">Tarification <span style="font-weight:500;text-transform:none;letter-spacing:0;color:var(--text-mut)">(par opération — % du devis, prix fixe, tarif journalier, ou au m²)</span></div>
