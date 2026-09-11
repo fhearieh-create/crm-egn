@@ -2903,37 +2903,49 @@ function renderComptaResume(){
     <div class="kpi"><div class="kico">🧰</div><div class="klab">À verser aux VT</div><div class="kval">${eur(sumVt)}</div><div class="ksub">HT ${eur(htOf(sumVt))} · ${Object.keys(byVt).length} société${Object.keys(byVt).length>1?'s':''}</div></div>
     <div class="kpi"><div class="kico">📝</div><div class="klab">À verser aux auditeurs</div><div class="kval">${eur(sumAud)}</div><div class="ksub">HT ${eur(htOf(sumAud))} · ${Object.keys(byAud).length} auditeur${Object.keys(byAud).length>1?'s':''}</div></div>
   </div>`;
-  // Calculer la TVA récupérable sur toutes les lignes en mode HT
-  let totTvaRecup=0;
+  // Calculer la TVA récupérable et le détail par mode
+  let totTvaRecup=0,totSansTva=0,totTvaNonRecup=0;
   recs.forEach(r=>{
     const m=recordComptaMetrics(r);
     ['poseur','callcenter','vt','audit'].forEach(key=>{
       const montant=key==='poseur'?m.pc.montant:key==='callcenter'?m.ccC.montant:key==='vt'?m.vtC.montant:m.auditC.montant;
+      if(!montant)return;
       const tl=tvaLine(r,key,montant);
-      totTvaRecup+=tl.tvaRecup;
+      if(tl.mode==='ht')totTvaRecup+=tl.tvaRecup;
+      else if(tl.mode==='sans_tva')totSansTva+=montant;
+      else totTvaNonRecup+=tvaOf(montant);
     });
   });
-  if(totTvaRecup>0){
-    h+=`<div style="background:rgba(45,125,210,.07);border:1px solid rgba(45,125,210,.2);border-radius:10px;padding:.8rem 1.1rem;margin-bottom:1rem;display:flex;align-items:center;gap:1rem;flex-wrap:wrap">
-      <span style="font-size:1.2rem">🏦</span>
-      <div><div style="font-size:.72rem;font-weight:700;color:#1A5FD4;text-transform:uppercase;letter-spacing:.4px">TVA récupérable sur charges payées HT</div>
-      <div style="font-size:1.1rem;font-weight:800;color:#1A5FD4">${eur(totTvaRecup)}</div>
-      <div style="font-size:.7rem;color:var(--text-mut)">Correspond aux lignes de charge configurées en mode « Paiement HT » — TVA déductible sur votre déclaration.</div></div>
-    </div>`;}
-  // par poseur
+  if(totTvaRecup>0||totSansTva>0){
+    h+=`<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:.6rem;margin-bottom:1rem">`;
+    if(totTvaRecup>0)h+=`<div style="background:rgba(45,125,210,.07);border:1px solid rgba(45,125,210,.2);border-radius:10px;padding:.75rem 1rem;display:flex;align-items:center;gap:.8rem"><span style="font-size:1.1rem">🏦</span><div><div style="font-size:.68rem;font-weight:700;color:#1A5FD4;text-transform:uppercase;letter-spacing:.4px">TVA récupérable (charges HT)</div><div style="font-size:1rem;font-weight:800;color:#1A5FD4">${eur(totTvaRecup)}</div></div></div>`;
+    if(totSansTva>0)h+=`<div style="background:rgba(91,58,170,.07);border:1px solid rgba(91,58,170,.2);border-radius:10px;padding:.75rem 1rem;display:flex;align-items:center;gap:.8rem"><span style="font-size:1.1rem">🧾</span><div><div style="font-size:.68rem;font-weight:700;color:#5B3AAA;text-transform:uppercase;letter-spacing:.4px">Charges sans TVA (autoentrepreneurs)</div><div style="font-size:1rem;font-weight:800;color:#5B3AAA">${eur(totSansTva)}</div></div></div>`;
+    h+=`</div>`;
+  }  // par poseur
   h+=`<div class="panel"><div class="panel-h"><h3>Rentabilité par poseur</h3></div><div class="panel-b">`;
   const poseurKeys=Object.keys(byPoseur);
   if(!poseurKeys.length)h+=`<div class="empty"><div class="big">🔧</div>Aucun dossier avec poseur assigné.</div>`;
-  else{h+=`<div class="tbl-wrap"><table class="tbl"><thead><tr><th>Poseur</th><th>Dossiers</th><th style="text-align:right">Total à verser</th><th></th></tr></thead><tbody>`;
-    poseurKeys.forEach(k=>{const u=userById(k);const x=byPoseur[k];h+=`<tr><td>${u?esc(u.prenom+' '+u.nom):'—'}</td><td>${x.nb}</td><td style="text-align:right;font-weight:700">${ttcHt(x.aPayer)}</td><td style="text-align:right"><button class="btn btn-ghost btn-sm" onclick="COMPTA_TAB='facturation';FACT_TYPE='poseur';FACT_AGENT='${k}';renderComptaGlobal()">📄 Facturer</button></td></tr>`;});
+  else{h+=`<div class="tbl-wrap"><table class="tbl"><thead><tr><th>Poseur</th><th>Dossiers</th><th>Mode TVA</th><th style="text-align:right">Total à verser</th><th></th></tr></thead><tbody>`;
+    poseurKeys.forEach(k=>{
+      const u=userById(k);const x=byPoseur[k];
+      const fam=load('egncrm_poseurs',[]).find(f=>(f.userIds||[]).includes(k));
+      const mode=fam?fam.tvaMode||'ttc':'ttc';
+      const modeBadge=mode==='ht'?`<span style="font-size:.7rem;background:#EAF3DE;color:#3D7A1E;border-radius:5px;padding:1px 6px">HT</span>`:mode==='sans_tva'?`<span style="font-size:.7rem;background:#EFE9FC;color:#5B3AAA;border-radius:5px;padding:1px 6px">Sans TVA</span>`:`<span style="font-size:.7rem;background:#EEF0F2;color:#6b7785;border-radius:5px;padding:1px 6px">TTC</span>`;
+      h+=`<tr><td>${u?esc(u.prenom+' '+u.nom):'—'}</td><td>${x.nb}</td><td>${modeBadge}</td><td style="text-align:right;font-weight:700">${ttcHt(x.aPayer)}</td><td style="text-align:right"><button class="btn btn-ghost btn-sm" onclick="COMPTA_TAB='facturation';FACT_TYPE='poseur';FACT_AGENT='${k}';renderComptaGlobal()">📄 Facturer</button></td></tr>`;
+    });
     h+=`</tbody></table></div>`;}
   h+=`</div></div>`;
   // par call center (source / régie)
   h+=`<div class="panel"><div class="panel-h"><h3>Rentabilité par call center (Source / Régie)</h3></div><div class="panel-b">`;
   const ccKeys=Object.keys(byCc);
   if(!ccKeys.length)h+=`<div class="empty"><div class="big">📞</div>Aucun dossier avec un coût call center calculé.</div>`;
-  else{h+=`<div class="tbl-wrap"><table class="tbl"><thead><tr><th>Source / Régie</th><th>Dossiers</th><th style="text-align:right">Total à verser</th><th></th></tr></thead><tbody>`;
-    ccKeys.forEach(k=>{const src=getSources().find(s=>s.id===k);const x=byCc[k];h+=`<tr><td>${src?esc(src.name):'—'}</td><td>${x.nb}</td><td style="text-align:right;font-weight:700">${ttcHt(x.aPayer)}</td><td style="text-align:right"><button class="btn btn-ghost btn-sm" onclick="COMPTA_TAB='facturation';FACT_TYPE='callcenter';FACT_AGENT='${k}';renderComptaGlobal()">📄 Facturer</button></td></tr>`;});
+  else{h+=`<div class="tbl-wrap"><table class="tbl"><thead><tr><th>Source / Régie</th><th>Dossiers</th><th>Mode TVA</th><th style="text-align:right">Total à verser</th><th></th></tr></thead><tbody>`;
+    ccKeys.forEach(k=>{
+      const src=getSources().find(s=>s.id===k);const x=byCc[k];
+      const mode=src?src.tvaMode||'ttc':'ttc';
+      const modeBadge=mode==='ht'?`<span style="font-size:.7rem;background:#EAF3DE;color:#3D7A1E;border-radius:5px;padding:1px 6px">HT</span>`:mode==='sans_tva'?`<span style="font-size:.7rem;background:#EFE9FC;color:#5B3AAA;border-radius:5px;padding:1px 6px">Sans TVA</span>`:`<span style="font-size:.7rem;background:#EEF0F2;color:#6b7785;border-radius:5px;padding:1px 6px">TTC</span>`;
+      h+=`<tr><td>${src?esc(src.name):'—'}</td><td>${x.nb}</td><td>${modeBadge}</td><td style="text-align:right;font-weight:700">${ttcHt(x.aPayer)}</td><td style="text-align:right"><button class="btn btn-ghost btn-sm" onclick="COMPTA_TAB='facturation';FACT_TYPE='callcenter';FACT_AGENT='${k}';renderComptaGlobal()">📄 Facturer</button></td></tr>`;
+    });
     h+=`</tbody></table></div>`;}
   h+=`</div></div>`;
   // par société de visite technique
