@@ -489,6 +489,7 @@ const SYNC_TABLES=[
   {key:'egncrm_doctemplates',table:'cfg_doc_templates',shape:'blob'},
   {key:'egncrm_materiels',table:'cfg_materiels',shape:'blob'},
   {key:'egncrm_stock_mvt',table:'stock_mouvements',shape:'blob'},
+  {key:'egncrm_apf_deleg',table:'apf_delegataires',shape:'blob'},
   {key:'egncrm_settings',table:'cfg_societe',shape:'single'}
 ];
 function save(k,v){
@@ -3478,25 +3479,54 @@ function renderComptaDelegataires(){
   if(myApfs.length){
     h+=`<div class="panel"><div class="panel-h"><h3>APF délégataires — ${esc(deleg.name)}</h3></div><div class="panel-b">
       <div class="tbl-wrap"><table class="tbl">
-        <thead><tr><th>N° APF délégataire</th><th>Date</th><th>Dossiers</th><th class="r">Total prime</th><th>Statut</th><th class="r">Actions</th></tr></thead><tbody>`;
+        <thead><tr><th>N° APF délégataire</th><th>Date</th><th>Dossiers</th><th class="r">Total prime</th><th>Statut</th><th>Pièce jointe</th><th class="r">Actions</th></tr></thead><tbody>`;
     myApfs.forEach(a=>{
-      const tot=( a.recIds||[]).reduce((s,rid)=>{const r=recById(rid);return s+(r?dealOf(r).prime||0:0);},0);
+      const tot=(a.recIds||[]).reduce((s,rid)=>{const r=recById(rid);return s+(r?dealOf(r).prime||0:0);},0);
       const statSel=`<select onchange="saveApfDelegStatut('${a.id}',this.value)" style="font-family:'Saira',sans-serif;font-size:.75rem;font-weight:700;border:none;border-radius:7px;padding:3px 8px;cursor:pointer;${a.statut==='recu'?'background:#E6F7F0;color:#0F6E56':'background:#FFF4E5;color:#B96A0A'}">
         <option value="attente" ${a.statut!=='recu'?'selected':''}>⏳ En attente de virement</option>
         <option value="recu" ${a.statut==='recu'?'selected':''}>✅ Virement reçu</option>
       </select>`;
+      const pjCell=a.fileUrl
+        ?`<div style="display:flex;align-items:center;gap:.3rem"><a href="${a.fileUrl}" target="_blank" style="font-size:.72rem;color:var(--blue);font-weight:600;text-decoration:none">📎 ${esc(a.fileName||'Voir')}</a><button class="iconbtn del" style="font-size:.65rem;padding:1px 3px" onclick="deleteApfDelegFile('${a.id}')" title="Supprimer">✕</button></div>`
+        :`<label style="cursor:pointer;display:inline-flex;align-items:center;gap:.2rem;font-size:.72rem;font-weight:600;color:var(--blue)"><input type="file" accept=".pdf,image/*" style="display:none" onchange="uploadApfDelegFile('${a.id}',this)">📎 Joindre</label>`;
       h+=`<tr>
         <td><span class="dossier-tag">${esc(a.numApf||'—')}</span></td>
         <td class="muted">${new Date(a.date).toLocaleDateString('fr-FR')}</td>
         <td>${(a.recIds||[]).length} dossier${(a.recIds||[]).length>1?'s':''}</td>
         <td style="text-align:right;font-weight:700">${eur(tot)}</td>
         <td>${statSel}</td>
+        <td>${pjCell}</td>
         <td style="text-align:right"><button class="iconbtn del" onclick="supprimerApfDeleg('${a.id}')" title="Supprimer">🗑️</button></td>
       </tr>`;
     });
     h+=`</tbody></table></div></div></div>`;
   }
   document.getElementById('comptaBody').innerHTML=h;
+}
+async function uploadApfDelegFile(apfId,input){
+  const file=input.files[0];if(!file)return;
+  if(file.size>10*1024*1024){toast('Fichier trop lourd (max 10 Mo)','err');return;}
+  toast('Envoi en cours…','ok');
+  try{
+    const fid=uid();const ext=file.name.split('.').pop();
+    const path=`apf_deleg/${apfId}/${fid}.${ext}`;
+    const{error}=await SUPA.storage.from('attachments').upload(path,file,{cacheControl:'3600',upsert:false});
+    if(error)throw error;
+    const{data:pub}=SUPA.storage.from('attachments').getPublicUrl(path);
+    const apfs=load('egncrm_apf_deleg',[]);
+    const a=apfs.find(x=>x.id===apfId);if(!a)return;
+    a.fileUrl=pub.publicUrl;a.filePath=path;a.fileName=file.name;
+    save('egncrm_apf_deleg',apfs);
+    toast('Document joint ✓','ok');renderComptaDelegataires();
+  }catch(e){toast('Échec : '+(e.message||e),'err');}
+}
+async function deleteApfDelegFile(apfId){
+  const apfs=load('egncrm_apf_deleg',[]);
+  const a=apfs.find(x=>x.id===apfId);if(!a)return;
+  if(a.filePath){try{await SUPA.storage.from('attachments').remove([a.filePath]);}catch(e){}}
+  delete a.fileUrl;delete a.filePath;delete a.fileName;
+  save('egncrm_apf_deleg',apfs);
+  toast('Document supprimé ✓','ok');renderComptaDelegataires();
 }
 function selectDelegTab(val){save('egncrm_deleg_tab_sel',val);renderComptaDelegataires();}
 function toggleDelegFilter(val){save('egncrm_deleg_tab_filter',val?'1':'0');renderComptaDelegataires();}
