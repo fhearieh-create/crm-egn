@@ -3027,7 +3027,14 @@ function renderComptaFacturation(){
         const op=getProducts().find(o=>o.id===r.productId);
         const dejaFact=factureActive(r,FACT_TYPE);
         const dejaTag=dejaFact?`<span style="font-size:.62rem;background:#FFF4E5;color:#B96A0A;border-radius:4px;padding:1px 5px;margin-left:4px">Déjà facturé</span>`:'';
-        return `<div class="cfg-item" style="${dejaFact?'opacity:.8':''}"><input type="checkbox" class="fact_chk" data-rid="${r.id}" data-montant="${at.montantFn(m)}" ${dejaFact?'':'checked'} style="margin-right:.3rem"><span class="nm"><span class="dossier-tag" style="margin-right:.4rem">${esc(r.dossier||'—')}</span>${esc(clientNameOf(r))}${dejaTag}<span class="muted" style="font-weight:400"> — ${op?esc(op.name):''}</span></span><span class="tag" style="background:rgba(45,125,210,.12);color:#2D7DD2">${eur(at.montantFn(m))} <span style="font-size:.62rem;font-weight:500">· HT ${eur(htOf(at.montantFn(m)))}</span></span></div>`;
+        const tvaKey=FACT_TYPE==='callcenter'?'callcenter':FACT_TYPE;
+        const tvaM=effectiveTvaMode(r,tvaKey);
+        const montantTag=tvaM==='sans_tva'
+          ?`${eur(at.montantFn(m))} <span style="font-size:.62rem;font-weight:500;color:#5B3AAA">Sans TVA</span>`
+          :tvaM==='ht'
+          ?`${eur(at.montantFn(m))} <span style="font-size:.62rem;font-weight:500">· payé HT</span>`
+          :`${eur(at.montantFn(m))} <span style="font-size:.62rem;font-weight:500">· HT ${eur(htOf(at.montantFn(m)))}</span>`;
+        return `<div class="cfg-item" style="${dejaFact?'opacity:.8':''}"><input type="checkbox" class="fact_chk" data-rid="${r.id}" data-montant="${at.montantFn(m)}" ${dejaFact?'':'checked'} style="margin-right:.3rem"><span class="nm"><span class="dossier-tag" style="margin-right:.4rem">${esc(r.dossier||'—')}</span>${esc(clientNameOf(r))}${dejaTag}<span class="muted" style="font-weight:400"> — ${op?esc(op.name):''}</span></span><span class="tag" style="background:rgba(45,125,210,.12);color:#2D7DD2">${montantTag}</span></div>`;
       }).join('')+`</div>
       <label style="display:flex;align-items:center;gap:.5rem;margin-top:1rem;cursor:${agentInfo&&agentInfo.email?'pointer':'not-allowed'}"><input type="checkbox" id="fact_sendmail" ${agentInfo&&agentInfo.email?'':'disabled'}> Envoyer aussi par e-mail à ${agentInfo&&agentInfo.email?esc(agentInfo.email):'(aucun email renseigné pour ce partenaire)'}</label>
       <button class="btn btn-pri" style="margin-top:1rem" onclick="genererFactureAgent()">📄 Générer le document d'appel à facturation</button>`;
