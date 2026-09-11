@@ -2295,7 +2295,17 @@ function renderDossier(r){
   let opf='';
   if(op&&op.fields){
     const rows=op.fields.filter(f=>!CANON_KEYS[f.key]&&f.key!=='adresse_travaux_diff').map(f=>{const v=(r.opFields&&r.opFields[f.id])||'';return v?row(f.label,v):'';}).join('');
-    if(rows)opf=`<div class="panel"><div class="panel-h"><h3>Informations — ${esc(op.name)}</h3></div><div class="panel-b">${rows}</div></div>`;
+    // Fournisseur lié à ce dossier (depuis le catalogue stock)
+    const matsLies=getMats().filter(m=>m.operationId===r.productId||(m.operation&&m.operation===op.name));
+    let fournRow='';
+    if(matsLies.length){
+      const allFourns=[...new Set(matsLies.flatMap(m=>(m.fournisseurs||[]).map(f=>f.nom).filter(Boolean)))];
+      if(allFourns.length){
+        const cur=r.fournisseurDossier||'';
+        fournRow=`<div class="info-row"><span class="il" style="font-weight:600">🏭 Fournisseur matériel</span><span class="iv"><select onchange="saveFournisseurDossier('${r.id}',this.value)" style="font-family:'Saira',sans-serif;font-size:.82rem;padding:.28rem .6rem;border-radius:7px;border:1.5px solid var(--border-grey);background:#fff"><option value="">— Non renseigné —</option>${allFourns.map(f=>`<option value="${esc(f)}" ${cur===f?'selected':''}>${esc(f)}</option>`).join('')}</select></span></div>`;
+      }
+    }
+    if(rows||fournRow)opf=`<div class="panel"><div class="panel-h"><h3>Informations — ${esc(op.name)}</h3></div><div class="panel-b">${rows}${fournRow}</div></div>`;
   }
   let rappelP=`<div class="panel"><div class="panel-h"><h3>⏰ Rappel</h3></div><div class="panel-b">`;
   if(r.rappelDate){
@@ -4185,6 +4195,13 @@ function supprimerDoublon(id){
     go('leads');
   });
 }
+function saveFournisseurDossier(id,val){
+  const recs=getRecs();const r=recs.find(x=>x.id===id);if(!r)return;
+  r.fournisseurDossier=val||null;r.updated=Date.now();
+  r.history=r.history||[];
+  if(val)r.history.unshift({date:Date.now(),user:ME.prenom,text:`Fournisseur matériel : ${val}`});
+  save(K.recs,recs);toast('Fournisseur enregistré ✓','ok');
+}
 function saveCrmDevis(id,val){
   const recs=getRecs();const r=recs.find(x=>x.id===id);if(!r)return;
   r.crmDevis=val||null;r.updated=Date.now();
@@ -5162,7 +5179,7 @@ function renderStockEtat(){
           const stat=getStatuses().find(s=>s.id===r.statusId);
           // Trouver le dernier fournisseur utilisé avant ce dossier
           const mvtEntrees=getMvts().filter(v=>v.materielId===m.id&&v.sens==='entree'&&v.fournisseurNom).sort((a,b)=>(b.date||0)-(a.date||0));
-          const fourn=mvtEntrees.length?mvtEntrees[0].fournisseurNom:'—';
+          const fourn=r.fournisseurDossier||mvtEntrees.length?mvtEntrees[0]?.fournisseurNom||'—':'—';
           h+=`<div style="display:flex;align-items:center;gap:.8rem;padding:.55rem 1.1rem;border-bottom:1px solid var(--border-soft)">
             <span class="dossier-tag" style="cursor:pointer;flex-shrink:0" onclick="openDossier('${r.id}')">${esc(r.dossier||'—')}</span>
             <div style="flex:1"><div style="font-weight:700;font-size:.83rem">${esc(clientNameOf(r))}</div><div class="muted" style="font-size:.7rem">${esc(r.ville||'')}${stat?' · '+esc(stat.name):''}</div></div>
