@@ -3182,8 +3182,12 @@ function renderComptaPaiements(){
     </tr>`;
   });
   h+=`</tbody></table></div>`;
-  h+=`<div style="display:flex;justify-content:flex-end;margin-top:.5rem"><button class="btn btn-navy btn-sm" onclick="exportPaiementsCSV()">📤 Exporter CSV</button></div>`;
+  h+=`<div style="display:flex;justify-content:flex-end;gap:.5rem;margin-top:.5rem"><button class="btn btn-ghost btn-sm" onclick="testStorage()">🔧 Test storage</button><button class="btn btn-navy btn-sm" onclick="exportPaiementsCSV()">📤 Exporter CSV</button></div>`;
   document.getElementById('comptaBody').innerHTML=h;
+}
+async function testStorage(){
+  const r=await SUPA.storage.listBuckets();
+  alert('Buckets: '+JSON.stringify(r.data?.map(b=>b.id))+'\nError: '+JSON.stringify(r.error));
 }
 function voirApfPdf(factureId){
   const f=FACTURES_CACHE&&FACTURES_CACHE.find(x=>x.id===factureId);
@@ -3241,24 +3245,19 @@ async function uploadPaiementApfFile(factureId,input){
   try{
     const fid=uid();const ext=file.name.split('.').pop();
     const path=`paiements/${factureId}/${fid}.${ext}`;
-    const{error:upErr}=await SUPA.storage.from(ATTACH_BUCKET).upload(path,file,{contentType:file.type||'application/octet-stream'});
+    console.log('[upload] bucket=attachments path=',path);
+    const{data:upData,error:upErr}=await SUPA.storage.from('attachments').upload(path,file,{cacheControl:'3600',upsert:false});
+    console.log('[upload] result=',upData,'err=',upErr);
     if(upErr)throw upErr;
-    // Essayer d'abord une URL publique, sinon signed URL
-    let fileUrl='';
-    try{
-      const{data:pub}=SUPA.storage.from(ATTACH_BUCKET).getPublicUrl(path);
-      fileUrl=pub.publicUrl;
-    }catch{
-      const{data:sig,error:sigErr}=await SUPA.storage.from(ATTACH_BUCKET).createSignedUrl(path,60*60*24*365);
-      if(sigErr)throw sigErr;
-      fileUrl=sig.signedUrl;
-    }
+    const{data:sig,error:sigErr}=await SUPA.storage.from('attachments').createSignedUrl(path,60*60*24*365);
+    console.log('[signedUrl] result=',sig,'err=',sigErr);
+    if(sigErr)throw sigErr;
     const f=FACTURES_CACHE&&FACTURES_CACHE.find(x=>x.id===factureId);if(!f)return;
     f.paiements=f.paiements||{};
-    f.paiements.fileUrl=fileUrl;f.paiements.filePath=path;f.paiements.fileName=file.name;
+    f.paiements.fileUrl=sig.signedUrl;f.paiements.filePath=path;f.paiements.fileName=file.name;
     await persistFacture(f);
     toast('Facture jointe ✓','ok');renderComptaPaiements();
-  }catch(e){console.error('[uploadPaiementApfFile]',e);toast('Échec upload : '+(e.message||e),'err');}
+  }catch(e){console.error('[uploadPaiementApfFile]',e);toast('Échec : '+(e.message||JSON.stringify(e)),'err');}
 }
 async function deletePaiementApfFile(factureId){
   const f=FACTURES_CACHE&&FACTURES_CACHE.find(x=>x.id===factureId);if(!f)return;
