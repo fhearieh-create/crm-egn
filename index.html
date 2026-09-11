@@ -858,7 +858,9 @@ async function persistEtude(recId){
 }
 async function loadFactures(){
   try{
+    console.log('[loadFactures] début requête Supabase...');
     const{data,error}=await SUPA.from('factures_agents').select('*').order('created_at',{ascending:false});
+    console.log('[loadFactures] data=',data,'error=',error);
     if(error)throw error;
     FACTURES_CACHE=(data||[]).map(f=>({
       id:f.id,apfNum:f.apf_num,type:f.type,
@@ -867,7 +869,8 @@ async function loadFactures(){
       total:f.total,lignes:f.lignes||[],html:f.html,user:'',
       paiements:f.paiements||{}
     }));
-  }catch(e){console.error('[factures] chargement échoué',e);FACTURES_CACHE=[];toast('⚠️ Impossible de charger l\'historique des factures','err');}
+    console.log('[loadFactures] chargé',FACTURES_CACHE.length,'factures');
+  }catch(e){console.error('[factures] chargement échoué',e);FACTURES_CACHE=[];toast('⚠️ Impossible de charger l\'historique des factures : '+e.message,'err');}
   return FACTURES_CACHE;
 }
 async function persistFacture(f){
@@ -2985,15 +2988,23 @@ function renderComptaFacturation(){
     const at=AGENT_TYPES[FACT_TYPE];
     const agentInfo=at.getAgent(FACT_AGENT);
     const recs=getRecs().filter(r=>at.agentIdFn(r)===FACT_AGENT);
-    const rows=recs.map(r=>({r,m:recordComptaMetrics(r)})).filter(x=>at.montantFn(x.m)>0&&!factureActive(x.r,FACT_TYPE));
+    const showDejaFact=load('egncrm_fact_show_deja','0')==='1';
+    const rows=recs.map(r=>({r,m:recordComptaMetrics(r)})).filter(x=>at.montantFn(x.m)>0&&(showDejaFact||!factureActive(x.r,FACT_TYPE)));
     h+=`<div class="panel"><div class="panel-h"><h3>Dossiers à facturer</h3><div class="sp"><span class="muted">${rows.length} dossier${rows.length>1?'s':''}</span></div></div><div class="panel-b">`;
-    h+=`<p class="muted" style="font-size:.76rem;margin-bottom:.6rem">💡 Les dossiers déjà facturés (statut ≠ Annulé) n'apparaissent plus ici — annulez leur statut pour les refacturer.</p>`;
+    h+=`<div style="display:flex;align-items:center;gap:1rem;margin-bottom:.7rem;flex-wrap:wrap">
+      <p class="muted" style="font-size:.76rem;flex:1">💡 Les dossiers déjà facturés sont masqués par défaut.</p>
+      <label style="display:flex;align-items:center;gap:.4rem;font-size:.82rem;cursor:pointer;white-space:nowrap">
+        <input type="checkbox" ${showDejaFact?'checked':''} onchange="save('egncrm_fact_show_deja',this.checked?'1':'0');renderComptaFacturation()">
+        Afficher aussi les dossiers déjà facturés
+      </label>
+    </div>`;
     if(!rows.length)h+=`<div class="empty"><div class="big">📋</div>Aucun dossier à facturer pour cet agent.</div>`;
     else{
       h+=`<div class="cfg-list">`+rows.map(({r,m})=>{
         const op=getProducts().find(o=>o.id===r.productId);
-        const already='';
-        return `<div class="cfg-item"><input type="checkbox" class="fact_chk" data-rid="${r.id}" data-montant="${at.montantFn(m)}" checked style="margin-right:.3rem"><span class="nm"><span class="dossier-tag" style="margin-right:.4rem">${esc(r.dossier||'—')}</span>${esc(clientNameOf(r))}<span class="muted" style="font-weight:400"> — ${op?esc(op.name):''}</span></span>${already}<span class="tag" style="background:rgba(45,125,210,.12);color:#2D7DD2">${eur(at.montantFn(m))} <span style="font-size:.62rem;font-weight:500">· HT ${eur(htOf(at.montantFn(m)))}</span></span></div>`;
+        const dejaFact=factureActive(r,FACT_TYPE);
+        const dejaTag=dejaFact?`<span style="font-size:.62rem;background:#FFF4E5;color:#B96A0A;border-radius:4px;padding:1px 5px;margin-left:4px">Déjà facturé</span>`:'';
+        return `<div class="cfg-item" style="${dejaFact?'opacity:.8':''}"><input type="checkbox" class="fact_chk" data-rid="${r.id}" data-montant="${at.montantFn(m)}" ${dejaFact?'':'checked'} style="margin-right:.3rem"><span class="nm"><span class="dossier-tag" style="margin-right:.4rem">${esc(r.dossier||'—')}</span>${esc(clientNameOf(r))}${dejaTag}<span class="muted" style="font-weight:400"> — ${op?esc(op.name):''}</span></span><span class="tag" style="background:rgba(45,125,210,.12);color:#2D7DD2">${eur(at.montantFn(m))} <span style="font-size:.62rem;font-weight:500">· HT ${eur(htOf(at.montantFn(m)))}</span></span></div>`;
       }).join('')+`</div>
       <label style="display:flex;align-items:center;gap:.5rem;margin-top:1rem;cursor:${agentInfo&&agentInfo.email?'pointer':'not-allowed'}"><input type="checkbox" id="fact_sendmail" ${agentInfo&&agentInfo.email?'':'disabled'}> Envoyer aussi par e-mail à ${agentInfo&&agentInfo.email?esc(agentInfo.email):'(aucun email renseigné pour ce partenaire)'}</label>
       <button class="btn btn-pri" style="margin-top:1rem" onclick="genererFactureAgent()">📄 Générer le document d'appel à facturation</button>`;
