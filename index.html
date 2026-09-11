@@ -3697,12 +3697,12 @@ function renderComptaTvaRecup(){
       ${dejaRecup>0?`<button class="btn btn-ghost" style="margin-top:1.2rem;color:var(--coral)" onclick="if(confirm('Remettre à zéro ?')){saveTvaRecupVal(0);}">✕ Remettre à zéro</button>`:''}
     </div>
   </div></div>`;
-  if(!rows.length){
-    h+=`<div class="empty"><div class="big">🟢</div>Aucune charge en mode HT pour le moment.<br><span class="muted" style="font-size:.8rem">Configurez le mode de paiement HT dans Paramètres ▸ Poseurs / Sources / VT / Auditeurs.</span></div>`;
+  if(!rows.length&&!tvaStock){
+    h+=`<div class="empty"><div class="big">🟢</div>Aucune TVA récupérable pour le moment.<br><span class="muted" style="font-size:.8rem">Configurez le mode HT dans Paramètres ▸ Poseurs / Sources / VT / Auditeurs, ou ajoutez des entrées de stock avec un prix.</span></div>`;
   } else {
-    h+=`<div class="panel"><div class="panel-h"><h3>Détail par dossier</h3><div class="sp"><span class="muted">${rows.length} dossier${rows.length>1?'s':''}</span></div></div><div class="panel-b">`;
+    h+=`<div class="panel"><div class="panel-h"><h3>Détail</h3><div class="sp"><span class="muted">${rows.length} dossier${rows.length>1?'s':''} · ${tvaStock>0?'+ achats stock':''}</span></div></div><div class="panel-b">`;
     h+=`<div class="tbl-wrap"><table class="tbl">
-      <thead><tr><th>N° Dossier</th><th>Client</th><th>Poste</th><th>Sous-traitant</th><th class="r">Montant HT payé</th><th class="r" style="color:var(--green-deep)">TVA récupérable</th></tr></thead><tbody>`;
+      <thead><tr><th>N° Dossier</th><th>Détail</th><th>Poste</th><th>Sous-traitant</th><th class="r">Montant HT</th><th class="r" style="color:var(--green-deep)">TVA récupérable</th></tr></thead><tbody>`;
     rows.forEach(({r,rowTva,details})=>{
       details.forEach((d,i)=>{
         h+=`<tr>
@@ -3715,7 +3715,6 @@ function renderComptaTvaRecup(){
         </tr>`;
       });
     });
-    h+=`<tr style="background:#f8faf5;font-weight:800"><td colspan="4">Total</td><td style="text-align:right">—</td><td style="text-align:right;color:var(--green-deep)">${eur(totRecup)}</td></tr>`;
     // Lignes d'achats de stock
     if(tvaStock>0){
       const stockRows=mvts.filter(v=>['entree','reception'].includes(v.sens)&&v.tvaRecup>0);
@@ -3723,14 +3722,16 @@ function renderComptaTvaRecup(){
       stockRows.forEach(v=>{
         const mat=mats.find(m=>m.id===v.materielId);
         h+=`<tr>
-          <td colspan="2"><span class="dossier-tag" style="background:rgba(45,125,210,.1);color:var(--blue)">${new Date(v.date).toLocaleDateString('fr-FR')}</span></td>
-          <td>${mat?esc(mat.nom):'—'}</td>
+          <td><span class="dossier-tag" style="background:rgba(45,125,210,.1);color:var(--blue)">${new Date(v.date).toLocaleDateString('fr-FR')}</span></td>
+          <td>${mat?esc(mat.nom):'—'}<div class="muted" style="font-size:.68rem">${v.notes?esc(v.notes):''}</div></td>
           <td>Achat stock</td>
-          <td style="text-align:right">${eur(v.totalHT||0)}</td>
+          <td class="muted" style="font-size:.78rem">${v.qte||'—'} ${mat?esc(mat.unite||'unités'):''} × ${eur(v.prixUnitaireHT||0)} HT/u</td>
+          <td style="text-align:right;font-weight:700">${eur(v.totalHT||0)}</td>
           <td style="text-align:right;font-weight:700;color:var(--green-deep)">${eur(v.tvaRecup)}</td>
         </tr>`;
       });
     }
+    h+=`<tr style="background:#f8faf5;font-weight:800"><td colspan="4">Total</td><td style="text-align:right">—</td><td style="text-align:right;color:var(--green-deep)">${eur(totRecup)}</td></tr>`;
     h+=`</tbody></table></div></div></div>`;
   }
   document.getElementById('comptaBody').innerHTML=h;
