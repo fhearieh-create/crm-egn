@@ -3037,11 +3037,37 @@ async function genererFactureAgent(){
   if(!checks.length){toast('Sélectionnez au moins un dossier','err');return;}
   const agent=at.getAgent(agentId);const agentName=at.agentName(agent);const s=getSettings();
   const apfNum=await nextApfNum();
-  const lignes=checks.map(c=>{const r=recById(c.dataset.rid);return{r,montant:parseFloat(c.dataset.montant)||0};});
+  const lignes=checks.map(c=>{
+    const r=recById(c.dataset.rid);
+    const montant=parseFloat(c.dataset.montant)||0;
+    const tvaMode=effectiveTvaMode(r,type==='callcenter'?'callcenter':type);
+    return{r,montant,tvaMode};
+  });
   const total=lignes.reduce((s,l)=>s+l.montant,0);
   const eur=n=>(n||0).toLocaleString('fr-FR',{minimumFractionDigits:2,maximumFractionDigits:2})+' €';
   const dateStr=new Date().toLocaleDateString('fr-FR');
-  const rowsHtml=lignes.map(l=>{const op=getProducts().find(o=>o.id===l.r.productId);return `<tr><td>${esc(l.r.dossier||'—')}</td><td>${esc(clientNameOf(l.r))}</td><td>${op?esc(op.name):''}</td><td style="text-align:right;color:#6b7785">${eur(htOf(l.montant))}</td><td style="text-align:right;color:#6b7785">${eur(tvaOf(l.montant))}</td><td style="text-align:right;font-weight:700">${eur(l.montant)}</td></tr>`;}).join('');
+  // Déterminer si le document doit afficher les colonnes TVA
+  const hasTva=lignes.some(l=>l.tvaMode!=='sans_tva');
+  const rowsHtml=lignes.map(l=>{
+    const op=getProducts().find(o=>o.id===l.r.productId);
+    if(l.tvaMode==='sans_tva'){
+      return hasTva
+        ?`<tr><td>${esc(l.r.dossier||'—')}</td><td>${esc(clientNameOf(l.r))}</td><td>${op?esc(op.name):''}</td><td style="text-align:right;color:#5B3AAA;font-size:.82rem" colspan="2">Sans TVA (autoentrepreneur)</td><td style="text-align:right;font-weight:700">${eur(l.montant)}</td></tr>`
+        :`<tr><td>${esc(l.r.dossier||'—')}</td><td>${esc(clientNameOf(l.r))}</td><td>${op?esc(op.name):''}</td><td style="text-align:right;font-weight:700">${eur(l.montant)}</td></tr>`;
+    }
+    if(l.tvaMode==='ht'){
+      return hasTva
+        ?`<tr><td>${esc(l.r.dossier||'—')}</td><td>${esc(clientNameOf(l.r))}</td><td>${op?esc(op.name):''}</td><td style="text-align:right;font-weight:700">${eur(l.montant)}</td><td style="text-align:right;color:#6b7785">${eur(tvaOf(l.montant/htOf(1)))}</td><td style="text-align:right;font-weight:700">${eur(l.montant*(1+tvaRate()/100))}</td></tr>`
+        :`<tr><td>${esc(l.r.dossier||'—')}</td><td>${esc(clientNameOf(l.r))}</td><td>${op?esc(op.name):''}</td><td style="text-align:right;font-weight:700">${eur(l.montant)}</td></tr>`;
+    }
+    // TTC
+    return hasTva
+      ?`<tr><td>${esc(l.r.dossier||'—')}</td><td>${esc(clientNameOf(l.r))}</td><td>${op?esc(op.name):''}</td><td style="text-align:right;color:#6b7785">${eur(htOf(l.montant))}</td><td style="text-align:right;color:#6b7785">${eur(tvaOf(l.montant))}</td><td style="text-align:right;font-weight:700">${eur(l.montant)}</td></tr>`
+      :`<tr><td>${esc(l.r.dossier||'—')}</td><td>${esc(clientNameOf(l.r))}</td><td>${op?esc(op.name):''}</td><td style="text-align:right;font-weight:700">${eur(l.montant)}</td></tr>`;
+  }).join('');
+  const theadTva=hasTva?`<th style="text-align:right">Montant HT</th><th style="text-align:right">TVA (${tvaRate()}%)</th><th style="text-align:right">Montant dû TTC</th>`:`<th style="text-align:right">Montant dû</th>`;
+  const tfootTva=hasTva?`<td style="text-align:right">${eur(htOf(total))}</td><td style="text-align:right">${eur(tvaOf(total))}</td><td style="text-align:right">${eur(total)}</td>`:`<td style="text-align:right">${eur(total)}</td>`;
+  const metaTva=hasTva?`<b>TVA :</b> ${tvaRate()}% — colonnes HT/TVA fournies pour l'établissement de votre facture.`:`<b>Régime :</b> Sans TVA (autoentrepreneur ou exonéré).`;
   const doc=`<!DOCTYPE html><html lang="fr"><head><meta charset="UTF-8"><title>${esc(apfNum)} — Appel à facturation — ${esc(agentName)}</title>
   <style>
     body{font-family:'Segoe UI',Arial,sans-serif;color:#1A2B3D;padding:40px;max-width:800px;margin:0 auto}
@@ -3066,10 +3092,10 @@ async function genererFactureAgent(){
     </div>
     <div class="sub">Édité le ${dateStr}</div>
   </div>
-  <div class="meta"><b>${esc(at.label)} :</b> ${esc(agentName)}<br>${agent&&agent.email?'<b>Email :</b> '+esc(agent.email)+'<br>':''}<b>TVA :</b> ${tvaRate()}% incluse — montants dus exprimés TTC ; les colonnes HT / TVA sont fournies pour l'établissement de votre facture.</div>
-  <table><thead><tr><th>N° Dossier</th><th>Client</th><th>Opération</th><th style="text-align:right">Montant HT</th><th style="text-align:right">TVA (${tvaRate()}%)</th><th style="text-align:right">Montant dû TTC</th></tr></thead>
+  <div class="meta"><b>${esc(at.label)} :</b> ${esc(agentName)}<br>${agent&&agent.email?'<b>Email :</b> '+esc(agent.email)+'<br>':''}${metaTva}</div>
+  <table><thead><tr><th>N° Dossier</th><th>Client</th><th>Opération</th>${theadTva}</tr></thead>
   <tbody>${rowsHtml}</tbody>
-  <tfoot><tr><td colspan="3">Total à verser</td><td style="text-align:right">${eur(htOf(total))}</td><td style="text-align:right">${eur(tvaOf(total))}</td><td style="text-align:right">${eur(total)}</td></tr></tfoot>
+  <tfoot><tr><td colspan="3">Total à verser</td>${tfootTva}</tr></tfoot>
   </table>
   <button class="print-btn" onclick="window.print()" style="padding:10px 18px;background:#7CC242;color:#fff;border:none;border-radius:8px;font-weight:700;cursor:pointer">🖨️ Imprimer / Enregistrer en PDF</button>
   </body></html>`;
