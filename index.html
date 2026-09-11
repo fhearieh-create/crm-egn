@@ -5544,13 +5544,13 @@ async function saveMvt(){
   const prixU=parseFloat((document.getElementById('mvt_prix_u')||{}).value||0)||0;
   const fourn=(document.getElementById('mvt_fourn')||{}).value||'';
   const totalHT=qte*prixU;
-  const tvaRecup=['entree','reception'].includes(sens)?(totalHT+totalFraisHT)*(tvaRate()/100):0;
-  const totalHTGlobal=totalHT+totalFraisHT;
+  // Frais externes — calculés avant tvaRecup
   const fraisRows=[...document.querySelectorAll('.frais-ht')];
   const fraisLabels=[...document.querySelectorAll('.frais-label')];
   const frais=fraisRows.map((el,i)=>({label:(fraisLabels[i]||{}).value||'Frais',ht:parseFloat(el.value)||0})).filter(f=>f.ht>0);
   const totalFraisHT=frais.reduce((s,f)=>s+f.ht,0);
-  const tvaFrais=['entree','reception'].includes(sens)?totalFraisHT*(tvaRate()/100):0;
+  const totalHTGlobal=totalHT+totalFraisHT;
+  const tvaRecup=['entree','reception'].includes(sens)?totalHTGlobal*(tvaRate()/100):0;
   const dossierNum=((document.getElementById('mvt_dossier')||{}).value||'').trim();
   const lieu=((document.getElementById('mvt_lieu')||{}).value||'').trim();
   const notes=((document.getElementById('mvt_notes')||{}).value||'').trim();
