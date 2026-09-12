@@ -6948,7 +6948,7 @@ function primeUpdateFactor(i,key,val){
 /* ============================================================
    CALCULATRICE DE PRIME (bulle flottante)
    ============================================================ */
-let CALC_STATE={opId:'',fields:{},delegId:'',type:'classique'};
+let CALC_STATE={opId:'',fields:{},cumac:'',delegId:'',type:'classique'};
 function toggleCalcPrime(){
   const p=document.getElementById('calcPanel'),f=document.getElementById('calcFab');
   if(!p||!f)return;
@@ -6956,15 +6956,20 @@ function toggleCalcPrime(){
   f.style.display=open?'none':'flex';
   if(open)renderCalcPrime();
 }
-function resetCalcPrime(){CALC_STATE={opId:'',fields:{},delegId:'',type:'classique'};renderCalcPrime();}
-function setCalcOp(v){CALC_STATE.opId=v;CALC_STATE.fields={};renderCalcPrime();}
-function setCalcDeleg(v){CALC_STATE.delegId=v;renderCalcPrime();}
-function setCalcType(v){CALC_STATE.type=v;renderCalcPrime();}
-let CALC_FOCUS=null;
+function resetCalcPrime(){CALC_STATE={opId:'',fields:{},cumac:'',delegId:'',type:'classique'};renderCalcPrime();}
+function setCalcOp(v){CALC_STATE.opId=v;CALC_STATE.fields={};CALC_STATE.cumac='';renderCalcPrime();}
+function setCalcDeleg(v){CALC_STATE.delegId=v;updateCalcResult();}
+function setCalcType(v){CALC_STATE.type=v;updateCalcResult();}
+function setCalcCumac(el){CALC_STATE.cumac=el.value;updateCalcResult();}
 function setCalcField(fid,el){
   CALC_STATE.fields[fid]=el.value;
-  CALC_FOCUS=(el.tagName==='INPUT')?{id:el.id,pos:el.selectionStart||0}:null;
-  renderCalcPrime();
+  // Recalcule le cumac et l'injecte dans le champ (sans re-rendre le panneau)
+  const op=getProducts().find(p=>p.id===CALC_STATE.opId);
+  const c=op?computeCumac({productId:op.id,opFields:CALC_STATE.fields}):null;
+  CALC_STATE.cumac=(c!=null)?String(c):'';
+  const ci=document.getElementById('calc_cumac');
+  if(ci&&document.activeElement!==ci)ci.value=CALC_STATE.cumac;
+  updateCalcResult();
 }
 /* Détermine les champs nécessaires au calcul cumac d'une opération */
 function calcFieldsNeeded(op){
@@ -6993,26 +6998,23 @@ function renderCalcPrime(){
   const prods=getProducts().filter(p=>p.cumac);
   const delegs=getDelegataires();
   const S=CALC_STATE;
-  const eur=n=>(n||0).toLocaleString('fr-FR',{minimumFractionDigits:2,maximumFractionDigits:2})+' €';
-  let h=`<div class="cfld"><label>Opération</label>
-    <select onchange="setCalcOp(this.value)"><option value="">— Choisir une opération —</option>${prods.map(p=>`<option value="${p.id}" ${S.opId===p.id?'selected':''}>${esc(p.name)}</option>`).join('')}</select></div>`;
-  if(!prods.length){
-    body.innerHTML=`<div style="text-align:center;padding:1.2rem;color:var(--text-mut);font-size:.82rem">Aucune opération avec un calcul cumac configuré.<br><span style="font-size:.74rem">Paramètres ▸ Opérations</span></div>`;
-    return;
-  }
+  let h=`<div class="cfld"><label>Opération <span style="text-transform:none;font-weight:500">(facultatif)</span></label>
+    <select onchange="setCalcOp(this.value)"><option value="">— Saisie directe du cumac —</option>${prods.map(p=>`<option value="${p.id}" ${S.opId===p.id?'selected':''}>${esc(p.name)}</option>`).join('')}</select></div>`;
   const op=prods.find(p=>p.id===S.opId);
   if(op){
     const needed=calcFieldsNeeded(op);
-    if(!needed.length)h+=`<p style="font-size:.76rem;color:var(--text-mut)">Aucun champ de calcul configuré pour cette opération.</p>`;
+    if(!needed.length)h+=`<p style="font-size:.74rem;color:var(--text-mut);margin-bottom:.5rem">Aucun champ de calcul configuré — saisissez le cumac directement.</p>`;
     needed.forEach(f=>{
       const val=S.fields[f.id]||'';
       if(f.kind==='select'){
         h+=`<div class="cfld"><label>${esc(f.label)}</label><select onchange="setCalcField('${f.id}',this)"><option value="">— Choisir —</option>${f.options.map(o=>`<option value="${esc(o)}" ${val===o?'selected':''}>${esc(o)}</option>`).join('')}</select></div>`;
       } else {
-        h+=`<div class="cfld"><label>${esc(f.label)}</label><input id="cf_${f.id}" type="number" step="any" value="${esc(val)}" placeholder="0" oninput="setCalcField('${f.id}',this)"></div>`;
+        h+=`<div class="cfld"><label>${esc(f.label)}</label><input type="text" inputmode="decimal" value="${esc(val)}" placeholder="0" oninput="setCalcField('${f.id}',this)"></div>`;
       }
     });
   }
+  h+=`<div class="cfld"><label>Cumac (kWhc)</label>
+    <input id="calc_cumac" type="text" inputmode="numeric" value="${esc(S.cumac)}" placeholder="ex : 250000" oninput="setCalcCumac(this)" style="font-weight:700"></div>`;
   h+=`<div class="cfld"><label>Délégataire</label>
     <select onchange="setCalcDeleg(this.value)"><option value="">— Choisir —</option>${delegs.map(d=>`<option value="${d.id}" ${S.delegId===d.id?'selected':''}>${esc(d.name)}</option>`).join('')}</select></div>`;
   h+=`<div class="cfld"><label>Type de prime</label>
@@ -7020,32 +7022,32 @@ function renderCalcPrime(){
       <option value="classique" ${S.type==='classique'?'selected':''}>Classique</option>
       <option value="precaire" ${S.type==='precaire'?'selected':''}>Précaire</option>
     </select></div>`;
-  // Calcul
-  const cumac=op?computeCumac({productId:op.id,opFields:S.fields}):null;
-  const d=delegs.find(x=>x.id===S.delegId);
+  h+=`<div id="calcResult" style="border-top:1px solid var(--border-grey);margin-top:.4rem;padding-top:.7rem"></div>`;
+  body.innerHTML=h;
+  updateCalcResult();
+}
+function updateCalcResult(){
+  const box=document.getElementById('calcResult');if(!box)return;
+  const S=CALC_STATE;
+  const eur=n=>(n||0).toLocaleString('fr-FR',{minimumFractionDigits:2,maximumFractionDigits:2})+' €';
+  const cumac=parseFloat(String(S.cumac).replace(',','.'))||0;
+  const d=getDelegataires().find(x=>x.id===S.delegId);
   const valo=d?(S.type==='precaire'?(parseFloat(d.valoPrecaire)||0):(parseFloat(d.valoClassique)||0)):0;
-  const prime=(cumac!=null&&valo)?Math.round(cumac/1000*valo*100)/100:null;
-  h+=`<div style="border-top:1px solid var(--border-grey);margin-top:.4rem;padding-top:.7rem">`;
-  h+=`<div style="display:flex;justify-content:space-between;align-items:baseline;margin-bottom:.35rem">
-    <span style="font-size:.72rem;font-weight:700;color:var(--text-mut);text-transform:uppercase;letter-spacing:.4px">Cumac</span>
-    <span style="font-weight:800;font-size:.95rem">${cumac!=null?cumac.toLocaleString('fr-FR')+' kWhc':'—'}</span>
+  const prime=(cumac&&valo)?Math.round(cumac/1000*valo*100)/100:null;
+  let h=`<div style="display:flex;justify-content:space-between;align-items:baseline;margin-bottom:.35rem">
+    <span style="font-size:.7rem;font-weight:700;color:var(--text-mut);text-transform:uppercase;letter-spacing:.4px">Cumac</span>
+    <span style="font-weight:800;font-size:.92rem">${cumac?cumac.toLocaleString('fr-FR')+' kWhc':'—'}</span>
   </div>`;
   h+=`<div style="display:flex;justify-content:space-between;align-items:baseline;margin-bottom:.5rem">
-    <span style="font-size:.72rem;font-weight:700;color:var(--text-mut);text-transform:uppercase;letter-spacing:.4px">Valorisation</span>
-    <span style="font-weight:700;font-size:.84rem">${valo?valo.toString().replace('.',',')+' €/MWhc':'—'}</span>
+    <span style="font-size:.7rem;font-weight:700;color:var(--text-mut);text-transform:uppercase;letter-spacing:.4px">Valorisation</span>
+    <span style="font-weight:700;font-size:.82rem">${valo?valo.toString().replace('.',',')+' €/MWhc':'—'}</span>
   </div>`;
   h+=`<div style="background:${prime!=null?'#EFF7E8':'var(--bg-soft)'};border-radius:11px;padding:.7rem .9rem;text-align:center">
-    <div style="font-size:.68rem;font-weight:700;color:var(--text-mut);text-transform:uppercase;letter-spacing:.5px">Prime estimée TTC</div>
+    <div style="font-size:.66rem;font-weight:700;color:var(--text-mut);text-transform:uppercase;letter-spacing:.5px">Prime estimée TTC</div>
     <div style="font-size:1.5rem;font-weight:800;color:${prime!=null?'var(--green-deep)':'var(--text-mut)'};line-height:1.25">${prime!=null?eur(prime):'—'}</div>
-    ${prime!=null?`<div style="font-size:.68rem;color:var(--text-mut)">HT ${eur(htOf(prime))}</div>`:`<div style="font-size:.68rem;color:var(--text-mut)">Complétez les champs ci-dessus</div>`}
+    ${prime!=null?`<div style="font-size:.68rem;color:var(--text-mut)">HT ${eur(htOf(prime))}</div>`:`<div style="font-size:.68rem;color:var(--text-mut)">Cumac + délégataire requis</div>`}
   </div>`;
-  h+=`</div>`;
-  body.innerHTML=h;
-  if(CALC_FOCUS){
-    const el=document.getElementById(CALC_FOCUS.id);
-    if(el){el.focus();try{el.setSelectionRange(CALC_FOCUS.pos,CALC_FOCUS.pos);}catch(e){}}
-    CALC_FOCUS=null;
-  }
+  box.innerHTML=h;
 }
 
 function computePrimeAuto(r){
