@@ -5151,6 +5151,88 @@ function getDossiersSorties(mat){
 }
 
 /* ---- ÉTAT DU STOCK ---- */
+/* ---- FILTRES STOCK ---- */
+const STOCK_FILTERS={
+  etat:{q:'',op:'',type:'',fourn:'',statut:''},
+  mvt:{q:'',mat:'',op:'',sens:'',fourn:'',du:'',au:''},
+  cat:{q:'',op:'',type:'',fourn:''}
+};
+let STOCK_FOCUS_ID=null,STOCK_FOCUS_POS=0;
+function setStockFilter(tab,key,el){
+  STOCK_FILTERS[tab][key]=el.value;
+  if(el.tagName==='INPUT'&&el.type==='text'){STOCK_FOCUS_ID=el.id;STOCK_FOCUS_POS=el.selectionStart||0;}
+  else STOCK_FOCUS_ID=null;
+  renderStock();
+}
+function resetStockFilter(tab){Object.keys(STOCK_FILTERS[tab]).forEach(k=>STOCK_FILTERS[tab][k]='');STOCK_FOCUS_ID=null;renderStock();}
+function stockFilterActive(tab){return Object.values(STOCK_FILTERS[tab]).some(v=>v);}
+function restoreStockFocus(){
+  if(!STOCK_FOCUS_ID)return;
+  const el=document.getElementById(STOCK_FOCUS_ID);
+  if(el){el.focus();try{el.setSelectionRange(STOCK_FOCUS_POS,STOCK_FOCUS_POS);}catch(e){}}
+  STOCK_FOCUS_ID=null;
+}
+const FSTY="font-family:'Saira',sans-serif;font-size:.78rem;border:1.5px solid var(--border-grey);border-radius:8px;padding:.32rem .6rem;background:#fff;outline:none";
+function allFournNames(){return [...new Set(getMats().flatMap(m=>(m.fournisseurs||[]).map(f=>f.nom).filter(Boolean)))].sort();}
+function allOpNames(){return [...new Set(getMats().map(m=>m.operation).filter(Boolean))].sort();}
+function stockStateOf(m,mvts){
+  const e=mvts.filter(v=>v.materielId===m.id&&v.sens==='entree').reduce((s,v)=>s+(v.qte||0),0);
+  const so=mvts.filter(v=>v.materielId===m.id&&v.sens==='sortie').reduce((s,v)=>s+(v.qte||0),0)+calcSortiesAuto(m);
+  const stock=e-so;
+  return{entrees:e,sorties:so,stock,alerte:!!(m.seuilAlerte&&stock<=m.seuilAlerte)};
+}
+function optList(items,cur){return items.map(v=>`<option value="${esc(v)}" ${cur===v?'selected':''}>${esc(v)}</option>`).join('');}
+function stockResetBtn(tab){return stockFilterActive(tab)?`<button class="btn btn-ghost btn-sm" style="font-size:.72rem" onclick="resetStockFilter('${tab}')">✕ Réinitialiser</button>`:'';}
+function stockFilterBar(tab){
+  const F=STOCK_FILTERS[tab];
+  const typeOpts=Object.entries(STOCK_TYPES).map(([k,v])=>`<option value="${k}" ${F.type===k?'selected':''}>${v.icon} ${v.label}</option>`).join('');
+  let h=`<div style="display:flex;gap:.45rem;flex-wrap:wrap;align-items:center;margin-bottom:.9rem">`;
+  h+=`<input id="fl_${tab}_q" type="text" value="${esc(F.q||'')}" placeholder="🔍 Rechercher…" oninput="setStockFilter('${tab}','q',this)" style="${FSTY};flex:1;min-width:160px">`;
+  if(tab==='mvt'){
+    h+=`<select onchange="setStockFilter('mvt','mat',this)" style="${FSTY}"><option value="">Tous les matériels</option>${getMats().map(m=>`<option value="${m.id}" ${F.mat===m.id?'selected':''}>${esc(m.nom)}</option>`).join('')}</select>`;
+    h+=`<select onchange="setStockFilter('mvt','op',this)" style="${FSTY}"><option value="">Toutes les opérations</option>${optList(allOpNames(),F.op)}</select>`;
+    h+=`<select onchange="setStockFilter('mvt','sens',this)" style="${FSTY}"><option value="">Tous les types</option>
+      <option value="entree" ${F.sens==='entree'?'selected':''}>📥 Entrée</option>
+      <option value="sortie" ${F.sens==='sortie'?'selected':''}>📤 Sortie</option>
+      <option value="commande" ${F.sens==='commande'?'selected':''}>🛒 Commande</option>
+      <option value="reception" ${F.sens==='reception'?'selected':''}>✅ Réception</option>
+      <option value="localisation" ${F.sens==='localisation'?'selected':''}>📍 Localisation</option></select>`;
+  } else {
+    h+=`<select onchange="setStockFilter('${tab}','op',this)" style="${FSTY}"><option value="">Toutes les opérations</option>${optList(allOpNames(),F.op)}</select>`;
+    h+=`<select onchange="setStockFilter('${tab}','type',this)" style="${FSTY}"><option value="">Tous les types</option>${typeOpts}</select>`;
+  }
+  h+=`<select onchange="setStockFilter('${tab}','fourn',this)" style="${FSTY}"><option value="">Tous les fournisseurs</option>${optList(allFournNames(),F.fourn)}</select>`;
+  if(tab==='etat'){
+    h+=`<select onchange="setStockFilter('etat','statut',this)" style="${FSTY}"><option value="">Tous les statuts</option>
+      <option value="ok" ${F.statut==='ok'?'selected':''}>✅ Stock OK</option>
+      <option value="alerte" ${F.statut==='alerte'?'selected':''}>⚠️ Stock bas</option>
+      <option value="epuise" ${F.statut==='epuise'?'selected':''}>⛔ Épuisé / négatif</option></select>`;
+  }
+  if(tab==='mvt'){
+    h+=`<label style="font-size:.72rem;color:var(--text-mut);font-weight:600">Du</label><input type="date" value="${esc(F.du||'')}" onchange="setStockFilter('mvt','du',this)" style="${FSTY}">`;
+    h+=`<label style="font-size:.72rem;color:var(--text-mut);font-weight:600">Au</label><input type="date" value="${esc(F.au||'')}" onchange="setStockFilter('mvt','au',this)" style="${FSTY}">`;
+  }
+  h+=stockResetBtn(tab);
+  h+=`</div>`;
+  return h;
+}
+function filterMats(mats,tab,mvts){
+  const F=STOCK_FILTERS[tab];
+  return mats.filter(m=>{
+    if(F.q){const q=F.q.toLowerCase();if(!`${m.nom||''} ${m.reference||''} ${m.operation||''}`.toLowerCase().includes(q))return false;}
+    if(F.op&&m.operation!==F.op)return false;
+    if(F.type&&(m.typeStock||'stock_fixe')!==F.type)return false;
+    if(F.fourn&&!(m.fournisseurs||[]).some(f=>f.nom===F.fourn))return false;
+    if(F.statut&&mvts){
+      const st=stockStateOf(m,mvts);
+      if(F.statut==='epuise'&&st.stock>0)return false;
+      if(F.statut==='alerte'&&!(st.alerte&&st.stock>0))return false;
+      if(F.statut==='ok'&&(st.alerte||st.stock<=0))return false;
+    }
+    return true;
+  });
+}
+
 function renderStockEtat(){
   const mats=getMats();const mvts=getMvts();
   const eur=n=>(n||0).toLocaleString('fr-FR',{maximumFractionDigits:2})+' €';
@@ -5179,8 +5261,16 @@ function renderStockEtat(){
     <div class="kpi"><div class="kico">💶</div><div class="klab">Valeur stock</div><div class="kval">${eur(valeurTot)}</div><div class="ksub">HT tous matériels</div></div>
     <div class="kpi"><div class="kico">🏭</div><div class="klab">Fournisseurs</div><div class="kval">${nbFourn}</div><div class="ksub">référencés</div></div>
   </div>`;
+  // Barre de filtres
+  h+=stockFilterBar('etat');
+  const matsF=filterMats(mats,'etat',mvts);
+  if(stockFilterActive('etat'))h+=`<p class="muted" style="font-size:.75rem;margin-bottom:.6rem">${matsF.length} matériel${matsF.length>1?'s':''} affiché${matsF.length>1?'s':''} sur ${mats.length}</p>`;
+  if(!matsF.length){
+    h+=`<div class="empty"><div class="big">🔍</div>Aucun matériel ne correspond aux filtres.</div>`;
+    document.getElementById('stockBody').innerHTML=h;restoreStockFocus();return;
+  }
   // Un panel par matériel
-  mats.forEach(m=>{
+  matsF.forEach(m=>{
     const stype=STOCK_TYPES[m.typeStock||'stock_fixe'];
     const entrees=mvts.filter(v=>v.materielId===m.id&&v.sens==='entree').reduce((s,v)=>s+(v.qte||0),0);
     const sortiesManuel=mvts.filter(v=>v.materielId===m.id&&v.sens==='sortie').reduce((s,v)=>s+(v.qte||0),0);
@@ -5282,6 +5372,7 @@ function renderStockEtat(){
     <button class="btn btn-navy btn-sm" onclick="exportStockCSV()">📤 Exporter</button>
   </div>`;
   document.getElementById('stockBody').innerHTML=h;
+  restoreStockFocus();
 }
 function toggleStockDetail(id){const el=document.getElementById(id);if(el)el.style.display=el.style.display==='none'?'block':'none';}
 async function marquerCommandeRecue(mvtId){
@@ -5299,9 +5390,37 @@ function renderStockMouvements(){
     <button class="btn btn-pri btn-sm" onclick="openMvtModal()">+ Nouveau mouvement</button>
   </div>`;
   if(!mvts.length){h+=`<div class="empty"><div class="big">📋</div>Aucun mouvement enregistré.</div>`;document.getElementById('stockBody').innerHTML=h;return;}
+  h+=stockFilterBar('mvt');
+  const F=STOCK_FILTERS.mvt;
+  const mvtsF=mvts.filter(v=>{
+    const mat=mats.find(m=>m.id===v.materielId);
+    const rec=v.dossierId?recById(v.dossierId):null;
+    if(F.mat&&v.materielId!==F.mat)return false;
+    if(F.sens&&v.sens!==F.sens)return false;
+    if(F.fourn&&v.fournisseurNom!==F.fourn)return false;
+    if(F.op&&(!mat||mat.operation!==F.op))return false;
+    if(F.du&&v.date<new Date(F.du+'T00:00:00').getTime())return false;
+    if(F.au&&v.date>new Date(F.au+'T23:59:59').getTime())return false;
+    if(F.q){
+      const q=F.q.toLowerCase();
+      const hay=[mat?mat.nom:'',mat?mat.reference:'',v.notes,v.lieu,v.fournisseurNom,rec?rec.dossier:'',rec?clientNameOf(rec):''].join(' ').toLowerCase();
+      if(!hay.includes(q))return false;
+    }
+    return true;
+  });
+  if(stockFilterActive('mvt')){
+    const totHT=mvtsF.reduce((s,v)=>s+(v.totalHT||0),0);
+    const totTva=mvtsF.reduce((s,v)=>s+(v.tvaRecup||0),0);
+    h+=`<div style="display:flex;gap:1.2rem;flex-wrap:wrap;align-items:center;background:var(--bg-soft);border-radius:9px;padding:.5rem .9rem;margin-bottom:.7rem;font-size:.78rem">
+      <span><b>${mvtsF.length}</b> mouvement${mvtsF.length>1?'s':''} sur ${mvts.length}</span>
+      <span>Total HT : <b>${eur(totHT)}</b></span>
+      <span>TVA récupérable : <b style="color:var(--green-deep)">${eur(totTva)}</b></span>
+    </div>`;
+  }
+  if(!mvtsF.length){h+=`<div class="empty"><div class="big">🔍</div>Aucun mouvement ne correspond aux filtres.</div>`;document.getElementById('stockBody').innerHTML=h;restoreStockFocus();return;}
   h+=`<div class="tbl-wrap"><table class="tbl">
     <thead><tr><th>Date</th><th>Matériel</th><th>Type</th><th>Fournisseur</th><th class="r">Qté</th><th class="r">Total HT</th><th class="r">TVA récup.</th><th>Dossier</th><th>Notes</th><th>Facture</th><th></th></tr></thead><tbody>`;
-  mvts.forEach(v=>{
+  mvtsF.forEach(v=>{
     const mat=mats.find(m=>m.id===v.materielId);
     const r=v.dossierId?recById(v.dossierId):null;
     h+=`<tr>
@@ -5320,6 +5439,7 @@ function renderStockMouvements(){
   });
   h+=`</tbody></table></div>`;
   document.getElementById('stockBody').innerHTML=h;
+  restoreStockFocus();
 }
 
 /* ---- CATALOGUE ---- */
@@ -5327,10 +5447,14 @@ function renderStockCatalogue(){
   const mats=getMats();
   let h=`<div style="display:flex;justify-content:flex-end;margin-bottom:.7rem"><button class="btn btn-pri btn-sm" onclick="openMatModal()">+ Nouveau matériel</button></div>`;
   if(!mats.length){h+=`<div class="empty"><div class="big">📦</div>Aucun matériel. Cliquez sur "+ Nouveau matériel".</div>`;document.getElementById('stockBody').innerHTML=h;return;}
+  h+=stockFilterBar('cat');
+  const matsF=filterMats(mats,'cat');
+  if(stockFilterActive('cat'))h+=`<p class="muted" style="font-size:.75rem;margin-bottom:.6rem">${matsF.length} matériel${matsF.length>1?'s':''} sur ${mats.length}</p>`;
+  if(!matsF.length){h+=`<div class="empty"><div class="big">🔍</div>Aucun matériel ne correspond aux filtres.</div>`;document.getElementById('stockBody').innerHTML=h;restoreStockFocus();return;}
   h+=`<div class="tbl-wrap"><table class="tbl"><thead><tr>
     <th>Matériel</th><th>Type</th><th>Opération</th><th>Champ(s) lu(s)</th><th>Statut(s) déclencheur</th><th>Fournisseurs</th><th>Unité</th><th>Seuil</th><th class="r">Actions</th>
   </tr></thead><tbody>`;
-  mats.forEach(m=>{
+  matsF.forEach(m=>{
     const stype=STOCK_TYPES[m.typeStock||'stock_fixe'];
     const op=getProducts().find(p=>p.id===m.operationId||p.name===m.operation);
     const champs=[].concat(m.champsDossier||m.champDossier||[]).filter(Boolean);
@@ -5352,6 +5476,7 @@ function renderStockCatalogue(){
   });
   h+=`</tbody></table></div>`;
   document.getElementById('stockBody').innerHTML=h;
+  restoreStockFocus();
 }
 
 /* ---- CATALOGUE MODAL ---- */
