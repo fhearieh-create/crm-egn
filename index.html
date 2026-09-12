@@ -727,10 +727,25 @@ const statById=id=>getStatuses().find(s=>s.id===id);
 const userById=id=>getUsers().find(u=>u.id===id);
 const recById=id=>getRecs().find(r=>r.id===id);
 async function nextDossier(){
-  try{const{data,error}=await SUPA.rpc('next_dossier_number');if(error)throw error;if(data)return data;}
-  catch(e){console.error('[nextDossier] centralisé indisponible, repli local',e);}
+  for(let i=0;i<3;i++){
+    try{const{data,error}=await SUPA.rpc('next_dossier_number');if(error)throw error;if(data)return data;}
+    catch(e){console.error('[nextDossier] tentative '+(i+1)+' échouée',e);if(i<2)await new Promise(r=>setTimeout(r,400));}
+  }
   // repli hors-ligne : suffixe horodaté unique -> aucun risque de collision entre deux appareils
   return 'ND-'+new Date().getFullYear()+'-LOC-'+Date.now().toString(36).toUpperCase();
+}
+async function renumeroterDossier(recId){
+  const r=recById(recId);if(!r)return;
+  const ancien=r.dossier||'';
+  toast('Attribution d\'un numéro définitif…','ok');
+  const num=await nextDossier();
+  if(num.includes('-LOC-')){toast('Supabase toujours injoignable — réessayez plus tard','err');return;}
+  const recs=getRecs();const rec=recs.find(x=>x.id===recId);if(!rec)return;
+  rec.dossier=num;rec.updated=Date.now();
+  rec.history=rec.history||[];
+  rec.history.unshift({date:Date.now(),user:ME.prenom,text:`Numéro de dossier corrigé : ${ancien} → ${num}`});
+  save(K.recs,recs);
+  openDossier(recId);toast('Nouveau numéro : '+num,'ok');
 }
 async function nextApfNum(){
   try{const{data,error}=await SUPA.rpc('next_apf_number');if(error)throw error;if(data)return data;}
@@ -2221,7 +2236,10 @@ async function openDossier(id){
   window._dossierBack=(CUR==='clients')?'clients':'leads';
   document.getElementById('pageTitle').innerHTML=`Dossier ${esc(r.dossier||'')}`;
   document.getElementById('pageSub').textContent=recName(r);
-  document.getElementById('pageActions').innerHTML=`<button class="btn btn-ghost btn-sm" onclick="go(window._dossierBack||'leads')">← Retour à la liste</button>`;
+  const locBtn=(r.dossier||'').includes('-LOC-')
+    ?`<button class="btn btn-sm" style="background:#FFF4E5;color:#B96A0A;border-color:#F0C486" onclick="renumeroterDossier('${r.id}')" title="Ce numéro provisoire a été généré hors-ligne">⚠️ Attribuer un n° définitif</button>`
+    :'';
+  document.getElementById('pageActions').innerHTML=`${locBtn}<button class="btn btn-ghost btn-sm" onclick="go(window._dossierBack||'leads')">← Retour à la liste</button>`;
   logActivity('view',`👁️ Consultation du dossier ${r.dossier||''} — ${recName(r)}`,id);
   const isAdminCompta=ME&&(ME.role==='superadmin'||ME.role==='admin');
   if(isAdminCompta){document.getElementById('content').innerHTML='<div class="empty"><div class="big">⏳</div>Chargement du dossier…</div>';await Promise.all([loadComptaFor(id),loadDealFor(id),loadEtudeFor(id)]);}
