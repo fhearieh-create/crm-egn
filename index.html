@@ -5074,10 +5074,20 @@ function calcSortiesAuto(mat){
   const stats=getStatuses();
   const triggerOrders=triggerIds.map(id=>{const s=stats.find(x=>x.id===id);return s?s.order??999:999;});
   const minOrder=Math.min(...triggerOrders);
+  // Fournisseurs associés à ce matériel
+  const fournisseursMat=(mat.fournisseurs||[]).map(f=>f.nom).filter(Boolean);
   const recs=getRecs().filter(r=>{
     if(mat.operationId&&r.productId!==mat.operationId)return false;
     const s=stats.find(x=>x.id===r.statusId);
-    return s&&(s.order??999)>=minOrder;
+    if(!s||(s.order??999)<minOrder)return false;
+    // Si le matériel a des fournisseurs ET le dossier a un fournisseur renseigné
+    // → filtrer uniquement les dossiers liés à ce fournisseur
+    if(fournisseursMat.length&&r.fournisseurDossier){
+      return fournisseursMat.includes(r.fournisseurDossier);
+    }
+    // Si aucun fournisseur renseigné dans le dossier → compter quand même
+    // (pour ne pas perdre les dossiers non renseignés)
+    return true;
   });
   let total=0;
   recs.forEach(r=>{
@@ -5103,10 +5113,15 @@ function getDossiersSorties(mat){
   const stats=getStatuses();
   const triggerOrders=triggerIds.map(id=>{const s=stats.find(x=>x.id===id);return s?s.order??999:999;});
   const minOrder=Math.min(...triggerOrders);
+  const fournisseursMat=(mat.fournisseurs||[]).map(f=>f.nom).filter(Boolean);
   return getRecs().filter(r=>{
     if(mat.operationId&&r.productId!==mat.operationId)return false;
     const s=stats.find(x=>x.id===r.statusId);
-    return s&&(s.order??999)>=minOrder;
+    if(!s||(s.order??999)<minOrder)return false;
+    if(fournisseursMat.length&&r.fournisseurDossier){
+      return fournisseursMat.includes(r.fournisseurDossier);
+    }
+    return true;
   }).map(r=>{
     let qte=0;
     if(r.opFields){
