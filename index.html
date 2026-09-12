@@ -5074,10 +5074,14 @@ function calcSortiesAuto(mat){
   const stats=getStatuses();
   const triggerOrders=triggerIds.map(id=>{const s=stats.find(x=>x.id===id);return s?s.order??999:999;});
   const minOrder=Math.min(...triggerOrders);
+  const fournisseursMat=(mat.fournisseurs||[]).map(f=>f.nom).filter(Boolean);
   const recs=getRecs().filter(r=>{
     if(mat.operationId&&r.productId!==mat.operationId)return false;
     const s=stats.find(x=>x.id===r.statusId);
-    return s&&(s.order??999)>=minOrder;
+    if(!s||(s.order??999)<minOrder)return false;
+    // Filtre strict : le dossier DOIT avoir un fournisseur renseigné correspondant à ce matériel
+    if(!r.fournisseurDossier)return false;
+    return fournisseursMat.includes(r.fournisseurDossier);
   });
   let total=0;
   recs.forEach(r=>{
@@ -5103,10 +5107,13 @@ function getDossiersSorties(mat){
   const stats=getStatuses();
   const triggerOrders=triggerIds.map(id=>{const s=stats.find(x=>x.id===id);return s?s.order??999:999;});
   const minOrder=Math.min(...triggerOrders);
+  const fournisseursMat=(mat.fournisseurs||[]).map(f=>f.nom).filter(Boolean);
   return getRecs().filter(r=>{
     if(mat.operationId&&r.productId!==mat.operationId)return false;
     const s=stats.find(x=>x.id===r.statusId);
-    return s&&(s.order??999)>=minOrder;
+    if(!s||(s.order??999)<minOrder)return false;
+    if(!r.fournisseurDossier)return false;
+    return fournisseursMat.includes(r.fournisseurDossier);
   }).map(r=>{
     let qte=0;
     if(r.opFields){
@@ -5209,10 +5216,8 @@ function renderStockEtat(){
           const stat=getStatuses().find(s=>s.id===r.statusId);
           // Trouver le dernier fournisseur utilisé avant ce dossier
           const mvtEntrees=getMvts().filter(v=>v.materielId===m.id&&v.sens==='entree'&&v.fournisseurNom).sort((a,b)=>(b.date||0)-(a.date||0));
-          const fourn=r.fournisseurDossier||(mvtEntrees.length?mvtEntrees[0]?.fournisseurNom||'':'');
-          const fournBadge=fourn
-            ?`<span style="font-size:.7rem;font-weight:700;color:var(--purple);background:#EFE9FC;border-radius:5px;padding:1px 7px;flex-shrink:0">${esc(fourn)}</span>`
-            :`<span onclick="openDossier('${r.id}')" style="font-size:.7rem;font-weight:700;color:#B96A0A;background:#FFF4E5;border-radius:5px;padding:1px 7px;flex-shrink:0;cursor:pointer" title="Cliquer pour renseigner le fournisseur dans la fiche">⚠️ Fournisseur manquant</span>`;
+          const fourn=r.fournisseurDossier||'';
+          const fournBadge=`<span style="font-size:.7rem;font-weight:700;color:var(--purple);background:#EFE9FC;border-radius:5px;padding:1px 7px;flex-shrink:0">${esc(fourn)}</span>`;
           h+=`<div style="display:flex;align-items:center;gap:.8rem;padding:.55rem 1.1rem;border-bottom:1px solid var(--border-soft)">
             <span class="dossier-tag" style="cursor:pointer;flex-shrink:0" onclick="openDossier('${r.id}')">${esc(r.dossier||'—')}</span>
             <div style="flex:1"><div style="font-weight:700;font-size:.83rem">${esc(clientNameOf(r))}</div><div class="muted" style="font-size:.7rem">${esc(r.ville||'')}${stat?' · '+esc(stat.name):''}</div></div>
