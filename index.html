@@ -457,6 +457,9 @@ code{font-family:monospace;background:var(--bg-soft);padding:.05rem .3rem;border
 <div class="modal-bg" id="modalBg"><div class="modal" id="modalBox"></div></div>
 <div class="toast" id="toast"></div>
 
+<!-- Autocomplétion des mentions -->
+<div id="mentionBox" class="mention-box" style="display:none"></div>
+
 <!-- Bulle calculatrice de prime -->
 <div id="calcFab" onclick="toggleCalcPrime()" title="Calculatrice de prime">🧮</div>
 <div id="calcPanel">
@@ -470,6 +473,11 @@ code{font-family:monospace;background:var(--bg-soft);padding:.05rem .3rem;border
 </div>
 
 <style>
+.mention-box{position:fixed;z-index:200;background:#fff;border:1.5px solid var(--border-grey);border-radius:11px;box-shadow:0 10px 30px rgba(26,43,61,.2);overflow:hidden;max-height:230px;overflow-y:auto;min-width:220px}
+.mention-item{display:flex;align-items:center;gap:.55rem;padding:.45rem .7rem;cursor:pointer;font-size:.83rem}
+.mention-item:hover,.mention-item.act{background:var(--bg-soft)}
+.mi-av{width:26px;height:26px;border-radius:50%;background:var(--navy);color:#fff;display:flex;align-items:center;justify-content:center;font-size:.66rem;font-weight:800;flex-shrink:0}
+.mention-tag{background:rgba(45,125,210,.12);color:var(--blue);font-weight:700;border-radius:5px;padding:0 4px}
 #calcFab{position:fixed;right:20px;bottom:20px;width:52px;height:52px;border-radius:50%;background:linear-gradient(135deg,var(--green),var(--green-dark));color:#fff;display:none;align-items:center;justify-content:center;font-size:1.4rem;cursor:pointer;box-shadow:0 6px 18px rgba(26,43,61,.28);z-index:80;transition:transform .15s}
 #calcFab:hover{transform:scale(1.07)}
 #calcPanel{position:fixed;right:20px;bottom:20px;width:340px;max-height:calc(100vh - 40px);background:#fff;border-radius:16px;box-shadow:0 12px 40px rgba(26,43,61,.3);z-index:81;display:none;flex-direction:column;overflow:hidden}
@@ -1706,6 +1714,7 @@ async function startApp(){
   await syncPullAll();
   await logLoginEvent();
   await loadNotifications();
+  startNotifPolling();
   if(ME.role==='superadmin'||ME.role==='admin')loadAllDeal();
   checkUpcomingRdvReminders();
   scheduleMidnightRefresh();
@@ -1776,6 +1785,22 @@ async function createNotification(userId,type,message,recordId){
   if(!userId||!ME)return;
   try{await SUPA.from('notifications').insert({user_id:userId,type,message,record_id:recordId||null});}
   catch(e){console.error('[notif] création échouée',e);}
+}
+let NOTIF_TIMER=null;
+function startNotifPolling(){
+  if(NOTIF_TIMER)clearInterval(NOTIF_TIMER);
+  NOTIF_TIMER=setInterval(async()=>{
+    if(!ME||document.hidden)return;
+    const avant=NOTIF_CACHE.filter(n=>!n.read).length;
+    await loadNotifications();
+    const apres=NOTIF_CACHE.filter(n=>!n.read).length;
+    if(apres>avant){
+      const nouvelles=apres-avant;
+      toast(`🔔 ${nouvelles} nouvelle${nouvelles>1?'s':''} notification${nouvelles>1?'s':''}`,'ok');
+      const panel=document.getElementById('notifPanel');
+      if(panel&&panel.style.display==='block')renderNotifPanel();
+    }
+  },45000);
 }
 async function loadNotifications(){
   if(!ME)return;
@@ -2403,11 +2428,14 @@ function renderDossier(r){
   // commentaires
   const cmts=(r.comments||[]).slice().sort((a,b)=>(b.date||0)-(a.date||0));
   let comm=`<div class="panel"><div class="panel-h"><h3>Commentaires</h3><div class="sp"><span class="muted">${cmts.length} commentaire${cmts.length>1?'s':''}</span></div></div><div class="panel-b">
-    <textarea id="cmt_input" placeholder="Ajouter un commentaire…" style="width:100%;border:1.5px solid var(--border-grey);border-radius:9px;padding:.6rem .8rem;font-size:.88rem;min-height:72px;font-family:'Saira',sans-serif"></textarea>
-    <button class="btn btn-pri btn-sm" style="margin-top:.5rem" onclick="addComment('${r.id}')">+ Ajouter le commentaire</button>
+    <textarea id="cmt_input" placeholder="Ajouter un commentaire…" oninput="mentionInput(this)" onkeydown="mentionKeydown(this,event)" onblur="hideMentionBox()" style="width:100%;border:1.5px solid var(--border-grey);border-radius:9px;padding:.6rem .8rem;font-size:.88rem;min-height:72px;font-family:'Saira',sans-serif"></textarea>
+    <div style="display:flex;align-items:center;gap:.6rem;margin-top:.5rem;flex-wrap:wrap">
+      <button class="btn btn-pri btn-sm" onclick="addComment('${r.id}')">+ Ajouter le commentaire</button>
+      <span class="muted" style="font-size:.72rem">Tapez <b>@</b> pour mentionner un collègue — il recevra une notification.</span>
+    </div>
     <div style="margin-top:1rem;display:flex;flex-direction:column;gap:.55rem">`;
   if(!cmts.length)comm+=`<div class="muted">Aucun commentaire pour l'instant.</div>`;
-  else cmts.forEach(c=>{comm+=`<div class="cmt"><div class="cmt-txt">${esc(c.text).replace(/\n/g,'<br>')}</div><div class="cmt-meta"><span>${esc(c.user||'')} · ${new Date(c.date).toLocaleString('fr-FR')}</span>${ME&&ME.role==='superadmin'?`<button class="iconbtn del" style="width:24px;height:24px;font-size:.7rem" onclick="delComment('${r.id}','${c.id}')">🗑️</button>`:''}</div></div>`;});
+  else cmts.forEach(c=>{comm+=`<div class="cmt"><div class="cmt-txt">${renderCommentText(c.text,c.mentions)}</div><div class="cmt-meta"><span>${esc(c.user||'')} · ${new Date(c.date).toLocaleString('fr-FR')}</span>${ME&&ME.role==='superadmin'?`<button class="iconbtn del" style="width:24px;height:24px;font-size:.7rem" onclick="delComment('${r.id}','${c.id}')">🗑️</button>`:''}</div></div>`;});
   comm+=`</div></div></div>`;
   // panneau DEAL (compact, placé en bas à côté des commentaires) — réservé Admin / Super Admin, comme la Comptabilité
   const isAdminCompta=ME&&(ME.role==='superadmin'||ME.role==='admin');
@@ -3850,6 +3878,102 @@ function delFacture(id){
     closeModal();renderComptaTabs();toast('Document supprimé','ok');
   });
 }
+/* ---- mentions @utilisateur dans les commentaires ---- */
+let MENTION_TA=null,MENTION_IDX=0,MENTION_LIST=[];
+const nrm=s=>(s||'').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g,'');
+const rxEsc=s=>(s||'').replace(/[.*+?^${}()|[\]\\]/g,'\\$&');
+function mentionCandidates(){return getUsers().filter(u=>u.active!==false);}
+/* Détecte les utilisateurs cités dans un texte, à la saisie ou collés à la main */
+function extractMentions(txt){
+  const t=nrm(txt);const out=[];
+  mentionCandidates().forEach(u=>{
+    const full=nrm((u.prenom||'')+' '+(u.nom||'')).trim();
+    const first=nrm(u.prenom||'');
+    if(full&&t.includes('@'+full))out.push(u.id);
+    else if(first&&new RegExp('@'+rxEsc(first)+'(?![a-z0-9])').test(t))out.push(u.id);
+  });
+  return [...new Set(out)];
+}
+function mentionToken(ta){
+  const pos=ta.selectionStart||0;
+  const before=ta.value.slice(0,pos);
+  const m=before.match(/@([\p{L}\-]*(?: [\p{L}\-]*)?)$/u);
+  return m?{q:m[1],start:pos-m[0].length,end:pos}:null;
+}
+function mentionInput(ta){
+  MENTION_TA=ta;
+  const box=document.getElementById('mentionBox');if(!box)return;
+  const tok=mentionToken(ta);
+  if(!tok){box.style.display='none';return;}
+  const q=nrm(tok.q);
+  MENTION_LIST=mentionCandidates().filter(u=>nrm((u.prenom||'')+' '+(u.nom||'')).includes(q)).slice(0,6);
+  if(!MENTION_LIST.length){box.style.display='none';return;}
+  MENTION_IDX=0;
+  const r=ta.getBoundingClientRect();
+  box.style.left=r.left+'px';
+  box.style.width=Math.min(Math.max(r.width,220),320)+'px';
+  const below=window.innerHeight-r.bottom;
+  if(below<200&&r.top>200){box.style.top='';box.style.bottom=(window.innerHeight-r.top+4)+'px';}
+  else{box.style.bottom='';box.style.top=(r.bottom+4)+'px';}
+  renderMentionBox();
+  box.style.display='block';
+}
+function renderMentionBox(){
+  const box=document.getElementById('mentionBox');if(!box)return;
+  box.innerHTML=MENTION_LIST.map((u,i)=>`<div class="mention-item ${i===MENTION_IDX?'act':''}" onmousedown="event.preventDefault();pickMention('${u.id}')">
+    <span class="mi-av">${esc(((u.prenom||'')[0]||'')+((u.nom||'')[0]||''))}</span>
+    <span><b>${esc((u.prenom||'')+' '+(u.nom||''))}</b><span class="muted" style="font-size:.66rem;display:block">${esc(ROLES[u.role]||u.role||'')}</span></span>
+  </div>`).join('');
+}
+function mentionKeydown(ta,e){
+  const box=document.getElementById('mentionBox');
+  if(!box||box.style.display==='none'||!MENTION_LIST.length)return;
+  if(e.key==='ArrowDown'){e.preventDefault();MENTION_IDX=(MENTION_IDX+1)%MENTION_LIST.length;renderMentionBox();}
+  else if(e.key==='ArrowUp'){e.preventDefault();MENTION_IDX=(MENTION_IDX-1+MENTION_LIST.length)%MENTION_LIST.length;renderMentionBox();}
+  else if(e.key==='Enter'||e.key==='Tab'){e.preventDefault();pickMention(MENTION_LIST[MENTION_IDX].id);}
+  else if(e.key==='Escape'){box.style.display='none';}
+}
+function pickMention(uid){
+  const u=getUsers().find(x=>x.id===uid);const ta=MENTION_TA;
+  const box=document.getElementById('mentionBox');
+  if(!u||!ta){if(box)box.style.display='none';return;}
+  const tok=mentionToken(ta);if(!tok){box.style.display='none';return;}
+  const ins='@'+(u.prenom||'')+' '+(u.nom||'')+' ';
+  ta.value=ta.value.slice(0,tok.start)+ins+ta.value.slice(tok.end);
+  const np=tok.start+ins.length;
+  ta.focus();ta.setSelectionRange(np,np);
+  box.style.display='none';
+}
+function hideMentionBox(){setTimeout(()=>{const b=document.getElementById('mentionBox');if(b)b.style.display='none';},120);}
+/* Rend le texte d'un commentaire avec les mentions surlignées */
+function renderCommentText(txt,mentions){
+  const users=getUsers();const toks=[];
+  (mentions||[]).forEach(uid=>{
+    const u=users.find(x=>x.id===uid);if(!u)return;
+    toks.push('@'+(u.prenom||'')+' '+(u.nom||''));
+    if(u.prenom)toks.push('@'+u.prenom);
+  });
+  toks.sort((a,b)=>b.length-a.length);
+  let s=txt||'';const map={};let i=0;
+  toks.forEach(t=>{
+    if(!t||!s.includes(t))return;
+    const ph='\u0001M'+(i++)+'\u0001';map[ph]=t;s=s.split(t).join(ph);
+  });
+  let h=esc(s).replace(/\n/g,'<br>');
+  Object.keys(map).forEach(ph=>{h=h.split(ph).join(`<span class="mention-tag">${esc(map[ph])}</span>`);});
+  return h;
+}
+/* Envoie une notification à chaque personne citée */
+async function notifyMentions(mentions,r,txt){
+  const who=((ME.prenom||'')+' '+(ME.nom||'')).trim()||ME.code;
+  const label=r.dossier||recName(r);
+  const extrait=txt.length>70?txt.slice(0,70)+'…':txt;
+  for(const uid of (mentions||[])){
+    if(uid===ME.id)continue;
+    await createNotification(uid,'mention',`💬 ${who} vous a mentionné sur ${label} : « ${extrait} »`,r.id);
+  }
+}
+
 /* ---- commentaires ---- */
 function delHistoryEntry(recId,idx){
   if(!ME||ME.role!=='superadmin'){toast('Seul le Super Admin peut supprimer une entrée de l\'historique','err');return;}
@@ -3859,14 +3983,18 @@ function delHistoryEntry(recId,idx){
   if(DOSSIER_OPEN===recId)openDossier(recId);
   toast('Entrée supprimée','ok');
 }
-function addComment(id){
+async function addComment(id){
   const el=document.getElementById('cmt_input');const txt=el?el.value.trim():'';
   if(!txt){toast('Commentaire vide','err');return;}
   const recs=getRecs();const r=recs.find(x=>x.id===id);if(!r)return;
+  const mentions=extractMentions(txt);
   r.comments=r.comments||[];
-  r.comments.push({id:uid(),text:txt,user:(ME.prenom+' '+ME.nom).trim()||ME.code,date:Date.now()});
-  save(K.recs,recs);openDossier(id);toast('Commentaire ajouté ✓','ok');
+  r.comments.push({id:uid(),text:txt,user:(ME.prenom+' '+ME.nom).trim()||ME.code,date:Date.now(),mentions});
+  save(K.recs,recs);openDossier(id);
+  const nb=mentions.filter(u=>u!==ME.id).length;
+  toast(nb?`Commentaire ajouté ✓ · ${nb} personne${nb>1?'s':''} notifiée${nb>1?'s':''}`:'Commentaire ajouté ✓','ok');
   logActivity('action',`💬 Commentaire ajouté sur ${r.dossier||id} : « ${txt.slice(0,80)}${txt.length>80?'…':''} »`,id);
+  notifyMentions(mentions,r,txt);
 }
 function delComment(recId,cid){
   if(!ME||ME.role!=='superadmin'){toast('Seul le Super Admin peut supprimer un commentaire','err');return;}
@@ -3882,20 +4010,25 @@ function openCommentsPreview(recId){
 function refreshCommentsModal(recId){const r=recById(recId);if(r&&document.getElementById('cmtModalBody'))refreshCommentsModalContent(r);}
 function refreshCommentsModalContent(r){
   const cmts=(r.comments||[]).slice().sort((a,b)=>(b.date||0)-(a.date||0));
-  let b=`<div id="cmtModalBody"><textarea id="cmt_input2" placeholder="Ajouter un commentaire…" style="width:100%;border:1.5px solid var(--border-grey);border-radius:9px;padding:.55rem .7rem;font-size:.86rem;min-height:60px;font-family:'Saira',sans-serif"></textarea>
+  let b=`<div id="cmtModalBody"><textarea id="cmt_input2" placeholder="Ajouter un commentaire…  Tapez @ pour mentionner un collègue" oninput="mentionInput(this)" onkeydown="mentionKeydown(this,event)" onblur="hideMentionBox()" style="width:100%;border:1.5px solid var(--border-grey);border-radius:9px;padding:.55rem .7rem;font-size:.86rem;min-height:60px;font-family:'Saira',sans-serif"></textarea>
     <button class="btn btn-pri btn-sm" style="margin-top:.45rem" onclick="addCommentFromModal('${r.id}')">+ Ajouter</button>
     <div style="margin-top:.9rem;display:flex;flex-direction:column;gap:.5rem;max-height:340px;overflow:auto">`;
   if(!cmts.length)b+=`<div class="muted">Aucun commentaire.</div>`;
-  else cmts.forEach(c=>{b+=`<div class="cmt"><div class="cmt-txt">${esc(c.text).replace(/\n/g,'<br>')}</div><div class="cmt-meta"><span>${esc(c.user||'')} · ${new Date(c.date).toLocaleString('fr-FR')}</span>${ME&&ME.role==='superadmin'?`<button class="iconbtn del" style="width:24px;height:24px;font-size:.7rem" onclick="delComment('${r.id}','${c.id}')">🗑️</button>`:''}</div></div>`;});
+  else cmts.forEach(c=>{b+=`<div class="cmt"><div class="cmt-txt">${renderCommentText(c.text,c.mentions)}</div><div class="cmt-meta"><span>${esc(c.user||'')} · ${new Date(c.date).toLocaleString('fr-FR')}</span>${ME&&ME.role==='superadmin'?`<button class="iconbtn del" style="width:24px;height:24px;font-size:.7rem" onclick="delComment('${r.id}','${c.id}')">🗑️</button>`:''}</div></div>`;});
   b+=`</div></div>`;
   openModal(`Commentaires — ${esc(recName(r))}`,b,`<button class="btn btn-ghost" onclick="closeModal()">Fermer</button>${can('leads_view')?`<button class="btn btn-pri" onclick="openDossier('${r.id}');closeModal()">Ouvrir le dossier</button>`:''}`);
 }
-function addCommentFromModal(id){
+async function addCommentFromModal(id){
   const el=document.getElementById('cmt_input2');const txt=el?el.value.trim():'';
   if(!txt){toast('Commentaire vide','err');return;}
   const recs=getRecs();const r=recs.find(x=>x.id===id);if(!r)return;
-  r.comments=r.comments||[];r.comments.push({id:uid(),text:txt,user:(ME.prenom+' '+ME.nom).trim()||ME.code,date:Date.now()});
-  save(K.recs,recs);refreshCommentsModalContent(r);toast('Commentaire ajouté ✓','ok');
+  const mentions=extractMentions(txt);
+  r.comments=r.comments||[];
+  r.comments.push({id:uid(),text:txt,user:(ME.prenom+' '+ME.nom).trim()||ME.code,date:Date.now(),mentions});
+  save(K.recs,recs);refreshCommentsModalContent(r);
+  const nb=mentions.filter(u=>u!==ME.id).length;
+  toast(nb?`Commentaire ajouté ✓ · ${nb} personne${nb>1?'s':''} notifiée${nb>1?'s':''}`:'Commentaire ajouté ✓','ok');
+  notifyMentions(mentions,r,txt);
 }
 
 /* ---- pièces jointes (Supabase Storage — partagées entre tous les accès autorisés) ---- */
