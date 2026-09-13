@@ -5263,6 +5263,16 @@ function filterMats(mats,tab,mvts){
   });
 }
 
+/* Coût unitaire moyen pondéré, calculé sur les achats réels (remise et frais inclus) */
+function coutUnitaireMoyen(m,mvts){
+  const ent=mvts.filter(v=>v.materielId===m.id&&['entree','reception'].includes(v.sens));
+  const qte=ent.reduce((s,v)=>s+(v.qte||0),0);
+  const ht=ent.reduce((s,v)=>s+(v.totalHT||0),0);
+  if(qte&&ht)return ht/qte;
+  if(m.prixUnitaire)return m.prixUnitaire;
+  const px=(m.fournisseurs||[]).map(f=>parseFloat(f.prix)||0).filter(Boolean);
+  return px.length?px.reduce((s,p)=>s+p,0)/px.length:0;
+}
 function renderStockEtat(){
   const mats=getMats();const mvts=getMvts();
   const eur=n=>(n||0).toLocaleString('fr-FR',{maximumFractionDigits:2})+' €';
@@ -5271,30 +5281,40 @@ function renderStockEtat(){
     h=`<div class="empty"><div class="big">📦</div>Aucun matériel dans le catalogue.<br><button class="btn btn-pri" style="margin-top:.8rem" onclick="STOCK_TAB='catalogue';renderStock()">+ Ajouter un matériel</button></div>`;
     document.getElementById('stockBody').innerHTML=h;return;
   }
-  // KPIs
-  const nbAlertes=mats.filter(m=>{
+  // Filtrage d'abord : les indicateurs portent sur la sélection affichée
+  const matsF=filterMats(mats,'etat',mvts);
+  const idsF=new Set(matsF.map(m=>m.id));
+  const mvtsF=mvts.filter(v=>idsF.has(v.materielId));
+  const filtre=stockFilterActive('etat');
+  // KPIs sur la sélection
+  const nbAlertes=matsF.filter(m=>{
     if(m.typeStock==='circulant'||m.typeStock==='commande')return false;
     const e=mvts.filter(v=>v.materielId===m.id&&v.sens==='entree').reduce((s,v)=>s+(v.qte||0),0);
     const s=mvts.filter(v=>v.materielId===m.id&&v.sens==='sortie').reduce((s,v)=>s+(v.qte||0),0)+calcSortiesAuto(m);
     return m.seuilAlerte&&(e-s)<=m.seuilAlerte;
   }).length;
-  const valeurTot=mats.reduce((s,m)=>{
-    if(m.typeStock==='commande'||m.typeStock==='circulant')return s;
+  const valeurTot=matsF.reduce((s,m)=>{
+    if(m.typeStock==='commande')return s;
     const e=mvts.filter(v=>v.materielId===m.id&&v.sens==='entree').reduce((acc,v)=>acc+(v.qte||0),0);
     const so=mvts.filter(v=>v.materielId===m.id&&v.sens==='sortie').reduce((acc,v)=>acc+(v.qte||0),0)+calcSortiesAuto(m);
-    return s+Math.max(0,e-so)*(m.prixUnitaire||0);
+    const reste=m.typeStock==='circulant'?e:Math.max(0,e-so);
+    return s+reste*coutUnitaireMoyen(m,mvts);
   },0);
-  const nbFourn=new Set(mats.flatMap(m=>(m.fournisseurs||[]).map(f=>f.nom).filter(Boolean))).size;
+  const achats=mvtsF.filter(v=>['entree','reception'].includes(v.sens));
+  const totalAchete=achats.reduce((s,v)=>s+(v.totalHT||0),0);
+  const qteAchetee=achats.reduce((s,v)=>s+(v.qte||0),0);
+  const valeurConsommee=Math.max(0,totalAchete-valeurTot);
+  const nbFourn=new Set(matsF.flatMap(m=>(m.fournisseurs||[]).map(f=>f.nom).filter(Boolean))).size;
+  const scope=filtre?`<span style="color:var(--green-deep)">sélection filtrée</span>`:'tous matériels';
   h+=`<div class="kpis">
-    <div class="kpi"><div class="kico">📦</div><div class="klab">Matériels</div><div class="kval">${mats.length}</div><div class="ksub">dans le catalogue</div></div>
-    <div class="kpi" style="${nbAlertes?'border:1.5px solid rgba(230,57,70,.3)':''}"><div class="kico">${nbAlertes?'⚠️':'✅'}</div><div class="klab">Alertes stock bas</div><div class="kval" style="${nbAlertes?'color:var(--coral)':'color:var(--green-deep)'}">${nbAlertes}</div><div class="ksub">${nbAlertes?'matériel(s) à reapprovisionner':'Tout est OK'}</div></div>
-    <div class="kpi"><div class="kico">💶</div><div class="klab">Valeur stock</div><div class="kval">${eur(valeurTot)}</div><div class="ksub">HT tous matériels</div></div>
-    <div class="kpi"><div class="kico">🏭</div><div class="klab">Fournisseurs</div><div class="kval">${nbFourn}</div><div class="ksub">référencés</div></div>
+    <div class="kpi"><div class="kico">📦</div><div class="klab">Matériels</div><div class="kval">${matsF.length}${filtre?`<span style="font-size:.8rem;font-weight:600;color:var(--text-mut)"> / ${mats.length}</span>`:''}</div><div class="ksub">${nbFourn} fournisseur${nbFourn>1?'s':''} · ${scope}</div></div>
+    <div class="kpi" style="${nbAlertes?'border:1.5px solid rgba(230,57,70,.3)':''}"><div class="kico">${nbAlertes?'⚠️':'✅'}</div><div class="klab">Alertes stock bas</div><div class="kval" style="${nbAlertes?'color:var(--coral)':'color:var(--green-deep)'}">${nbAlertes}</div><div class="ksub">${nbAlertes?'matériel(s) à réapprovisionner':'Tout est OK'}</div></div>
+    <div class="kpi"><div class="kico">🛒</div><div class="klab">Total acheté</div><div class="kval">${eur(totalAchete)}</div><div class="ksub">HT · ${qteAchetee.toLocaleString('fr-FR')} unités entrées</div></div>
+    <div class="kpi accent"><div class="kico">💶</div><div class="klab">Valeur du stock restant</div><div class="kval">${eur(valeurTot)}</div><div class="ksub">HT · au coût moyen d'achat</div></div>
+    <div class="kpi"><div class="kico">📤</div><div class="klab">Valeur consommée</div><div class="kval">${eur(valeurConsommee)}</div><div class="ksub">HT · sortie sur dossiers</div></div>
   </div>`;
   // Barre de filtres
   h+=stockFilterBar('etat');
-  const matsF=filterMats(mats,'etat',mvts);
-  if(stockFilterActive('etat'))h+=`<p class="muted" style="font-size:.75rem;margin-bottom:.6rem">${matsF.length} matériel${matsF.length>1?'s':''} affiché${matsF.length>1?'s':''} sur ${mats.length}</p>`;
   if(!matsF.length){
     h+=`<div class="empty"><div class="big">🔍</div>Aucun matériel ne correspond aux filtres.</div>`;
     document.getElementById('stockBody').innerHTML=h;restoreStockFocus();return;
@@ -5307,7 +5327,8 @@ function renderStockEtat(){
     const sortiesAuto=calcSortiesAuto(m);
     const sorties=sortiesManuel+sortiesAuto;
     const stock=entrees-sorties;
-    const valeur=Math.max(0,stock)*(m.prixUnitaire||0);
+    const cuMoyen=coutUnitaireMoyen(m,mvts);
+    const valeur=Math.max(0,stock)*cuMoyen;
     const alerte=m.seuilAlerte&&stock<=m.seuilAlerte;
     const totalHtEntrees=mvts.filter(v=>v.materielId===m.id&&v.sens==='entree').reduce((s,v)=>s+(v.totalHT||0),0);
     const locaux=mvts.filter(v=>v.materielId===m.id&&v.sens==='localisation').sort((a,b)=>(b.date||0)-(a.date||0));
@@ -5325,7 +5346,7 @@ function renderStockEtat(){
           <div class="muted" style="font-size:.72rem">${esc(m.operation||'')} · ${stype.label}${m.reference?' · Réf: '+esc(m.reference):''}${m.seuilAlerte?' · Seuil: '+m.seuilAlerte+' '+esc(m.unite||'u'):''}</div>
         </div>
         <div class="sp">
-          ${m.typeStock==='stock_fixe'?`<div style="text-align:right"><div style="font-size:1.4rem;font-weight:800;color:${alerte?'var(--coral)':stock>0?'var(--green-deep)':'var(--text-mut)'}">${stock} ${esc(m.unite||'u')}</div><div class="muted" style="font-size:.7rem">restant${stock>1?'s':''} · ${eur(valeur)}</div></div>`:''}
+          ${m.typeStock==='stock_fixe'?`<div style="text-align:right"><div style="font-size:1.4rem;font-weight:800;color:${alerte?'var(--coral)':stock>0?'var(--green-deep)':'var(--text-mut)'}">${stock} ${esc(m.unite||'u')}</div><div class="muted" style="font-size:.7rem">restant${stock>1?'s':''} · ${eur(valeur)} HT</div></div>`:''}
           ${m.typeStock==='commande'?`<div style="text-align:right"><div style="font-size:1.1rem;font-weight:800;color:var(--blue)">${enCours} en cours</div><div class="muted" style="font-size:.7rem">commande${enCours>1?'s':''} active${enCours>1?'s':''}</div></div>`:''}
           ${m.typeStock==='circulant'?`<div style="text-align:right"><div style="font-size:1rem;font-weight:800">${entrees} ${esc(m.unite||'u')}</div><div style="font-size:.7rem;color:var(--green-deep);margin-top:2px">${curLoc?'📍 '+esc(curLoc.lieu||'—'):'Non localisé'}</div></div>`:''}
           ${m.typeStock==='circulant'?`<button class="btn btn-ghost btn-sm" onclick="openLocModal('${m.id}')">📍 Localiser</button>`:`<button class="btn btn-pri btn-sm" onclick="openMvtModal(null,'${m.id}')">+ Entrée</button>`}
@@ -5337,7 +5358,7 @@ function renderStockEtat(){
       h+=`<div style="display:grid;grid-template-columns:repeat(4,1fr);border-bottom:1px solid var(--border-grey)">
         <div style="padding:.65rem 1.1rem;border-right:1px solid var(--border-grey)"><div class="muted" style="font-size:.65rem;margin-bottom:.2rem">ENTRÉES (achats)</div><div style="font-weight:800">${entrees} ${esc(m.unite||'u')}</div><div class="muted" style="font-size:.68rem">${eur(totalHtEntrees)} HT</div></div>
         <div style="padding:.65rem 1.1rem;border-right:1px solid var(--border-grey)"><div class="muted" style="font-size:.65rem;margin-bottom:.2rem">SORTIES AUTO${trigStatNames?' ('+esc(trigStatNames)+')':''}</div><div style="font-weight:800">${sortiesAuto} ${esc(m.unite||'u')}</div><div class="muted" style="font-size:.68rem">${getDossiersSorties(m).length} dossiers</div></div>
-        <div style="padding:.65rem 1.1rem;border-right:1px solid var(--border-grey)"><div class="muted" style="font-size:.65rem;margin-bottom:.2rem">STOCK RESTANT</div><div style="font-weight:800;color:${alerte?'var(--coral)':stock>0?'var(--green-deep)':'var(--text-mut)'}">${stock} ${esc(m.unite||'u')}</div><div class="muted" style="font-size:.68rem">${eur(valeur)} HT</div></div>
+        <div style="padding:.65rem 1.1rem;border-right:1px solid var(--border-grey)"><div class="muted" style="font-size:.65rem;margin-bottom:.2rem">STOCK RESTANT</div><div style="font-weight:800;color:${alerte?'var(--coral)':stock>0?'var(--green-deep)':'var(--text-mut)'}">${stock} ${esc(m.unite||'u')}</div><div class="muted" style="font-size:.68rem">Valeur ${eur(valeur)} HT${cuMoyen?' · '+eur(cuMoyen)+'/u':''}</div></div>
         <div style="padding:.65rem 1.1rem"><div class="muted" style="font-size:.65rem;margin-bottom:.2rem">FOURNISSEURS</div>${fourns.length?fourns.map(f=>`<div style="font-size:.72rem"><span style="font-weight:700;color:var(--purple)">${esc(f.nom)}</span> <span class="muted">${eur(f.prix)}/u</span></div>`).join(''):'<span class="muted" style="font-size:.75rem">—</span>'}</div>
       </div>`;
     }
