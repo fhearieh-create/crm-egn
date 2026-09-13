@@ -3630,8 +3630,11 @@ async function saveApfDelegStatut(apfId,statut){
   save('egncrm_apf_deleg',apfs);renderComptaDelegataires();
 }
 function supprimerApfDeleg(apfId){
-  modalConfirm('Supprimer cet APF délégataire ?','Les dossiers affiliés repasseront comme non affiliés.',()=>{
+  modalConfirm('Supprimer cet APF délégataire ?','Les dossiers affiliés repasseront comme non affiliés.',async()=>{
+    const apf=load('egncrm_apf_deleg',[]).find(a=>a.id===apfId);
     save('egncrm_apf_deleg',load('egncrm_apf_deleg',[]).filter(a=>a.id!==apfId));
+    await deleteRemoteRow('egncrm_apf_deleg',apfId);
+    if(apf&&apf.filePath){try{await SUPA.storage.from('attachments').remove([apf.filePath]);}catch(e){}}
     closeModal();renderComptaDelegataires();toast('APF supprimé ✓','ok');
   });
 }
@@ -5608,8 +5611,7 @@ function saveMat(){
 function supprimerMat(id){
   modalConfirm('Supprimer ce matériel ?','Les mouvements associés ne seront pas supprimés.',async()=>{
     save('egncrm_materiels',getMats().filter(m=>m.id!==id));
-    // Supprimer aussi dans Supabase
-    try{await SUPA.from('cfg_materiels').delete().eq('id',id);}catch(e){console.warn('[supprimerMat Supabase]',e);}
+    await deleteRemoteRow('egncrm_materiels',id);
     closeModal();renderStock();toast('Matériel supprimé ✓','ok');
   });
 }
@@ -5827,8 +5829,12 @@ function editMvt(id){
     `<button class="btn btn-ghost" onclick="closeModal()">Annuler</button><button class="btn btn-pri" onclick="saveMvt()">💾 Enregistrer</button>`,'wide');
   setTimeout(()=>updateMvtCalc(),100);
 }
-function supprimerMvt(id){
+async function supprimerMvt(id){
+  const mvt=getMvts().find(v=>v.id===id);
   save('egncrm_stock_mvt',getMvts().filter(v=>v.id!==id));
+  await deleteRemoteRow('egncrm_stock_mvt',id);
+  // Supprimer aussi la facture jointe du stockage
+  if(mvt&&mvt.facturePath){try{await SUPA.storage.from('attachments').remove([mvt.facturePath]);}catch(e){}}
   renderStock();toast('Mouvement supprimé ✓','ok');
 }
 
@@ -6688,11 +6694,89 @@ function openCfg(type,id){const cfg=CFGMAP[type];const list=load(cfg.key,[]);con
   openModal((id?'Modifier ':'Nouveau ')+cfg.label,`<input type="hidden" id="cf_id" value="${id||''}"><input type="hidden" id="cf_type" value="${type}"><div class="fld"><label>Nom</label><input id="cf_name" value="${esc(x?x.name:'')}"></div>`,`<button class="btn btn-ghost" onclick="closeModal()">Annuler</button><button class="btn btn-pri" onclick="saveCfg()">💾 Enregistrer</button>`);}
 function saveCfg(){const type=val('cf_type');const cfg=CFGMAP[type];const id=val('cf_id');const name=val('cf_name');if(!name){toast('Nom requis','err');return;}const list=load(cfg.key,[]);let x=id?list.find(a=>a.id===id):null;if(!x){x={id:uid()};list.push(x);}x.name=name;save(cfg.key,list);closeModal();renderSettings();toast('Enregistré ✓','ok');}
 function delCfg(type,id){const cfg=CFGMAP[type];modalConfirm('Supprimer cet élément ?','',()=>{save(cfg.key,load(cfg.key,[]).filter(a=>a.id!==id));deleteRemoteRow(cfg.key,id);closeModal();renderSettings();toast('Supprimé','ok');});}
+/* ---- Diagnostic de synchronisation Supabase ---- */
+const SYNC_LABELS={
+  records:'Dossiers / leads',rdvs:'Rendez-vous',cfg_statuses:'Statuts',cfg_sousstatuts:'Sous-statuts',
+  cfg_operations:'Opérations',cfg_sources:'Sources / régies',cfg_equipes:'Équipes',cfg_doctypes:'Types de documents',
+  cfg_vt:'Visites techniques',cfg_auditeurs:'Auditeurs',cfg_delegataires:'Délégataires',cfg_mailtpl:'Modèles e-mail',
+  cfg_items:'Produits',sav_tickets:'Tickets SAV',cfg_poseurs:'Poseurs',cfg_uvalues:'Coefficients U',
+  cfg_pac:'Solutions PAC',cfg_doc_templates:'Modèles de documents',cfg_materiels:'Catalogue matériels',
+  stock_mouvements:'Mouvements de stock',apf_delegataires:'APF délégataires',cfg_societe:'Paramètres société'
+};
+const EXTRA_TABLES=[
+  {table:'factures_agents',label:'APF / factures agents'},
+  {table:'dossier_compta',label:'Comptabilité par dossier'},
+  {table:'dossier_deal',label:'Deals / primes'},
+  {table:'profiles',label:'Utilisateurs'}
+];
+async function runSyncDiag(){
+  const body=document.getElementById('syncDiagBody');if(!body)return;
+  body.innerHTML='<div class="empty"><div class="big">⏳</div>Vérification des tables Supabase…</div>';
+  const checks=[
+    ...SYNC_TABLES.map(c=>({table:c.table,label:SYNC_LABELS[c.table]||c.table,key:c.key,shape:c.shape})),
+    ...EXTRA_TABLES.map(t=>({table:t.table,label:t.label,key:null}))
+  ];
+  const results=[];
+  for(const c of checks){
+    let remote=null,err=null;
+    try{
+      const{count,error}=await SUPA.from(c.table).select('*',{count:'exact',head:true});
+      if(error)throw error;
+      remote=count||0;
+    }catch(e){err=e.message||String(e);}
+    let local=null;
+    if(c.key){
+      const v=load(c.key,c.shape==='single'?null:[]);
+      local=Array.isArray(v)?v.length:(v?1:0);
+    }
+    results.push({...c,remote,local,err});
+  }
+  const ko=results.filter(r=>r.err);
+  const desync=results.filter(r=>!r.err&&r.local!=null&&r.local>r.remote);
+  let h='';
+  if(!ko.length&&!desync.length){
+    h+=`<div style="background:#EFF7E8;border:1.5px solid var(--green);border-radius:10px;padding:.7rem 1rem;margin-bottom:.8rem;font-size:.84rem"><b>✅ Tout est synchronisé.</b> Chaque type de données est enregistré sur Supabase et visible par les utilisateurs autorisés.</div>`;
+  } else {
+    if(ko.length)h+=`<div style="background:#FEE8E8;border:1.5px solid var(--coral);border-radius:10px;padding:.7rem 1rem;margin-bottom:.6rem;font-size:.84rem"><b>⛔ ${ko.length} table${ko.length>1?'s':''} inaccessible${ko.length>1?'s':''}</b> — données conservées uniquement sur cet appareil. Lancez le SQL de mise en conformité dans Supabase.</div>`;
+    if(desync.length)h+=`<div style="background:#FFF4E5;border:1.5px solid #F0C486;border-radius:10px;padding:.7rem 1rem;margin-bottom:.6rem;font-size:.84rem"><b>⚠️ ${desync.length} table${desync.length>1?'s':''} en retard</b> — des données locales n'ont pas été publiées. Utilisez « Republier » ci-dessous.</div>`;
+  }
+  h+=`<div class="tbl-wrap"><table class="tbl"><thead><tr><th>Donnée</th><th>Table Supabase</th><th class="r">En ligne</th><th class="r">Sur cet appareil</th><th>État</th><th class="r"></th></tr></thead><tbody>`;
+  results.forEach(r=>{
+    let badge,action='';
+    if(r.err)badge=`<span style="background:#FEE8E8;color:#A32D2D;border-radius:6px;padding:2px 8px;font-size:.7rem;font-weight:700">⛔ Erreur</span><div class="muted" style="font-size:.65rem;margin-top:.15rem">${esc(r.err)}</div>`;
+    else if(r.local!=null&&r.local>r.remote){
+      badge=`<span style="background:#FFF4E5;color:#B96A0A;border-radius:6px;padding:2px 8px;font-size:.7rem;font-weight:700">⚠️ En retard</span>`;
+      action=`<button class="btn btn-ghost btn-sm" style="font-size:.7rem" onclick="republishTable('${r.key}')">⇧ Republier</button>`;
+    }
+    else badge=`<span style="background:#E6F7F0;color:#0F6E56;border-radius:6px;padding:2px 8px;font-size:.7rem;font-weight:700">✅ En ligne</span>`;
+    h+=`<tr>
+      <td style="font-weight:700">${esc(r.label)}</td>
+      <td class="muted" style="font-size:.75rem">${esc(r.table)}</td>
+      <td style="text-align:right;font-weight:700">${r.remote!=null?r.remote:'—'}</td>
+      <td style="text-align:right" class="muted">${r.local!=null?r.local:'—'}</td>
+      <td>${badge}</td>
+      <td style="text-align:right">${action}</td>
+    </tr>`;
+  });
+  h+=`</tbody></table></div>`;
+  h+=`<p class="muted" style="font-size:.72rem;margin-top:.6rem">« En ligne » = lignes réellement présentes sur Supabase. Un écart normal peut apparaître si vos droits limitent la lecture à vos propres dossiers.</p>`;
+  body.innerHTML=h;
+}
+async function republishTable(key){
+  const cfg=SYNC_TABLES.find(c=>c.key===key);if(!cfg)return;
+  const v=load(key,cfg.shape==='single'?{}:[]);
+  toast('Publication en cours…','ok');
+  await pushTable(cfg,v);
+  toast('Données republiées ✓','ok');
+  runSyncDiag();
+}
+
 function setSociete(){
   const s=getSettings();
   const tarifs=s.tarifsEnergie||{};
   const energies=[['propane','Propane','€/L'],['fioul','Fioul domestique','€/L'],['gaz','Gaz naturel','€/kWh'],['electricite','Électricité','€/kWh'],['bois','Bois / granulés','€/kWh']];
-  let h=`<div class="panel"><div class="panel-h"><h3>Informations société</h3></div><div class="panel-b"><div class="fgrid">
+  let h=`<div class="panel"><div class="panel-h"><h3>🔄 Diagnostic de synchronisation</h3><div class="sp"><button class="btn btn-navy btn-sm" onclick="runSyncDiag()">Lancer le diagnostic</button></div></div><div class="panel-b" id="syncDiagBody"><p class="muted" style="font-size:.8rem">Vérifie que chaque type de données est bien enregistré sur Supabase et visible par toute l'équipe, et non uniquement sur cet appareil.</p></div></div>`;
+  h+=`<div class="panel"><div class="panel-h"><h3>Informations société</h3></div><div class="panel-b"><div class="fgrid">
     <div class="fld"><label>Nom de la société</label><input id="co_name" value="${esc(s.company)}"></div>
     <div class="fld"><label>Email de contact</label><input id="co_email" value="${esc(s.email)}"></div>
     <div class="fld"><label>Téléphone</label><input id="co_phone" value="${esc(s.phone)}"></div>
