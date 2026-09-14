@@ -605,14 +605,16 @@ const PERM_GROUPS=[
     {k:'rappels_view',l:'Rappels'},
   ]},
   {g:'Leads & dossiers',items:[
-    {k:'leads_view',l:'Accès aux leads / dossiers'},
+    {k:'leads_view',l:'Accès aux leads BtoB'},
     {k:'leads_view_all',l:'Voir TOUS les dossiers (sinon les siens)'},
     {k:'leads_create',l:'Créer des leads'},
     {k:'leads_edit',l:'Modifier les fiches'},
     {k:'leads_delete',l:'Supprimer des dossiers'},
     {k:'status_change',l:'Changer les statuts'},
     {k:'sousstatut_view',l:'Voir et modifier les sous-statuts'},
-    {k:'clients_view',l:'Accès aux clients'},
+    {k:'clients_view',l:'Accès aux clients BtoB'},
+    {k:'leads_view_btoc',l:'Accès aux leads BtoC'},
+    {k:'clients_view_btoc',l:'Accès aux clients BtoC'},
     {k:'sav_view',l:'Accès au SAV'},
     {k:'import_data',l:'Import de données (Excel / CSV)'},
     {k:'doublons_view',l:'Détection des doublons'},
@@ -634,6 +636,7 @@ const PERM_GROUPS=[
     {k:'compta_delegataires',l:'Paiements délégataires'},
     {k:'compta_tva_payer',l:'TVA à payer'},
     {k:'compta_tva_recup',l:'TVA à récupérer'},
+    {k:'compta_fournisseurs',l:'Paiements fournisseurs'},
     {k:'compta_historique',l:'Historique des factures'},
     {k:'compta_apf_create',l:'Générer des APF'},
     {k:'compta_apf_delete',l:'Supprimer des APF'},
@@ -663,13 +666,13 @@ const ROLES={superadmin:'Super Admin',admin:'Administrateur',manager:'Manager',c
 function rolePerms(role){
   const all={};PERMS.forEach(p=>all[p.k]=true);
   const none={};PERMS.forEach(p=>none[p.k]=false);
-  const base={...none,dashboard:true,leads_view:true,fiche_comments:true,fiche_history:true,fiche_docs:true};
+  const base={...none,dashboard:true,leads_view:true,leads_view_btoc:true,fiche_comments:true,fiche_history:true,fiche_docs:true};
   if(role==='superadmin'||role==='admin')return {...all};
   if(role==='manager')return {...all,users_manage:false,settings_access:false,settings_societe:false,settings_operations:false,settings_statuts:false,settings_partenaires:false,settings_delegataires:false,docs_manage:false,compta_apf_delete:false};
   if(role==='confirmateur')return {...base,status_change:true,planning_view:true,rdv_manage:true,rappels_view:true};
-  if(role==='commercial')return {...base,leads_create:true,leads_edit:true,status_change:true,clients_view:true,planning_view:true,rdv_manage:true,rappels_view:true,docs_generate:true};
+  if(role==='commercial')return {...base,leads_create:true,leads_edit:true,status_change:true,clients_view:true,clients_view_btoc:true,planning_view:true,rdv_manage:true,rappels_view:true,docs_generate:true};
   if(role==='telepro')return {...base,leads_create:true,status_change:true,planning_view:true,rdv_manage:true,rappels_view:true};
-  if(role==='poseur')return {...none,dashboard:true,clients_view:true,planning_view:true,rdv_manage:true,sav_view:true};
+  if(role==='poseur')return {...none,dashboard:true,clients_view:true,clients_view_btoc:true,planning_view:true,rdv_manage:true,sav_view:true};
   return {...none};
 }
 
@@ -769,9 +772,32 @@ function seed(){
 /* ---- accès données ---- */
 const getUsers=()=>load(K.users,[]);
 const getRecs=()=>load(K.recs,[]);
-const getStatuses=()=>{const sts=load(K.stat,[]);return sts.sort((a,b)=>(a.order??999)-(b.order??999));};
+/* ---- Segments BtoB / BtoC ---- */
+const SEGMENTS={btob:{label:'BtoB — Professionnels',short:'BtoB',ic:'🏢'},btoc:{label:'BtoC — Particuliers',short:'BtoC',ic:'🏡'}};
+let SEGMENT=(function(){try{return localStorage.getItem('egncrm_segment')||'btob';}catch(e){return 'btob';}})();
+function setSegment(s){SEGMENT=s;try{localStorage.setItem('egncrm_segment',s);}catch(e){}}
+const segOf=x=>(x&&x.segment)||'btob';
+/* Listes complètes, tous segments confondus — pour résoudre un id */
+const getAllStatuses=()=>{const sts=load(K.stat,[]);return sts.sort((a,b)=>(a.order??999)-(b.order??999));};
+const getAllProducts=()=>load(K.prod,[]);
+const statusById=id=>getAllStatuses().find(s=>s.id===id);
+const productById=id=>getAllProducts().find(p=>p.id===id);
+/* Bascule BtoB / BtoC réutilisable dans les paramètres */
+function segSwitcher(cb){
+  return `<div style="display:flex;gap:.4rem;align-items:center;margin-bottom:.9rem">
+    <span style="font-size:.72rem;font-weight:700;color:var(--text-mut);text-transform:uppercase;letter-spacing:.5px;margin-right:.2rem">Segment</span>
+    ${Object.entries(SEGMENTS).map(([k,v])=>`<button class="btn btn-sm ${SEGMENT===k?'btn-navy':'btn-ghost'}" onclick="setSegment('${k}');${cb}()">${v.ic} ${v.label}</button>`).join('')}
+  </div>`;
+}
+/* Fusionne une liste propre à un segment dans la liste complète, sans toucher l'autre segment */
+function mergeSeg(all,segList){
+  const ids=new Set(segList.map(x=>x.id));
+  return all.filter(x=>!ids.has(x.id)).concat(segList);
+}
+/* Listes du segment courant */
+const getStatuses=()=>getAllStatuses().filter(s=>segOf(s)===SEGMENT);
+const getProducts=()=>getAllProducts().filter(p=>segOf(p)===SEGMENT);
 const getRdvs=()=>load(K.rdv,[]);
-const getProducts=()=>load(K.prod,[]);
 const getItems=()=>load(K.items,[]);
 const getFactures=()=>load(K.factures,[]);
 const getSources=()=>load(K.src,[]);
@@ -803,7 +829,7 @@ async function saveTvaMode(recId,key,mode){
   const c=comptaOf(r);c.tvaModes=c.tvaModes||{};c.tvaModes[key]=mode;
   await persistCompta(recId);openDossier(recId);toast('Mode TVA mis à jour ✓','ok');
 }
-const statById=id=>getStatuses().find(s=>s.id===id);
+const statById=id=>getAllStatuses().find(s=>s.id===id);
 const userById=id=>getUsers().find(u=>u.id===id);
 const recById=id=>getRecs().find(r=>r.id===id);
 async function nextDossier(){
@@ -1112,7 +1138,7 @@ const CATU_PH=()=>load('egncrm_coefsu',[]).filter(x=>x.categorie==='plancher_hau
 async function openEtudePanel(recId){
   if(!ME||(ME.role!=='superadmin'&&ME.role!=='admin')){toast('Réservé Admin / Super Admin','err');return;}
   const r=recById(recId);if(!r)return;
-  const op=getProducts().find(p=>p.id===r.productId);
+  const op=getAllProducts().find(p=>p.id===r.productId);
   if(!op||!ETUDE_TYPES[op.etudeType]||!op.etudeType){toast('Le module Étude n\'est activé que pour les opérations qui en ont un type configuré — vérifiez Paramètres ▸ Opérations','err');return;}
   await loadEtudeFor(recId);
   if(op.etudeType==='thermitube')renderEtudePanelThermitube(recId);
@@ -1403,12 +1429,12 @@ async function fetchEtudePhotoDataUrl(path){
 async function genererEtudeThermitubePdf(recId){
   if(!ME||(ME.role!=='superadmin'&&ME.role!=='admin')){toast('Réservé Admin / Super Admin','err');return;}
   const r=recById(recId);if(!r)return;
-  const opCheck=getProducts().find(p=>p.id===r.productId);
+  const opCheck=getAllProducts().find(p=>p.id===r.productId);
   if(!opCheck||opCheck.etudeType!=='thermitube'){toast('Ce module Étude n\'est activé que pour les opérations de type Thermitube','err');return;}
   await Promise.all([loadEtudeFor(recId),loadDealFor(recId)]);
   const e=etudeOf(r),deal=dealOf(r);
   const t=computeThermitube(r);
-  const op=getProducts().find(o=>o.id===r.productId);
+  const op=getAllProducts().find(o=>o.id===r.productId);
   const deleg=deal.delegataireId?getDelegataires().find(d=>d.id===deal.delegataireId):null;
   const mandataire=getDelegataires().find(d=>d.id===e.mandataireCee);
   const soustraitant=load('egncrm_poseurs',[]).find(p=>p.id===e.soustraitantPose);
@@ -1511,12 +1537,12 @@ async function genererEtudeThermitubePdf(recId){
 async function genererEtudePdf(recId){
   if(!ME||(ME.role!=='superadmin'&&ME.role!=='admin')){toast('Réservé Admin / Super Admin','err');return;}
   const r=recById(recId);if(!r)return;
-  const opCheck=getProducts().find(p=>p.id===r.productId);
+  const opCheck=getAllProducts().find(p=>p.id===r.productId);
   if(!opCheck||opCheck.etudeType!=='pac'){toast('Ce module Étude n\'est activé que pour les opérations de type PAC','err');return;}
   await Promise.all([loadEtudeFor(recId),loadDealFor(recId),loadComptaFor(recId)]);
   const e=etudeOf(r),deal=dealOf(r),compta=comptaOf(r);
   const m=recordComptaMetrics(r);
-  const op=getProducts().find(o=>o.id===r.productId);
+  const op=getAllProducts().find(o=>o.id===r.productId);
   const deleg=deal.delegataireId?getDelegataires().find(d=>d.id===deal.delegataireId):null;
   const pac=load('egncrm_pac',[]).find(x=>x.id===e.pacCatalogueId);
   const deperd=computeDeperditions(r);
@@ -1705,9 +1731,13 @@ const NAV=[
   {id:'planning',ic:'📅',label:'Planning',perm:'planning_view'},
   {id:'rappels',ic:'⏰',label:'Rappels',perm:'rappels_view'},
   {id:'import',ic:'📥',label:'Import des leads',perm:'import_data'},
-  {sec:'Leads & Clients'},
-  {id:'leads',ic:'👥',label:'Leads',perm:'leads_view'},
-  {id:'clients',ic:'🏠',label:'Clients',perm:'clients_view'},
+  {sec:'BtoB — Professionnels'},
+  {id:'leads',ic:'🏢',label:'Leads BtoB',perm:'leads_view'},
+  {id:'clients',ic:'🏭',label:'Clients BtoB',perm:'clients_view'},
+  {sec:'BtoC — Particuliers'},
+  {id:'leads_c',ic:'🙋',label:'Leads BtoC',perm:'leads_view_btoc'},
+  {id:'clients_c',ic:'🏡',label:'Clients BtoC',perm:'clients_view_btoc'},
+  {sec:'Suivi'},
   {id:'sav',ic:'🔧',label:'SAV',perm:'sav_view'},
   {sec:'Administration'},
   {id:'compta',ic:'💼',label:'Comptabilité',perm:'compta_global'},
@@ -1721,8 +1751,10 @@ const PAGES={
   planning:{t:'Planning',s:'Calendrier & carte des rendez-vous',r:renderPlanning},
   rappels:{t:'Rappels',s:'Tous vos rappels planifiés',r:renderRappels},
   import:{t:'Import des leads',s:'Importez votre base client Excel / CSV',r:renderImport},
-  leads:{t:'Leads',s:'Tous vos prospects et dossiers',r:renderLeads},
-  clients:{t:'Clients',s:'Dossiers transmis & installés',r:renderClients},
+  leads:{t:'Leads BtoB',s:'Prospects et dossiers professionnels',r:renderLeads},
+  clients:{t:'Clients BtoB',s:'Dossiers professionnels transmis & installés',r:renderClients},
+  leads_c:{t:'Leads BtoC',s:'Prospects et dossiers particuliers',r:renderLeadsC},
+  clients_c:{t:'Clients BtoC',s:'Dossiers particuliers transmis & installés',r:renderClientsC},
   docs:{t:'Documents',s:'Modèles de documents générables depuis les fiches client',r:renderDocsTab},
   rdvs:{t:'RDVs',s:'Liste des rendez-vous',r:renderRdvs},
   sav:{t:'SAV',s:'Service après-vente',r:renderSav},
@@ -1807,15 +1839,15 @@ function globalSearch(q){
   if(!q||q.trim().length<2){box.style.display='none';return;}
   GSEARCH_T=setTimeout(()=>{
     const qq=q.trim().toLowerCase();
-    const recs=visibleRecs().filter(r=>{
+    const recs=allVisibleRecs().filter(r=>{
       const fields=[recName(r),r.tel||'',r.telFixe||'',r.ville||'',r.dossier||'',r.email||'',r.siret||'',r.crmDevis||'',
         (r.opFields&&r.opFields.nom_site)||r.nomSite||''];
       return fields.join(' ').toLowerCase().includes(qq);
     }).slice(0,12);
     if(!recs.length){box.innerHTML='<div class="notif-empty">Aucun résultat</div>';box.style.display='block';return;}
-    box.innerHTML=recs.map(r=>{const op=getProducts().find(o=>o.id===r.productId);return `<div class="gsearch-item" onclick="closeGsearch();openDossier('${r.id}')">
+    box.innerHTML=recs.map(r=>{const op=getAllProducts().find(o=>o.id===r.productId);return `<div class="gsearch-item" onclick="closeGsearch();openDossier('${r.id}')">
       <span class="gs-name">${esc(recName(r))}</span>
-      <span class="gs-meta">${esc(r.dossier||'')} ${op?'· '+esc(op.name):''} ${r.ville?'· '+esc(r.ville):''} ${r.tel?'· '+esc(r.tel):''}</span>
+      <span class="gs-meta">${SEGMENTS[segOf(r)].ic} ${SEGMENTS[segOf(r)].short} · ${esc(r.dossier||'')} ${op?'· '+esc(op.name):''} ${r.ville?'· '+esc(r.ville):''} ${r.tel?'· '+esc(r.tel):''}</span>
     </div>`;}).join('');
     box.style.display='block';
   },200);
@@ -2025,12 +2057,24 @@ function rdvIntervenantOptions(type,selectedId){
   return `<option value="">— Choisir ${lbl} —</option>`+list.map(x=>`<option value="${x.id}" ${selectedId===x.id?'selected':''}>${esc(x.name)}</option>`).join('');
 }
 function rdvTypeChange(){const t=(document.getElementById('rd_type')||{}).value||'';const sel=document.getElementById('rd_user');if(sel)sel.innerHTML=rdvIntervenantOptions(t,'');const lab=document.getElementById('rd_user_lab');if(lab)lab.textContent=rdvKind(t)==='user'?'Intervenant':rdvKind(t)==='poseur'?'Poseur':'Sous-traitant ('+rdvKindLabel(rdvKind(t))+')';}
-function visibleRecs(){return getRecs().filter(recVisible);}
+function visibleRecs(){return getRecs().filter(r=>segOf(r)===SEGMENT&&recVisible(r));}
+function allVisibleRecs(){return getRecs().filter(recVisible);}
 function renderLeads(){
-  if(can('leads_create'))document.getElementById('pageActions').innerHTML=actionBtn('+ Nouveau lead','openLead()','btn-pri');
+  setSegment('btob');
+  if(can('leads_create'))document.getElementById('pageActions').innerHTML=actionBtn('+ Nouveau lead BtoB','openLead()','btn-pri');
   drawRecTable('leads');
 }
 function renderClients(){
+  setSegment('btob');
+  drawRecTable('clients');
+}
+function renderLeadsC(){
+  setSegment('btoc');
+  if(can('leads_create'))document.getElementById('pageActions').innerHTML=actionBtn('+ Nouveau lead BtoC','openLead()','btn-pri');
+  drawRecTable('leads');
+}
+function renderClientsC(){
+  setSegment('btoc');
   drawRecTable('clients');
 }
 let REC_SELECTED=new Set(),REC_MODE='leads';
@@ -2262,7 +2306,7 @@ function runExport(){
   logActivity('action',`⬇️ Export ${fmt.toUpperCase()} de ${rows.length} dossier(s) (${REC_MODE})`);
 }
 /* ---- colonnes configurables (Lead/Client) ---- */
-function prodNameById(id){return (getProducts().find(p=>p.id===id)||{}).name||'';}
+function prodNameById(id){return (getAllProducts().find(p=>p.id===id)||{}).name||'';}
 function srcNameById(id){return (getSources().find(s=>s.id===id)||{}).name||'';}
 const COLS={
   dossier:{label:'N° Dossier',val:r=>`<span class="dossier-tag">${esc(r.dossier||'—')}</span>`},
@@ -2339,7 +2383,10 @@ let DOSSIER_OPEN=null;
 async function openDossier(id){
   const r=recById(id);if(!r){toast('Dossier introuvable','err');return;}
   DOSSIER_OPEN=id;
-  window._dossierBack=(CUR==='clients')?'clients':'leads';
+  // Se caler sur le segment du dossier pour résoudre statuts et opérations
+  if(segOf(r)!==SEGMENT)setSegment(segOf(r));
+  const suffixe=SEGMENT==='btoc'?'_c':'';
+  window._dossierBack=(CUR==='clients'||CUR==='clients_c')?('clients'+suffixe):('leads'+suffixe);
   document.getElementById('pageTitle').innerHTML=`Dossier ${esc(r.dossier||'')}`;
   document.getElementById('pageSub').textContent=recName(r);
   const locBtn=(r.dossier||'').includes('-LOC-')
@@ -2352,7 +2399,7 @@ async function openDossier(id){
   renderDossier(r);
 }
 function renderDossier(r){
-  const op=getProducts().find(p=>p.id===r.productId);
+  const op=getAllProducts().find(p=>p.id===r.productId);
   const src=getSources().find(x=>x.id===r.sourceId);
   const u=userById(r.userId);
   const rdvs=getRdvs().filter(x=>x.recordId===r.id).sort((a,b)=>((a.date||'')+(a.heure||'')).localeCompare((b.date||'')+(b.heure||'')));
@@ -2384,7 +2431,7 @@ function renderDossier(r){
         if(ns2&&xNs===ns2)why.push('même nom de site');
         return `<div style="margin:.3rem 0"><a href="#" onclick="openDossier('${d.id}');return false" style="color:#fff;font-weight:700;text-decoration:underline">${esc(d.dossier||'—')} — ${esc(clientNameOf(d))}</a> <span style="opacity:.8;font-size:.75rem">(${why.join(', ')})</span></div>`;
       }).join('');
-      const annuleStatut=getStatuses().find(s=>s.name&&s.name.toLowerCase().includes('annul'));
+      const annuleStatut=getAllStatuses().find(s=>s.name&&s.name.toLowerCase().includes('annul'));
       doublonBanner=`<div style="background:#E63946;color:#fff;border-radius:10px;padding:12px 16px;margin-bottom:12px">
         <div style="display:flex;align-items:flex-start;gap:10px;margin-bottom:10px">
           <span style="font-size:1.3rem;flex-shrink:0">⚠️</span>
@@ -2528,7 +2575,7 @@ function comptaOf(r){
   return COMPTA_CACHE[r.id];
 }
 function surfaceFieldValue(r){
-  const op=getProducts().find(p=>p.id===r.productId);if(!op)return 0;
+  const op=getAllProducts().find(p=>p.id===r.productId);if(!op)return 0;
   const fields=op.fields||[];
   // 1) champ standard (clé stable "surface_m2")
   let f=fields.find(x=>x.key==='surface_m2');
@@ -2687,15 +2734,6 @@ function renderComptaPanel(r){
       </div>
       <button class="btn btn-pri btn-sm" style="margin-top:.5rem" onclick="saveCompta('${r.id}')">💾 Enregistrer</button>
 
-      <div class="sectitle" style="margin-top:1.1rem">Produits installés <span style="font-weight:500;text-transform:none;letter-spacing:0;color:var(--text-mut)">(plusieurs lignes possibles — quantité, marques différentes)</span></div>
-      ${usesM2?`<p class="muted" style="font-size:.76rem;margin-bottom:.4rem">📐 Surface détectée sur ce dossier : <b style="color:${surf?'var(--green-deep)':'#E63946'}">${surf?surf.toLocaleString('fr-FR')+' m²':'0 m² ⚠️'}</b>${!surf?' — vérifiez le champ « Surface (m²) » dans la fiche du dossier (bouton « ✏️ Modifier le dossier »).':''}</p>`:''}
-      <div class="cfg-list">${prRows}</div>
-      ${itemsOp.length?`<div class="fgrid c3" style="margin-top:.6rem">
-        <div class="fld"><label>Produit</label><select id="pr_pick">${itemsOp.map(i=>`<option value="${i.id}">${esc(i.name)} (${ITEM_MODES[i.mode]||i.mode} — ${(i.price||0).toLocaleString('fr-FR')} €${i.mode==='m2'?'/m²':''})</option>`).join('')}</select></div>
-        <div class="fld"><label>Quantité</label><input type="number" step="1" min="1" id="pr_qty" value="1"></div>
-        <div class="fld" style="display:flex;align-items:flex-end"><button class="btn btn-ghost btn-sm" onclick="addProduitLigne('${r.id}')">+ Ajouter la ligne</button></div>
-      </div>`:`<p class="muted" style="font-size:.72rem;margin-top:.3rem">Aucun produit créé pour cette opération. Ajoutez-en dans Paramètres ▸ Produits.</p>`}
-
       <div class="sectitle" style="margin-top:1.1rem">Faux frais</div>
       <div class="cfg-list">${ffRows}</div>
       <div class="fgrid c3" style="margin-top:.6rem">
@@ -2714,7 +2752,6 @@ function renderComptaPanel(r){
       <div class="info-row">${ovLine(r,'callcenter','Coût Call Center'+(ccC.mode?` — ${esc(ccC.label)}`:''),ccC.montant,c)}</div>
       <div class="info-row">${ovLine(r,'vt','Coût VT — '+esc(vtC.label),vtC.montant,c)}</div>
       <div class="info-row">${ovLine(r,'audit','Coût Audit — '+esc(auditC.label),auditC.montant,c)}</div>
-      <div class="info-row"><span class="il">Coût produits${prC.lignes.length?` (${prC.lignes.length} ligne${prC.lignes.length>1?'s':''})`:''}</span><span class="iv">${ttcHt(prC.montant)}</span></div>
       <div class="info-row"><span class="il">Faux frais — Société</span><span class="iv">${ttcHt(ffSociete)}</span></div>
       <div class="info-row"><span class="il">Faux frais — Poseur</span><span class="iv">${ttcHt(ffPoseur)}</span></div>
       <div class="info-row" style="font-weight:700"><span class="il">Charges totales</span><span class="iv" style="font-weight:700">${ttcHt(charges)}</span></div>
@@ -2740,7 +2777,7 @@ function genererRapportCompta(recId){
   const m=recordComptaMetrics(r);
   const s=getSettings();
   const eur=n=>(n||0).toLocaleString('fr-FR',{minimumFractionDigits:2,maximumFractionDigits:2})+' €';
-  const op=getProducts().find(o=>o.id===r.productId);
+  const op=getAllProducts().find(o=>o.id===r.productId);
   const deleg=dealOf(r).delegataireId?getDelegataires().find(d=>d.id===dealOf(r).delegataireId):null;
   const siege=`${r.adresse||''}${r.cp||r.ville?', ':''}${r.cp||''} ${r.ville||''}`.trim();
   const wa=recWorkAddr(r);
@@ -2804,10 +2841,6 @@ function genererRapportCompta(recId){
     <div><span class="lbl">Prime CEE (TTC)</span><br><span class="val">${eur(m.prime)}</span> <span style="color:#6b7785;font-size:.78rem">— HT ${eur(htOf(m.prime))} · TVA ${eur(tvaOf(m.prime))}</span></div>
   </div>`:''}
 
-  <h2>Produits installés</h2>
-  <table><thead><tr><th>Produit</th><th>Mode</th><th style="text-align:right">Coût HT</th><th style="text-align:right">Coût TTC</th></tr></thead>
-  <tbody>${prRows}</tbody></table>
-
   <h2>Faux frais</h2>
   <table><thead><tr><th>Libellé</th><th>Origine</th><th style="text-align:right">Montant HT</th><th style="text-align:right">Montant TTC</th></tr></thead>
   <tbody>${ffRows}</tbody></table>
@@ -2822,7 +2855,6 @@ function genererRapportCompta(recId){
       <tr><td>Coût Call Center${ccC.mode?' — '+esc(ccC.label):''}</td><td style="text-align:right">${eur(htOf(ccC.montant))}</td><td style="text-align:right">${eur(tvaOf(ccC.montant))}</td><td style="text-align:right">${eur(ccC.montant)}</td></tr>
       <tr><td>Coût VT — ${esc(m.vtC.label)}</td><td style="text-align:right">${eur(htOf(m.vtC.montant))}</td><td style="text-align:right">${eur(tvaOf(m.vtC.montant))}</td><td style="text-align:right">${eur(m.vtC.montant)}</td></tr>
       <tr><td>Coût Audit — ${esc(m.auditC.label)}</td><td style="text-align:right">${eur(htOf(m.auditC.montant))}</td><td style="text-align:right">${eur(tvaOf(m.auditC.montant))}</td><td style="text-align:right">${eur(m.auditC.montant)}</td></tr>
-      <tr><td>Coût produits</td><td style="text-align:right">${eur(htOf(prC.montant))}</td><td style="text-align:right">${eur(tvaOf(prC.montant))}</td><td style="text-align:right">${eur(prC.montant)}</td></tr>
       <tr><td>Faux frais (société + poseur)</td><td style="text-align:right">${eur(htOf(m.ffTotal))}</td><td style="text-align:right">${eur(tvaOf(m.ffTotal))}</td><td style="text-align:right">${eur(m.ffTotal)}</td></tr>
       <tr class="totrow"><td>Charges totales</td><td style="text-align:right">${eur(htOf(m.charges))}</td><td style="text-align:right">${eur(tvaOf(m.charges))}</td><td style="text-align:right">${eur(m.charges)}</td></tr>
       <tr class="totrow"><td>Recettes totales (${includeDeal?'prime CEE':'montant du devis'})</td><td style="text-align:right">${eur(htOf(rptRecettes))}</td><td style="text-align:right">${eur(tvaOf(rptRecettes))}</td><td style="text-align:right">${eur(rptRecettes)}</td></tr>
@@ -3009,7 +3041,7 @@ async function renderComptaGlobal(){
   renderComptaTabs();
 }
 function renderComptaTabs(){
-  const tabs=[['resume','Résumé global','compta_resume'],['facturation','Appels à facturation','compta_facturation'],['paiements','Suivi des paiements','compta_paiements'],['delegataires','Paiements délégataires','compta_delegataires'],['tva_payer','TVA à payer','compta_tva_payer'],['tva_recup','TVA à récupérer','compta_tva_recup'],['historique','Historique des factures','compta_historique']].filter(t=>can(t[2]));
+  const tabs=[['resume','Résumé global','compta_resume'],['facturation','Appels à facturation','compta_facturation'],['paiements','Suivi des paiements','compta_paiements'],['delegataires','Paiements délégataires','compta_delegataires'],['tva_payer','TVA à payer','compta_tva_payer'],['tva_recup','TVA à récupérer','compta_tva_recup'],['fournisseurs','Paiements fournisseurs','compta_fournisseurs'],['historique','Historique des factures','compta_historique']].filter(t=>can(t[2]));
   if(!tabs.length){document.getElementById('content').innerHTML=`<div class="empty"><div class="big">🔒</div>Aucun onglet de comptabilité ne vous est accessible.</div>`;return;}
   if(!tabs.some(t=>t[0]===COMPTA_TAB))COMPTA_TAB=tabs[0][0];
   let h=`<div class="tabs">`+tabs.map(t=>`<button class="tab ${COMPTA_TAB===t[0]?'act':''}" onclick="COMPTA_TAB='${t[0]}';renderComptaTabs()">${t[1]}</button>`).join('')+`</div><div id="comptaBody"></div>`;
@@ -3020,6 +3052,7 @@ function renderComptaTabs(){
   else if(COMPTA_TAB==='delegataires')renderComptaDelegataires();
   else if(COMPTA_TAB==='tva_payer')renderComptaTvaPayer();
   else if(COMPTA_TAB==='tva_recup')renderComptaTvaRecup();
+  else if(COMPTA_TAB==='fournisseurs')renderComptaFournisseurs();
   else renderComptaHistorique();
 }
 function renderComptaResume(){
@@ -3132,14 +3165,14 @@ function renderComptaResume(){
   const opKeys=Object.keys(byOp);
   if(!opKeys.length)h+=`<div class="empty"><div class="big">📋</div>Aucune donnée.</div>`;
   else{h+=`<div class="tbl-wrap"><table class="tbl"><thead><tr><th>Opération</th><th>Dossiers</th><th style="text-align:right">Recettes</th><th style="text-align:right">Charges</th><th style="text-align:right">Marge</th></tr></thead><tbody>`;
-    opKeys.forEach(k=>{const op=getProducts().find(o=>o.id===k);const x=byOp[k];h+=`<tr><td>${op?esc(op.name):'—'}</td><td>${x.nb}</td><td style="text-align:right">${ttcHt(x.recettes)}</td><td style="text-align:right">${ttcHt(x.charges)}</td><td style="text-align:right;font-weight:700;color:${x.marge>=0?'var(--green-deep)':'#E63946'}">${ttcHt(x.marge)}</td></tr>`;});
+    opKeys.forEach(k=>{const op=getAllProducts().find(o=>o.id===k);const x=byOp[k];h+=`<tr><td>${op?esc(op.name):'—'}</td><td>${x.nb}</td><td style="text-align:right">${ttcHt(x.recettes)}</td><td style="text-align:right">${ttcHt(x.charges)}</td><td style="text-align:right;font-weight:700;color:${x.marge>=0?'var(--green-deep)':'#E63946'}">${ttcHt(x.marge)}</td></tr>`;});
     h+=`</tbody></table></div>`;}
   h+=`</div></div>`;
   // détail par dossier
   h+=`<div class="panel"><div class="panel-h"><h3>Détail par dossier</h3></div><div class="panel-b">`;
   if(!rows.length)h+=`<div class="empty"><div class="big">📋</div>Aucun dossier chiffré pour l'instant — renseignez la comptabilité depuis une fiche client.</div>`;
   else{h+=`<div class="tbl-wrap"><table class="tbl"><thead><tr><th>N° Dossier</th><th>Client</th><th>Opération</th><th style="text-align:right">Recettes</th><th style="text-align:right">Charges</th><th style="text-align:right">Marge</th></tr></thead><tbody>`;
-    rows.forEach(({r,m})=>{const op=getProducts().find(o=>o.id===r.productId);h+=`<tr><td style="cursor:pointer" onclick="openDossier('${r.id}')"><span class="dossier-tag">${esc(r.dossier||'—')}</span></td><td style="cursor:pointer" onclick="openDossier('${r.id}')">${esc(clientNameOf(r))}</td><td class="muted">${op?esc(op.name):'—'}</td><td style="text-align:right">${ttcHt(m.recettes)}</td><td style="text-align:right">${ttcHt(m.charges)}</td><td style="text-align:right;font-weight:700;color:${m.marge>=0?'var(--green-deep)':'#E63946'}">${ttcHt(m.marge)}</td></tr>`;});
+    rows.forEach(({r,m})=>{const op=getAllProducts().find(o=>o.id===r.productId);h+=`<tr><td style="cursor:pointer" onclick="openDossier('${r.id}')"><span class="dossier-tag">${esc(r.dossier||'—')}</span></td><td style="cursor:pointer" onclick="openDossier('${r.id}')">${esc(clientNameOf(r))}</td><td class="muted">${op?esc(op.name):'—'}</td><td style="text-align:right">${ttcHt(m.recettes)}</td><td style="text-align:right">${ttcHt(m.charges)}</td><td style="text-align:right;font-weight:700;color:${m.marge>=0?'var(--green-deep)':'#E63946'}">${ttcHt(m.marge)}</td></tr>`;});
     h+=`</tbody></table></div>`;}
   h+=`</div></div>`;
   document.getElementById('comptaBody').innerHTML=h;
@@ -3177,7 +3210,7 @@ function renderComptaFacturation(){
     if(!rows.length)h+=`<div class="empty"><div class="big">📋</div>Aucun dossier à facturer pour cet agent.</div>`;
     else{
       h+=`<div class="cfg-list">`+rows.map(({r,m})=>{
-        const op=getProducts().find(o=>o.id===r.productId);
+        const op=getAllProducts().find(o=>o.id===r.productId);
         const dejaFact=factureActive(r,FACT_TYPE);
         const dejaTag=dejaFact?`<span style="font-size:.62rem;background:#FFF4E5;color:#B96A0A;border-radius:4px;padding:1px 5px;margin-left:4px">Déjà facturé</span>`:'';
         const tvaKey=FACT_TYPE==='callcenter'?'callcenter':FACT_TYPE;
@@ -3220,7 +3253,7 @@ async function genererFactureAgent(){
   // Déterminer si le document doit afficher les colonnes TVA
   const hasTva=lignes.some(l=>l.tvaMode!=='sans_tva');
   const rowsHtml=lignes.map(l=>{
-    const op=getProducts().find(o=>o.id===l.r.productId);
+    const op=getAllProducts().find(o=>o.id===l.r.productId);
     if(l.tvaMode==='sans_tva'){
       return hasTva
         ?`<tr><td>${esc(l.r.dossier||'—')}</td><td>${esc(clientNameOf(l.r))}</td><td>${op?esc(op.name):''}</td><td style="text-align:right;color:#5B3AAA;font-size:.82rem" colspan="2">Sans TVA (autoentrepreneur)</td><td style="text-align:right;font-weight:700">${eur(l.montant)}</td></tr>`
@@ -3289,7 +3322,7 @@ async function genererFactureAgent(){
   if(FACTURES_CACHE)FACTURES_CACHE.unshift(factureObj);
   // marquer les dossiers avec le sous-statut « Facturé » correspondant (automatique, toujours conservé)
   // + passer automatiquement le dossier au statut « Installé » s'il ne l'est pas déjà
-  const installStatus=getStatuses().find(s=>s.name==='Installé')||getStatuses().find(s=>s.won);
+  const installStatus=getAllStatuses().find(s=>s.name==='Installé')||getAllStatuses().find(s=>s.won);
   const recs=getRecs();
   let nbPasse=0;
   for(const l of lignes){
@@ -3368,7 +3401,7 @@ function renderComptaPaiements(){
     const p=f.paiements||{};
     const locked=p.statut_apf==='paye';
     const recs=getRecs();
-    const ops=[...new Set((f.lignes||[]).map(l=>{const r=recs.find(x=>x.id===l.recId);const op=r?getProducts().find(o=>o.id===r.productId):null;return op?op.name:'—';}))].join(', ');
+    const ops=[...new Set((f.lignes||[]).map(l=>{const r=recs.find(x=>x.id===l.recId);const op=r?getAllProducts().find(o=>o.id===r.productId):null;return op?op.name:'—';}))].join(', ');
     // Mode TVA de l'APF
     const tvaKey=f.type==='callcenter'?'callcenter':f.type==='vt'?'vt':f.type==='auditeur'?'audit':'poseur';
     const tvaModes=(f.lignes||[]).map(l=>{const r=recs.find(x=>x.id===l.recId);return r?effectiveTvaMode(r,tvaKey):'ttc';});
@@ -3565,7 +3598,7 @@ function renderComptaDelegataires(){
   const dq=load('egncrm_deleg_q','');
   const dop=load('egncrm_deleg_op','');
   const opsDispo=[...new Set(recs.map(r=>r.productId).filter(Boolean))]
-    .map(id=>getProducts().find(o=>o.id===id)).filter(Boolean)
+    .map(id=>getAllProducts().find(o=>o.id===id)).filter(Boolean)
     .sort((a,b)=>a.name.localeCompare(b.name));
   if(dop)filtered=filtered.filter(r=>r.productId===dop);
   if(dq){
@@ -3609,7 +3642,7 @@ function renderComptaDelegataires(){
         <th class="r">Prime TTC</th><th>APF délégataire</th>
       </tr></thead><tbody>`;
     filtered.forEach(r=>{
-      const deal=dealOf(r);const op=getProducts().find(o=>o.id===r.productId);
+      const deal=dealOf(r);const op=getAllProducts().find(o=>o.id===r.productId);
       const apfLie=myApfs.find(a=>(a.recIds||[]).includes(r.id));
       const apfBadge=apfLie
         ?`<span style="font-size:.72rem;font-weight:700;background:${apfLie.statut==='recu'?'#E6F7F0':'#FFF4E5'};color:${apfLie.statut==='recu'?'#0F6E56':'#B96A0A'};border-radius:6px;padding:2px 8px">${esc(apfLie.numApf||'—')} · ${apfLie.statut==='recu'?'✅ Reçu':'⏳ En attente'}</span>`
@@ -3759,6 +3792,143 @@ function supprimerApfDeleg(apfId){
     closeModal();renderComptaDelegataires();toast('APF supprimé ✓','ok');
   });
 }
+/* ============================================================
+   SUIVI DES PAIEMENTS FOURNISSEURS
+   Une ligne par entrée de stock = une facture fournisseur
+   ============================================================ */
+const FOURN_F={q:'',fourn:'',statut:'',du:'',au:''};
+let FOURN_FOCUS=null;
+function setFournF(key,el){
+  FOURN_F[key]=el.value;
+  FOURN_FOCUS=(el.tagName==='INPUT'&&el.type==='text')?(el.selectionStart||0):null;
+  renderComptaFournisseurs();
+  if(FOURN_FOCUS!==null){const i=document.getElementById('fourn_q');if(i){i.focus();try{i.setSelectionRange(FOURN_FOCUS,FOURN_FOCUS);}catch(e){}}FOURN_FOCUS=null;}
+}
+function resetFournF(){Object.keys(FOURN_F).forEach(k=>FOURN_F[k]='');renderComptaFournisseurs();}
+function renderComptaFournisseurs(){
+  const mvts=getMvts().filter(v=>['entree','reception'].includes(v.sens));
+  const mats=getMats();
+  const eur=n=>(n||0).toLocaleString('fr-FR',{maximumFractionDigits:2})+' €';
+  const tva=tvaRate();
+  const ttcOf=ht=>ht*(1+tva/100);
+  const fournNames=[...new Set(mvts.map(v=>v.fournisseurNom).filter(Boolean))].sort();
+  // Filtrage
+  let rows=mvts.filter(v=>{
+    const mat=mats.find(m=>m.id===v.materielId);
+    const p=v.paiement||{};
+    if(FOURN_F.fourn&&v.fournisseurNom!==FOURN_F.fourn)return false;
+    if(FOURN_F.statut==='paye'&&p.statut!=='paye')return false;
+    if(FOURN_F.statut==='attente'&&p.statut==='paye')return false;
+    if(FOURN_F.du&&v.date<new Date(FOURN_F.du+'T00:00:00').getTime())return false;
+    if(FOURN_F.au&&v.date>new Date(FOURN_F.au+'T23:59:59').getTime())return false;
+    if(FOURN_F.q){
+      const q=FOURN_F.q.toLowerCase();
+      if(![v.fournisseurNom,mat?mat.nom:'',v.notes,p.ref,v.factureNom].join(' ').toLowerCase().includes(q))return false;
+    }
+    return true;
+  }).sort((a,b)=>b.date-a.date);
+  // KPIs
+  const totHT=rows.reduce((s,v)=>s+(v.totalHT||0),0);
+  const payeHT=rows.filter(v=>(v.paiement||{}).statut==='paye').reduce((s,v)=>s+(v.totalHT||0),0);
+  const duHT=totHT-payeHT;
+  const nbDu=rows.filter(v=>(v.paiement||{}).statut!=='paye').length;
+  const sansFacture=rows.filter(v=>!v.factureUrl).length;
+  let h=`<div class="kpis">
+    <div class="kpi"><div class="kico">🧾</div><div class="klab">Factures fournisseurs</div><div class="kval">${rows.length}</div><div class="ksub">${eur(totHT)} HT · ${eur(ttcOf(totHT))} TTC</div></div>
+    <div class="kpi" style="${duHT>0?'border:1.5px solid rgba(230,148,57,.35)':''}"><div class="kico">⏳</div><div class="klab">Reste à payer</div><div class="kval" style="color:#B96A0A">${eur(ttcOf(duHT))}</div><div class="ksub">TTC · ${eur(duHT)} HT · ${nbDu} facture${nbDu>1?'s':''}</div></div>
+    <div class="kpi accent"><div class="kico">✅</div><div class="klab">Déjà payé</div><div class="kval">${eur(ttcOf(payeHT))}</div><div class="ksub">TTC · ${eur(payeHT)} HT</div></div>
+    <div class="kpi" style="${sansFacture?'border:1.5px solid rgba(230,57,70,.3)':''}"><div class="kico">${sansFacture?'⚠️':'📎'}</div><div class="klab">Sans facture jointe</div><div class="kval" style="${sansFacture?'color:var(--coral)':''}">${sansFacture}</div><div class="ksub">${sansFacture?'à récupérer auprès du fournisseur':'Tout est justifié'}</div></div>
+  </div>`;
+  // Filtres
+  const fs="font-family:'Saira',sans-serif;font-size:.8rem;border:1.5px solid var(--border-grey);border-radius:8px;padding:.35rem .65rem;background:#fff;outline:none";
+  h+=`<div style="display:flex;gap:.5rem;flex-wrap:wrap;align-items:center;margin-bottom:.9rem">
+    <input id="fourn_q" type="text" value="${esc(FOURN_F.q)}" placeholder="🔍 Fournisseur, matériel, n° de facture…" oninput="setFournF('q',this)" style="${fs};flex:1;min-width:180px">
+    <select onchange="setFournF('fourn',this)" style="${fs}"><option value="">Tous les fournisseurs</option>${fournNames.map(f=>`<option value="${esc(f)}" ${FOURN_F.fourn===f?'selected':''}>${esc(f)}</option>`).join('')}</select>
+    <select onchange="setFournF('statut',this)" style="${fs}"><option value="">Tous les statuts</option>
+      <option value="attente" ${FOURN_F.statut==='attente'?'selected':''}>⏳ À payer</option>
+      <option value="paye" ${FOURN_F.statut==='paye'?'selected':''}>✅ Payée</option></select>
+    <label style="font-size:.72rem;color:var(--text-mut);font-weight:600">Du</label><input type="date" value="${esc(FOURN_F.du)}" onchange="setFournF('du',this)" style="${fs}">
+    <label style="font-size:.72rem;color:var(--text-mut);font-weight:600">Au</label><input type="date" value="${esc(FOURN_F.au)}" onchange="setFournF('au',this)" style="${fs}">
+    ${Object.values(FOURN_F).some(v=>v)?`<button class="btn btn-ghost btn-sm" style="font-size:.72rem" onclick="resetFournF()">✕ Réinitialiser</button>`:''}
+  </div>`;
+  if(!rows.length){h+=`<div class="empty"><div class="big">🧾</div>Aucune facture fournisseur.<br><span class="muted" style="font-size:.8rem">Les entrées de stock avec un prix alimentent automatiquement ce suivi.</span></div>`;document.getElementById('comptaBody').innerHTML=h;return;}
+  // Récapitulatif par fournisseur
+  const parFourn={};
+  rows.forEach(v=>{const k=v.fournisseurNom||'— Non renseigné —';parFourn[k]=parFourn[k]||{ht:0,du:0,nb:0};parFourn[k].ht+=v.totalHT||0;parFourn[k].nb++;if((v.paiement||{}).statut!=='paye')parFourn[k].du+=v.totalHT||0;});
+  h+=`<div class="panel"><div class="panel-h"><h3>Par fournisseur</h3></div><div class="panel-b"><div class="tbl-wrap"><table class="tbl">
+    <thead><tr><th>Fournisseur</th><th class="r">Factures</th><th class="r">Total HT</th><th class="r">Total TTC</th><th class="r">Reste à payer TTC</th></tr></thead><tbody>`;
+  Object.entries(parFourn).sort((a,b)=>b[1].du-a[1].du).forEach(([nom,x])=>{
+    h+=`<tr>
+      <td style="font-weight:700"><span style="color:var(--purple)">${esc(nom)}</span></td>
+      <td style="text-align:right">${x.nb}</td>
+      <td style="text-align:right">${eur(x.ht)}</td>
+      <td style="text-align:right;font-weight:700">${eur(ttcOf(x.ht))}</td>
+      <td style="text-align:right;font-weight:800;color:${x.du>0?'#B96A0A':'var(--green-deep)'}">${x.du>0?eur(ttcOf(x.du)):'Soldé ✓'}</td>
+    </tr>`;
+  });
+  h+=`</tbody></table></div></div></div>`;
+  // Détail des factures
+  h+=`<div class="panel"><div class="panel-h"><h3>Détail des factures</h3><div class="sp"><span class="muted">${rows.length} ligne${rows.length>1?'s':''}</span></div></div><div class="panel-b"><div class="tbl-wrap"><table class="tbl">
+    <thead><tr><th>Date</th><th>Fournisseur</th><th>Matériel</th><th class="r">Qté</th><th class="r">HT</th><th class="r">TVA</th><th class="r">TTC</th><th>Facture</th><th style="width:150px">Réf. paiement</th><th style="width:120px">Payée le</th><th style="width:110px">Statut</th></tr></thead><tbody>`;
+  rows.forEach(v=>{
+    const mat=mats.find(m=>m.id===v.materielId);
+    const p=v.paiement||{};
+    const paye=p.statut==='paye';
+    const ht=v.totalHT||0;
+    h+=`<tr style="${paye?'background:#F6FBF4':''}">
+      <td class="muted">${new Date(v.date).toLocaleDateString('fr-FR')}</td>
+      <td style="font-weight:700;color:var(--purple)">${esc(v.fournisseurNom||'—')}</td>
+      <td>${mat?esc(mat.nom):'—'}${v.totalFraisHT?`<div class="muted" style="font-size:.65rem">dont ${eur(v.totalFraisHT)} de frais</div>`:''}${v.remise?`<div style="font-size:.65rem;color:var(--coral)">−${eur(v.remise)} remise</div>`:''}</td>
+      <td style="text-align:right">${v.qte||'—'}</td>
+      <td style="text-align:right">${eur(ht)}</td>
+      <td style="text-align:right;color:var(--text-mut)">${eur(ht*tva/100)}</td>
+      <td style="text-align:right;font-weight:800">${eur(ttcOf(ht))}</td>
+      <td>${v.factureUrl?`<a href="${v.factureUrl}" target="_blank" style="font-size:.72rem;color:var(--blue);font-weight:600;text-decoration:none">📄 Voir</a>`:`<span style="font-size:.68rem;color:var(--coral);font-weight:700">⚠️ Manquante</span>`}</td>
+      <td><input type="text" value="${esc(p.ref||'')}" placeholder="Virement, chèque…" onchange="saveFournPaiement('${v.id}','ref',this.value)" style="font-family:'Saira',sans-serif;font-size:.76rem;border:1.5px solid var(--border-grey);border-radius:7px;padding:3px 7px;width:100%;outline:none"></td>
+      <td><input type="date" value="${esc(p.date||'')}" onchange="saveFournPaiement('${v.id}','date',this.value)" style="font-family:'Saira',sans-serif;font-size:.76rem;border:1.5px solid var(--border-grey);border-radius:7px;padding:3px 5px;width:100%;outline:none"></td>
+      <td><select onchange="saveFournPaiement('${v.id}','statut',this.value)" style="font-family:'Saira',sans-serif;font-size:.74rem;font-weight:700;border:none;border-radius:7px;padding:3px 7px;cursor:pointer;width:100%;${paye?'background:#E6F7F0;color:#0F6E56':'background:#FFF4E5;color:#B96A0A'}">
+        <option value="attente" ${!paye?'selected':''}>⏳ À payer</option>
+        <option value="paye" ${paye?'selected':''}>✅ Payée</option>
+      </select></td>
+    </tr>`;
+  });
+  h+=`<tr style="background:#f8faf5;font-weight:800">
+    <td colspan="4">Total</td>
+    <td style="text-align:right">${eur(totHT)}</td>
+    <td style="text-align:right">${eur(totHT*tva/100)}</td>
+    <td style="text-align:right">${eur(ttcOf(totHT))}</td>
+    <td colspan="4" style="text-align:right;color:#B96A0A">Reste à payer : ${eur(ttcOf(duHT))} TTC</td>
+  </tr>`;
+  h+=`</tbody></table></div>
+    <div style="display:flex;justify-content:flex-end;margin-top:.6rem"><button class="btn btn-navy btn-sm" onclick="exportFournCSV()">📤 Exporter CSV</button></div>
+  </div></div>`;
+  document.getElementById('comptaBody').innerHTML=h;
+}
+async function saveFournPaiement(mvtId,key,val){
+  const mvts=getMvts();const v=mvts.find(x=>x.id===mvtId);if(!v)return;
+  v.paiement=v.paiement||{};
+  v.paiement[key]=val;
+  // Marquer payée renseigne la date du jour si elle est vide
+  if(key==='statut'&&val==='paye'&&!v.paiement.date)v.paiement.date=new Date().toISOString().slice(0,10);
+  save('egncrm_stock_mvt',mvts);
+  toast(key==='statut'?(val==='paye'?'Facture marquée payée ✅':'Remise à payer ⏳'):'Enregistré ✓','ok');
+  renderComptaFournisseurs();
+}
+function exportFournCSV(){
+  const mvts=getMvts().filter(v=>['entree','reception'].includes(v.sens));
+  const mats=getMats();const tva=tvaRate();
+  const nb=n=>(n||0).toLocaleString('fr-FR',{minimumFractionDigits:2,maximumFractionDigits:2});
+  let csv='Date;Fournisseur;Materiel;Quantite;Remise HT;Frais HT;Total HT;TVA;Total TTC;Facture jointe;Statut;Reference paiement;Date paiement\n';
+  mvts.forEach(v=>{
+    const mat=mats.find(m=>m.id===v.materielId);const p=v.paiement||{};
+    const ht=v.totalHT||0;
+    csv+=`${new Date(v.date).toLocaleDateString('fr-FR')};${v.fournisseurNom||''};${mat?mat.nom:''};${v.qte||''};${nb(v.remise)};${nb(v.totalFraisHT)};${nb(ht)};${nb(ht*tva/100)};${nb(ht*(1+tva/100))};${v.factureUrl?'Oui':'Non'};${p.statut==='paye'?'Payee':'A payer'};${p.ref||''};${p.date||''}\n`;
+  });
+  const blob=new Blob(['\uFEFF'+csv],{type:'text/csv;charset=utf-8'});
+  const url=URL.createObjectURL(blob);const a=document.createElement('a');
+  a.href=url;a.download='paiements_fournisseurs_egn.csv';a.click();URL.revokeObjectURL(url);
+}
+
 function renderComptaTvaPayer(){
   const recs=getRecs().filter(hasComptaData);
   const eur=n=>(n||0).toLocaleString('fr-FR',{maximumFractionDigits:2})+' €';
@@ -3778,7 +3948,7 @@ function renderComptaTvaPayer(){
     if(hasDelegataire&&!virementRecu)return null;
     const ht=htOf(prime);const tvaM=tvaOf(prime);
     totTTC+=prime;totHT+=ht;totTVA+=tvaM;
-    const op=getProducts().find(o=>o.id===r.productId);
+    const op=getAllProducts().find(o=>o.id===r.productId);
     return{r,prime,ht,tvaM,op,hasDelegataire,virementRecu};
   }).filter(x=>x&&x.prime>0).sort((a,b)=>(b.r.updated||0)-(a.r.updated||0));
   // Versements déjà effectués
@@ -4368,7 +4538,7 @@ function delDoc(recId,fid){
 /* ---- DEAL / délégataires ---- */
 const getDelegataires=()=>load('egncrm_delegataires',[]);
 function computeCumac(r){
-  const op=getProducts().find(p=>p.id===r.productId);
+  const op=getAllProducts().find(p=>p.id===r.productId);
   if(!op||!op.cumac)return null;
   if(op.cumac.mode==='coef'){
     const c=op.cumac;
@@ -4482,7 +4652,7 @@ function ignoreDoublon(id){
   openDossier(id);toast('Marqué comme non-doublon ✓','ok');
 }
 async function doubonAnnulerExistant(id){
-  const annuleStatut=getStatuses().find(s=>s.name&&s.name.toLowerCase().includes('annul'));
+  const annuleStatut=getAllStatuses().find(s=>s.name&&s.name.toLowerCase().includes('annul'));
   if(!annuleStatut){toast('Aucun statut "Annulé" trouvé dans les paramètres','err');return;}
   const recs=getRecs();const r=recs.find(x=>x.id===id);if(!r)return;
   r.statusId=annuleStatut.id;r.updated=Date.now();
@@ -4612,9 +4782,33 @@ function applyOpConditionals(){
     div.style.display=show?'':'none';
   });
 }
-const CANON_KEYS={raison_sociale:'raisonSociale',siret:'siret',nom:'nom',prenom:'prenom',tel_mobile:'tel',tel_fixe:'telFixe',fonction:'fonction',nom_site:'nomSite',email:'email',adresse_siege:'adresse',cp_siege:'cp',ville_siege:'ville',adresse_travaux:'adresseTravaux',cp_travaux:'cpTravaux',ville_travaux:'villeTravaux'};
+const CANON_KEYS={raison_sociale:'raisonSociale',siret:'siret',nom:'nom',prenom:'prenom',tel_mobile:'tel',tel_fixe:'telFixe',fonction:'fonction',nom_site:'nomSite',email:'email',adresse_siege:'adresse',cp_siege:'cp',ville_siege:'ville',adresse_travaux:'adresseTravaux',cp_travaux:'cpTravaux',ville_travaux:'villeTravaux',civilite:'civilite',date_naissance:'dateNaissance',revenu_fiscal:'revenuFiscal',nb_personnes:'nbPersonnes',precarite:'precarite',occupation:'occupation',type_logement:'typeLogement',annee_construction:'anneeConstruction'};
 function canonByKey(r,key){if(!r)return '';if(key==='adresse_travaux_diff')return r.adresseTravauxDiff?'Oui':'Non';const t=CANON_KEYS[key];return t?(r[t]||''):'';}
-function commonFieldDefs(){return [
+function commonFieldDefs(){return SEGMENT==='btoc'?commonFieldDefsBtoC():commonFieldDefsBtoB();}
+function commonFieldDefsBtoC(){return [
+  {key:'civilite',label:'Civilité',type:'select',options:['M.','Mme','M. et Mme']},
+  {key:'nom',label:'Nom',type:'text'},
+  {key:'prenom',label:'Prénom',type:'text'},
+  {key:'date_naissance',label:'Date de naissance',type:'date'},
+  {key:'tel_mobile',label:'Téléphone mobile',type:'tel'},
+  {key:'tel_fixe',label:'Téléphone fixe',type:'tel'},
+  {key:'email',label:'Email',type:'email'},
+  {key:'adresse_siege',label:'Adresse du logement',type:'text'},
+  {key:'cp_siege',label:'Code postal',type:'text'},
+  {key:'ville_siege',label:'Ville',type:'text'},
+  {key:'adresse_travaux_diff',label:'Adresse de travaux différente ?',type:'bool'},
+  {key:'adresse_travaux',label:'Adresse des travaux',type:'text',showIf:'adresse_travaux_diff'},
+  {key:'cp_travaux',label:'Code postal (travaux)',type:'text',showIf:'adresse_travaux_diff'},
+  {key:'ville_travaux',label:'Ville (travaux)',type:'text',showIf:'adresse_travaux_diff'},
+  {key:'occupation',label:'Statut d\'occupation',type:'select',options:['Propriétaire occupant','Propriétaire bailleur','Locataire']},
+  {key:'type_logement',label:'Type de logement',type:'select',options:['Maison individuelle','Appartement']},
+  {key:'annee_construction',label:'Année de construction',type:'number'},
+  {key:'nb_personnes',label:'Nombre de personnes au foyer',type:'number'},
+  {key:'revenu_fiscal',label:'Revenu fiscal de référence (€)',type:'number'},
+  {key:'precarite',label:'Catégorie de revenus',type:'select',options:['Classique','Modeste','Très modeste']},
+  {key:'surface_m2',label:'Surface (m²)',type:'number'}
+].map(f=>({id:uid(),options:[],required:false,...f}));}
+function commonFieldDefsBtoB(){return [
   {key:'raison_sociale',label:'Raison sociale',type:'text'},
   {key:'siret',label:'Numéro de SIRET',type:'siret'},
   {key:'nom',label:'Nom',type:'text'},
@@ -4637,7 +4831,7 @@ async function lookupSiret(fieldId){
   const inp=document.getElementById('opf_'+fieldId);if(!inp)return;
   const siret=inp.value.replace(/\s/g,'');
   if(siret.length<9){toast('SIRET (14) ou SIREN (9) requis','err');return;}
-  const opId=(document.getElementById('lf_op')||{}).value;const op=getProducts().find(p=>p.id===opId);if(!op)return;
+  const opId=(document.getElementById('lf_op')||{}).value;const op=getAllProducts().find(p=>p.id===opId);if(!op)return;
   const setByKey=(key,v)=>{if(!v)return;const fd=(op.fields||[]).find(f=>f.key===key);if(fd){const el=document.getElementById('opf_'+fd.id);if(el)el.value=v;}};
   toast('Recherche de l\'entreprise…');
   try{
@@ -4658,13 +4852,14 @@ async function saveLead(){
   LAST_LEAD_SAVE=Date.now();
   const id=val('lf_id');
   const opId=val('lf_op');
-  const op=getProducts().find(p=>p.id===opId);
+  const op=getAllProducts().find(p=>p.id===opId);
   // validation des champs obligatoires de l'opération (on ignore les champs masqués)
   if(op&&op.fields){for(const f of op.fields){if(f.required){const el=document.getElementById('opf_'+f.id);if(el&&el.offsetParent!==null&&!el.value.trim()){toast('Champ requis : '+f.label,'err');return;}}}}
   const recs=getRecs();
   let r=id?recs.find(x=>x.id===id):null;
   const isNew=!r;
-  if(isNew){r={id:uid(),dossier:await nextDossier(),created:Date.now(),history:[]};recs.push(r);}
+  if(isNew){r={id:uid(),dossier:await nextDossier(),created:Date.now(),history:[],segment:SEGMENT};recs.push(r);}
+  if(!r.segment)r.segment=SEGMENT;
   const prevStatus=r.statusId;
   r.productId=opId;r.statusId=val('lf_status');r.sourceId=val('lf_src');r.userId=val('lf_user');r.updated=Date.now();
   // champs personnalisés de l'opération + synchronisation des données canoniques (par clé)
@@ -4881,7 +5076,7 @@ function openRdv(id,recId,presetDate){
     <div class="fld"><label>Code postal</label><input id="rd_cp" value="${esc(d.cp||baseRec.cp||'')}" oninput="document.getElementById('rd_dept').value=deptFromCP(this.value)"></div>
     <div class="fld"><label>Ville</label><input id="rd_ville" value="${esc(d.ville||baseRec.ville||'')}"></div>
     <div class="fld"><label>Département</label><input id="rd_dept" value="${esc(d.dept||baseRec.dept||deptFromCP(baseRec.cp)||'')}"></div>
-    <div class="fld"><label>Statut du RDV <span style="font-weight:500;text-transform:none;color:var(--text-mut)">(couleur sur le planning)</span></label><select id="rd_status">${statusOptions(d.statusId||(getStatuses().find(s=>s.name==='RDV pris')||getStatuses()[0]||{}).id)}</select></div>
+    <div class="fld"><label>Statut du RDV <span style="font-weight:500;text-transform:none;color:var(--text-mut)">(couleur sur le planning)</span></label><select id="rd_status">${statusOptions(d.statusId||(getAllStatuses().find(s=>s.name==='RDV pris')||getStatuses()[0]||{}).id)}</select></div>
     <div class="fld full"><label>Notes</label><textarea id="rd_notes">${esc(d.notes||'')}</textarea></div>
   </div>
   <p class="muted" style="margin-top:.6rem">📍 Le point sur la carte est placé au centre du département. Utilisez « Géolocaliser » pour l'adresse exacte.</p>`;
@@ -5078,7 +5273,7 @@ async function doImport(){
   const recs=getRecs();const sts=getStatuses();
   const defStatus=(sts.find(s=>s.name==='Nouveau')||sts[0]||{}).id;
   const assignId=val('imp_user');const assignUser=assignId?userById(assignId):null;
-  const opId=val('imp_op');const op=opId?getProducts().find(o=>o.id===opId):null;
+  const opId=val('imp_op');const op=opId?getAllProducts().find(o=>o.id===opId):null;
   const srcId=val('imp_src');const src=srcId?getSources().find(s=>s.id===srcId):null;
   let n=0;
   document.getElementById('importPreview').innerHTML=`<div class="panel" style="margin-top:1.2rem"><div class="panel-b"><div class="empty"><div class="big">⏳</div>Import en cours… (numérotation des dossiers)</div></div></div>`;
@@ -5405,7 +5600,7 @@ function calcSortiesAuto(mat){
     champs.forEach(champId=>{
       let val=r.opFields[champId];
       if(val==null){
-        const op=getProducts().find(p=>p.id===r.productId);
+        const op=getAllProducts().find(p=>p.id===r.productId);
         const field=(op?op.fields||[]:[] ).find(f=>f.key===champId||f.label===champId);
         if(field)val=r.opFields[field.id];
       }
@@ -5436,7 +5631,7 @@ function getDossiersSorties(mat){
       champs.forEach(champId=>{
         let val=r.opFields[champId];
         if(val==null){
-          const op=getProducts().find(p=>p.id===r.productId);
+          const op=getAllProducts().find(p=>p.id===r.productId);
           const field=(op?op.fields||[]:[] ).find(f=>f.key===champId||f.label===champId);
           if(field)val=r.opFields[field.id];
         }
@@ -5601,7 +5796,7 @@ function renderStockEtat(){
     const totalHtEntrees=mvts.filter(v=>v.materielId===m.id&&v.sens==='entree').reduce((s,v)=>s+(v.totalHT||0),0);
     const locaux=mvts.filter(v=>v.materielId===m.id&&v.sens==='localisation').sort((a,b)=>(b.date||0)-(a.date||0));
     const curLoc=locaux[0]||null;
-    const trigStatNames=(m.statutsDeclencheur||[]).map(id=>{const s=getStatuses().find(x=>x.id===id);return s?s.name:'';}).filter(Boolean).join(', ');
+    const trigStatNames=(m.statutsDeclencheur||[]).map(id=>{const s=getAllStatuses().find(x=>x.id===id);return s?s.name:'';}).filter(Boolean).join(', ');
     const fourns=(m.fournisseurs||[]);
     const enCours=mvts.filter(v=>v.materielId===m.id&&v.sens==='commande'&&!v.recu).length;
     // Header couleur selon statut
@@ -5635,12 +5830,12 @@ function renderStockEtat(){
     if(m.typeStock==='stock_fixe'){
       const dossiers=getDossiersSorties(m);
       h+=`<div style="padding:.6rem 1.1rem;background:#f8faf5;border-bottom:1px solid var(--border-grey);display:flex;align-items:center;justify-content:space-between">
-        <span style="font-size:.78rem;font-weight:700;color:var(--text-mut)">${dossiers.length} dossier${dossiers.length>1?'s':''} — ${(m.champsDossier||[]).map(id=>{const op=getProducts().find(p=>p.id===m.operationId);const f=op?(op.fields||[]).find(x=>x.id===id):null;return f?esc(f.label||f.key||id):id;}).join(' + ')}</span>
+        <span style="font-size:.78rem;font-weight:700;color:var(--text-mut)">${dossiers.length} dossier${dossiers.length>1?'s':''} — ${(m.champsDossier||[]).map(id=>{const op=getAllProducts().find(p=>p.id===m.operationId);const f=op?(op.fields||[]).find(x=>x.id===id):null;return f?esc(f.label||f.key||id):id;}).join(' + ')}</span>
       </div>`;
       if(!dossiers.length){h+=`<div class="empty" style="padding:1rem"><div class="big" style="font-size:1.5rem">📋</div>Aucun dossier au statut déclencheur.</div>`;}
       else{
         dossiers.slice(0,20).forEach(({r,qte})=>{
-          const stat=getStatuses().find(s=>s.id===r.statusId);
+          const stat=getAllStatuses().find(s=>s.id===r.statusId);
           // Trouver le dernier fournisseur utilisé avant ce dossier
           const mvtEntrees=getMvts().filter(v=>v.materielId===m.id&&v.sens==='entree'&&v.fournisseurNom).sort((a,b)=>(b.date||0)-(a.date||0));
           const fourn=r.fournisseurDossier||'';
@@ -5775,11 +5970,11 @@ function renderStockCatalogue(){
   </tr></thead><tbody>`;
   matsF.forEach(m=>{
     const stype=STOCK_TYPES[m.typeStock||'stock_fixe'];
-    const op=getProducts().find(p=>p.id===m.operationId||p.name===m.operation);
+    const op=getAllProducts().find(p=>p.id===m.operationId||p.name===m.operation);
     const champs=[].concat(m.champsDossier||m.champDossier||[]).filter(Boolean);
     const champLabels=champs.map(cid=>{const f=op?(op.fields||[]).find(x=>x.id===cid):null;return f?esc(f.label||f.key||cid):cid;});
     const trigStatIds=[].concat(m.statutsDeclencheur||m.statutDeclencheur||[]).filter(Boolean);
-    const trigStats=trigStatIds.map(id=>getStatuses().find(s=>s.id===id)).filter(Boolean);
+    const trigStats=trigStatIds.map(id=>getAllStatuses().find(s=>s.id===id)).filter(Boolean);
     const fourns=(m.fournisseurs||[]);
     h+=`<tr>
       <td><div style="font-weight:700">${esc(m.nom)}</div><div class="muted" style="font-size:.7rem">${esc(m.reference||'')}</div></td>
@@ -5801,7 +5996,7 @@ function renderStockCatalogue(){
 /* ---- CATALOGUE MODAL ---- */
 function openMatModal(id){
   const mats=getMats();const o=id?mats.find(m=>m.id===id)||{}:{};
-  const selectedOp=getProducts().find(p=>p.id===o.operationId||p.name===o.operation);
+  const selectedOp=getAllProducts().find(p=>p.id===o.operationId||p.name===o.operation);
   const opsOpts=getProducts().map(p=>`<option value="${p.id}" ${o.operationId===p.id?'selected':''}>${esc(p.name)}</option>`).join('');
   const typeOpts=Object.entries(STOCK_TYPES).map(([k,v])=>`<option value="${k}" ${(o.typeStock||'stock_fixe')===k?'selected':''}>${v.icon} ${v.label}</option>`).join('');
   const savedStats=[].concat(o.statutsDeclencheur||o.statutDeclencheur||[]).filter(Boolean);
@@ -5859,7 +6054,7 @@ function updateMatTypeDesc(val){
 }
 function updateMatOpFields(){
   const opId=(document.getElementById('mat_op_id')||{}).value;
-  const op=getProducts().find(p=>p.id===opId);
+  const op=getAllProducts().find(p=>p.id===opId);
   const fields=(op?op.fields||[]:[]);
   const sel=document.getElementById('mat_champ');if(!sel)return;
   sel.innerHTML=fields.length
@@ -5869,7 +6064,7 @@ function updateMatOpFields(){
 function saveMat(){
   const id=STOCK_DRAFT.id;
   const opId=(document.getElementById('mat_op_id')||{}).value||'';
-  const op=getProducts().find(p=>p.id===opId);
+  const op=getAllProducts().find(p=>p.id===opId);
   const champSel=document.getElementById('mat_champ');
   const statSel=document.getElementById('mat_statut');
   const champsDossier=[...(champSel?champSel.selectedOptions:[])].map(o=>o.value).filter(Boolean);
@@ -6176,7 +6371,6 @@ function renderSettings(){
   const tabs=[
     ['statuts','Statuts','settings_statuts'],
     ['operations','Opérations','settings_operations'],
-    ['produits','Produits','settings_operations'],
     ['delegataires','Délégataires','settings_delegataires'],
     ['sources','Sources / Régies','settings_partenaires'],
     ['vt','Visite technique','settings_partenaires'],
@@ -6196,7 +6390,6 @@ function renderSettings(){
   document.getElementById('pageActions').innerHTML='';
   if(SETTAB==='statuts')setStatuts();
   else if(SETTAB==='operations')setOperations();
-  else if(SETTAB==='produits')setProduits();
   else if(SETTAB==='delegataires')setDelegataires();
   else if(SETTAB==='mails')setMailTpl();
   else if(SETTAB==='societe')setSociete();
@@ -6267,7 +6460,7 @@ function renderDocsTab(){
     <div class="cfg-list">`;
   if(!ts.length)h+=`<div class="empty"><div class="big">📄</div>Aucun modèle pour l'instant.</div>`;
   else h+=ts.map(t=>{
-    const ops=(t.operationIds&&t.operationIds.length)?t.operationIds.map(id=>{const o=getProducts().find(x=>x.id===id);return o?o.name:null;}).filter(Boolean).join(', '):'Toutes opérations';
+    const ops=(t.operationIds&&t.operationIds.length)?t.operationIds.map(id=>{const o=getAllProducts().find(x=>x.id===id);return o?o.name:null;}).filter(Boolean).join(', '):'Toutes opérations';
     return `<div class="cfg-item"><div style="flex:1;min-width:0"><div class="nm">${esc(t.name)}</div><div class="muted" style="font-size:.72rem;margin-top:.15rem">${esc(ops)} · ${(t.pages||[]).length} page${(t.pages||[]).length>1?'s':''}</div></div><span class="sp"><button class="iconbtn" onclick="openDocTemplate('${t.id}')">✏️</button><button class="iconbtn del" onclick="delDocTemplate('${t.id}')">🗑️</button></span></div>`;
   }).join('');
   h+=`</div></div></div>`;
@@ -6448,7 +6641,7 @@ function delDocTemplate(id){
   });
 }
 function tplVars(r){
-  const op=getProducts().find(p=>p.id===r.productId);const rd=nextRdvOf(r);const wz=recWorkAddr(r);const deal=dealOf(r);
+  const op=getAllProducts().find(p=>p.id===r.productId);const rd=nextRdvOf(r);const wz=recWorkAddr(r);const deal=dealOf(r);
   const s=getSettings()||{};const me=ME?(ME.prenom+' '+ME.nom).trim():'';
   return {
     raison_sociale:r.raisonSociale||'',signataire:((r.prenom||'')+' '+(r.nom||'')).trim(),nom:r.nom||'',prenom:r.prenom||'',fonction:r.fonction||'',
@@ -6582,7 +6775,8 @@ function copyMail(){const su=document.getElementById('ms_subject').value;const b
 function setStatuts(){
   const sts=getStatuses();
   const subs=load('egncrm_sousstatuts',[]);
-  let h=`<div class="panel"><div class="panel-h"><h3>Statuts du pipeline</h3><div class="sp"><button class="btn btn-pri btn-sm" onclick="openStatus()">+ Nouveau statut</button></div></div><div class="panel-b">
+  let h=segSwitcher('setStatuts');
+  h+=`<div class="panel"><div class="panel-h"><h3>Statuts du pipeline — ${SEGMENTS[SEGMENT].short}</h3><div class="sp"><button class="btn btn-pri btn-sm" onclick="openStatus()">+ Nouveau statut</button></div></div><div class="panel-b">
     <p class="muted" style="margin-bottom:.9rem">Créez et ordonnez vos propres statuts par <b>glisser-déposer</b>. La <b>phase</b> détermine si le dossier apparaît dans Leads ou Clients.</p>
     <div class="cfg-list" id="statuts_drag_list">`;
   sts.forEach((s,i)=>{
@@ -6625,7 +6819,7 @@ function statDrop(e,i){
   const sts=getStatuses();const moved=sts.splice(STAT_DRAG_IDX,1)[0];sts.splice(i,0,moved);
   // Persister l'ordre dans chaque objet pour que Supabase le conserve
   sts.forEach((s,idx)=>s.order=idx);
-  STAT_DRAG_IDX=null;save(K.stat,sts);setStatuts();toast('Ordre mis à jour ✓','ok');
+  STAT_DRAG_IDX=null;save(K.stat,mergeSeg(getAllStatuses(),sts));setStatuts();toast('Ordre mis à jour ✓','ok');
 }
 /* ---- drag & drop sous-statuts ---- */
 let SUB_DRAG_IDX=null;
@@ -6671,9 +6865,9 @@ function openStatus(id){
   </div>`;
   openModal(id?'Modifier le statut':'Nouveau statut',body,`<button class="btn btn-ghost" onclick="closeModal()">Annuler</button><button class="btn btn-pri" onclick="saveStatus()">💾 Enregistrer</button>`);
 }
-function saveStatus(){const id=val('st_id');const name=val('st_name');if(!name){toast('Nom requis','err');return;}const sts=getStatuses();let s=id?sts.find(x=>x.id===id):null;if(!s){s={id:uid()};sts.push(s);}s.name=name;s.color=val('st_color');s.phase=val('st_phase');s.won=val('st_won')==='yes';save(K.stat,sts);closeModal();renderSettings();buildNav();toast('Statut enregistré ✓','ok');}
-function delStatus(id){const used=getRecs().some(r=>r.statusId===id);modalConfirm('Supprimer ce statut ?',used?'⚠️ Des dossiers utilisent ce statut — ils n\'auront plus de statut valide.':'Ce statut sera retiré du pipeline.',()=>{save(K.stat,getStatuses().filter(s=>s.id!==id));deleteRemoteRow(K.stat,id);closeModal();renderSettings();buildNav();toast('Statut supprimé','ok');});}
-function moveStatus(i,dir){const sts=getStatuses();const j=i+dir;if(j<0||j>=sts.length)return;const t=sts[i];sts[i]=sts[j];sts[j]=t;save(K.stat,sts);setStatuts();}
+function saveStatus(){const id=val('st_id');const name=val('st_name');if(!name){toast('Nom requis','err');return;}const sts=getAllStatuses();let s=id?sts.find(x=>x.id===id):null;if(!s){s={id:uid(),segment:SEGMENT,order:getStatuses().length};sts.push(s);}s.segment=s.segment||SEGMENT;s.name=name;s.color=val('st_color');s.phase=val('st_phase');s.won=val('st_won')==='yes';save(K.stat,sts);closeModal();renderSettings();buildNav();toast('Statut enregistré ✓','ok');}
+function delStatus(id){const used=getRecs().some(r=>r.statusId===id);modalConfirm('Supprimer ce statut ?',used?'⚠️ Des dossiers utilisent ce statut — ils n\'auront plus de statut valide.':'Ce statut sera retiré du pipeline.',()=>{save(K.stat,getAllStatuses().filter(s=>s.id!==id));deleteRemoteRow(K.stat,id);closeModal();renderSettings();buildNav();toast('Statut supprimé','ok');});}
+function moveStatus(i,dir){const sts=getStatuses();const j=i+dir;if(j<0||j>=sts.length)return;const t=sts[i];sts[i]=sts[j];sts[j]=t;sts.forEach((s,idx)=>s.order=idx);save(K.stat,mergeSeg(getAllStatuses(),sts));setStatuts();}
 
 const CFGMAP={sources:{key:K.src,label:'source / régie',title:'Sources & régies commerciales'},equipes:{key:K.team,label:'équipe',title:'Équipes'},documents:{key:'egncrm_doctypes',label:'type de document',title:'Types de documents (pièces jointes)'},vt:{key:'egncrm_vt',label:'société de visite technique',title:'Sociétés de visite technique (sous-traitants)'},poseurs:{key:'egncrm_poseurs',label:'famille de poseurs',title:'Familles de poseurs (tarification & accès CRM)'},auditeurs:{key:'egncrm_auditeurs',label:'auditeur',title:'Auditeurs (sous-traitants)'},coefsu:{key:'egncrm_coefsu',label:'coefficient U',title:'Coefficients U — étude thermique (Admin/Super Admin)'},pac:{key:'egncrm_pac',label:'solution PAC',title:'Catalogue de solutions PAC — étude (Admin/Super Admin)'}};
 function setSimple(type){
@@ -7149,7 +7343,7 @@ function fieldInput(f,v){
 function renderOpFields(){
   const wrap=document.getElementById('lf_opfields_wrap');if(!wrap)return;
   const opId=(document.getElementById('lf_op')||{}).value||'';
-  const op=getProducts().find(p=>p.id===opId);
+  const op=getAllProducts().find(p=>p.id===opId);
   const fields=(op&&op.fields)||[];
   if(!fields.length){wrap.innerHTML=opId?`<div class="muted" style="font-size:.78rem">Aucun champ pour cette opération. Ajoutez-en dans <b>Paramètres ▸ Opérations</b>.</div>`:`<div class="muted" style="font-size:.82rem">Sélectionnez une opération pour afficher le formulaire à remplir.</div>`;return;}
   const valueFor=f=>{let v=LF_OPVALS[f.id];if((v==null||v==='')&&f.key&&LF_REC)v=canonByKey(LF_REC,f.key);return v||'';};
@@ -7181,7 +7375,7 @@ async function addrACgo(inputId,scope,q){
   }catch(e){box.style.display='none';}
 }
 function addrSiblings(scope){
-  const op=getProducts().find(p=>p.id===(document.getElementById('lf_op')||{}).value);
+  const op=getAllProducts().find(p=>p.id===(document.getElementById('lf_op')||{}).value);
   const fields=(op&&op.fields)||[];
   const cpf=fields.find(f=>f.key==='cp_'+scope);const vlf=fields.find(f=>f.key==='ville_'+scope);
   return {cp:cpf?('opf_'+cpf.id):null,ville:vlf?('opf_'+vlf.id):null};
@@ -7200,12 +7394,13 @@ function addrBlur(inputId){setTimeout(()=>addrClose(inputId),200);}
 /* -- onglet Paramètres ▸ Opérations -- */
 function setOperations(){
   const ops=getProducts();
-  let h=`<div class="panel"><div class="panel-h"><h3>Opérations (fiches CEE)</h3><div class="sp"><button class="btn btn-pri btn-sm" onclick="openOperation()">+ Nouvelle opération</button></div></div><div class="panel-b"><p class="muted" style="margin-bottom:.9rem">Définissez chaque fiche CEE et les <b>champs personnalisés</b> à remplir lors de la création d'un lead. Vous gérez tout : libellés, types, listes de choix, obligatoire ou non. Ces champs s'affichent automatiquement quand l'opération est sélectionnée sur un lead.</p><div class="cfg-list">`;
+  let h=segSwitcher('setOperations');
+  h+=`<div class="panel"><div class="panel-h"><h3>Opérations (fiches CEE) — ${SEGMENTS[SEGMENT].short}</h3><div class="sp"><button class="btn btn-pri btn-sm" onclick="openOperation()">+ Nouvelle opération</button></div></div><div class="panel-b"><p class="muted" style="margin-bottom:.9rem">Définissez chaque fiche CEE et les <b>champs personnalisés</b> à remplir lors de la création d'un lead. Vous gérez tout : libellés, types, listes de choix, obligatoire ou non. Ces champs s'affichent automatiquement quand l'opération est sélectionnée sur un lead.</p><div class="cfg-list">`;
   if(!ops.length)h+=`<div class="empty"><div class="big">📋</div>Aucune opération. Créez votre première fiche CEE.</div>`;
   ops.forEach(o=>{const nf=(o.fields||[]).length;h+=`<div class="cfg-item"><span class="nm">${esc(o.name)}</span><span class="tag" style="background:rgba(45,125,210,.12);color:#2D7DD2">${nf} champ${nf>1?'s':''}</span><span class="sp"><button class="iconbtn" title="Configurer" onclick="openOperation('${o.id}')">✏️</button><button class="iconbtn del" onclick="delOperation('${o.id}')">🗑️</button></span></div>`;});
   h+=`</div></div></div>`;document.getElementById('setBody').innerHTML=h;
 }
-function delOperation(id){const used=getRecs().some(r=>r.productId===id);modalConfirm('Supprimer cette opération ?',used?'⚠️ Des dossiers utilisent cette opération — leur opération deviendra vide.':'Cette fiche CEE et ses champs seront supprimés.',()=>{save(K.prod,getProducts().filter(o=>o.id!==id));deleteRemoteRow(K.prod,id);closeModal();renderSettings();buildNav();toast('Opération supprimée','ok');});}
+function delOperation(id){const used=getRecs().some(r=>r.productId===id);modalConfirm('Supprimer cette opération ?',used?'⚠️ Des dossiers utilisent cette opération — leur opération deviendra vide.':'Cette fiche CEE et ses champs seront supprimés.',()=>{save(K.prod,getAllProducts().filter(o=>o.id!==id));deleteRemoteRow(K.prod,id);closeModal();renderSettings();buildNav();toast('Opération supprimée','ok');});}
 
 /* -- onglet Paramètres ▸ Produits (prix d'achat, rattachés à une fiche CEE) -- */
 const ITEM_MODES={piece:'À la pièce',m2:'Au m²'};
@@ -7255,7 +7450,7 @@ function delProduit(id){modalConfirm('Supprimer ce produit ?','',()=>{save(K.ite
 
 /* -- éditeur d'opération (avec constructeur de champs) -- */
 function openOperation(id){
-  const o=id?getProducts().find(x=>x.id===id):null;
+  const o=id?getAllProducts().find(x=>x.id===id):null;
   OPDRAFT=o?JSON.parse(JSON.stringify(o)):{id:uid(),name:'',fields:commonFieldDefs()};
   if(!OPDRAFT.fields)OPDRAFT.fields=[];
   renderOpEditor();
@@ -7354,7 +7549,7 @@ function setCalcCumac(el){CALC_STATE.cumac=el.value;updateCalcResult();}
 function setCalcField(fid,el){
   CALC_STATE.fields[fid]=el.value;
   // Recalcule le cumac et l'injecte dans le champ (sans re-rendre le panneau)
-  const op=getProducts().find(p=>p.id===CALC_STATE.opId);
+  const op=getAllProducts().find(p=>p.id===CALC_STATE.opId);
   const c=op?computeCumac({productId:op.id,opFields:CALC_STATE.fields}):null;
   CALC_STATE.cumac=(c!=null)?String(c):'';
   const ci=document.getElementById('calc_cumac');
@@ -7441,7 +7636,7 @@ function updateCalcResult(){
 }
 
 function computePrimeAuto(r){
-  const op=getProducts().find(p=>p.id===r.productId);
+  const op=getAllProducts().find(p=>p.id===r.productId);
   if(!op)return null;
   const cumac=computeCumac(r);if(cumac==null)return null;
   const deal=dealOf(r);
@@ -7648,7 +7843,8 @@ function saveOperation(){
   if(!OPDRAFT.name){toast("Nom de l'opération requis",'err');return;}
   OPDRAFT.fields=OPDRAFT.fields.filter(f=>f.label&&f.label.trim());
   OPDRAFT.etudeType=val('op_etudetype')||'';
-  const ops=getProducts();const idx=ops.findIndex(o=>o.id===OPDRAFT.id);
+  OPDRAFT.segment=OPDRAFT.segment||SEGMENT;
+  const ops=getAllProducts();const idx=ops.findIndex(o=>o.id===OPDRAFT.id);
   if(idx>=0)ops[idx]=OPDRAFT;else ops.push(OPDRAFT);
   save(K.prod,ops);OPDRAFT=null;closeModal();renderSettings();buildNav();toast('Opération enregistrée ✓','ok');
 }
