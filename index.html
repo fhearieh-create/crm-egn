@@ -439,6 +439,7 @@ code{font-family:monospace;background:var(--bg-soft);padding:.05rem .3rem;border
         <h1 id="pageTitle">Tableau de bord</h1>
         <div class="sub" id="pageSub">Vue d'ensemble de l'activité</div>
       </div>
+      <div class="seg-switch" id="segSwitch"></div>
       <div class="gsearch-wrap" style="position:relative;margin-left:1rem">
         <input id="gsearchInput" class="gsearch-input" placeholder="🔍 Rechercher un dossier, un client…" oninput="globalSearch(this.value)" onfocus="if(this.value)globalSearch(this.value)">
         <div id="gsearchResults" class="gsearch-results" style="display:none"></div>
@@ -473,6 +474,15 @@ code{font-family:monospace;background:var(--bg-soft);padding:.05rem .3rem;border
 </div>
 
 <style>
+.seg-switch{display:none;align-items:center;gap:2px;background:#EEF1F4;border-radius:10px;padding:3px;margin-left:1rem;flex-shrink:0}
+.seg-btn{display:flex;align-items:center;gap:.32rem;font-family:'Saira',sans-serif;font-size:.78rem;font-weight:700;border:none;background:transparent;color:var(--text-mut);border-radius:8px;padding:.34rem .8rem;cursor:pointer;white-space:nowrap;transition:all .13s}
+.seg-btn:hover{color:var(--navy)}
+.seg-btn.on{background:#fff;color:var(--navy);box-shadow:0 1px 4px rgba(26,43,61,.13)}
+.seg-btn.on[data-seg="btoc"]{color:var(--purple)}
+.seg-btn.on[data-seg="btob"]{color:var(--blue)}
+.seg-count{font-size:.64rem;font-weight:800;background:rgba(26,43,61,.1);border-radius:20px;padding:0 5px;min-width:17px;text-align:center}
+.seg-btn.on .seg-count{background:currentColor;color:#fff}
+@media(max-width:900px){.seg-btn span.seg-lbl{display:none}.seg-switch{margin-left:.5rem}}
 .mention-box{position:fixed;z-index:200;background:#fff;border:1.5px solid var(--border-grey);border-radius:11px;box-shadow:0 10px 30px rgba(26,43,61,.2);overflow:hidden;max-height:230px;overflow-y:auto;min-width:220px}
 .mention-item{display:flex;align-items:center;gap:.55rem;padding:.45rem .7rem;cursor:pointer;font-size:.83rem}
 .mention-item:hover,.mention-item.act{background:var(--bg-soft)}
@@ -605,16 +615,16 @@ const PERM_GROUPS=[
     {k:'rappels_view',l:'Rappels'},
   ]},
   {g:'Leads & dossiers',items:[
-    {k:'leads_view',l:'Accès aux leads BtoB'},
+    {k:'leads_view',l:'Accès aux leads / dossiers'},
     {k:'leads_view_all',l:'Voir TOUS les dossiers (sinon les siens)'},
     {k:'leads_create',l:'Créer des leads'},
     {k:'leads_edit',l:'Modifier les fiches'},
     {k:'leads_delete',l:'Supprimer des dossiers'},
     {k:'status_change',l:'Changer les statuts'},
     {k:'sousstatut_view',l:'Voir et modifier les sous-statuts'},
-    {k:'clients_view',l:'Accès aux clients BtoB'},
-    {k:'leads_view_btoc',l:'Accès aux leads BtoC'},
-    {k:'clients_view_btoc',l:'Accès aux clients BtoC'},
+    {k:'clients_view',l:'Accès aux clients'},
+    {k:'segment_btoc',l:'Accès au segment BtoC (particuliers)'},
+    {k:'segment_btob',l:'Accès au segment BtoB (professionnels)'},
     {k:'sav_view',l:'Accès au SAV'},
     {k:'import_data',l:'Import de données (Excel / CSV)'},
     {k:'doublons_view',l:'Détection des doublons'},
@@ -666,13 +676,13 @@ const ROLES={superadmin:'Super Admin',admin:'Administrateur',manager:'Manager',c
 function rolePerms(role){
   const all={};PERMS.forEach(p=>all[p.k]=true);
   const none={};PERMS.forEach(p=>none[p.k]=false);
-  const base={...none,dashboard:true,leads_view:true,leads_view_btoc:true,fiche_comments:true,fiche_history:true,fiche_docs:true};
+  const base={...none,dashboard:true,leads_view:true,segment_btob:true,segment_btoc:true,fiche_comments:true,fiche_history:true,fiche_docs:true};
   if(role==='superadmin'||role==='admin')return {...all};
   if(role==='manager')return {...all,users_manage:false,settings_access:false,settings_societe:false,settings_operations:false,settings_statuts:false,settings_partenaires:false,settings_delegataires:false,docs_manage:false,compta_apf_delete:false};
   if(role==='confirmateur')return {...base,status_change:true,planning_view:true,rdv_manage:true,rappels_view:true};
-  if(role==='commercial')return {...base,leads_create:true,leads_edit:true,status_change:true,clients_view:true,clients_view_btoc:true,planning_view:true,rdv_manage:true,rappels_view:true,docs_generate:true};
+  if(role==='commercial')return {...base,leads_create:true,leads_edit:true,status_change:true,clients_view:true,planning_view:true,rdv_manage:true,rappels_view:true,docs_generate:true};
   if(role==='telepro')return {...base,leads_create:true,status_change:true,planning_view:true,rdv_manage:true,rappels_view:true};
-  if(role==='poseur')return {...none,dashboard:true,clients_view:true,clients_view_btoc:true,planning_view:true,rdv_manage:true,sav_view:true};
+  if(role==='poseur')return {...none,dashboard:true,clients_view:true,planning_view:true,rdv_manage:true,sav_view:true};
   return {...none};
 }
 
@@ -782,12 +792,32 @@ const getAllStatuses=()=>{const sts=load(K.stat,[]);return sts.sort((a,b)=>(a.or
 const getAllProducts=()=>load(K.prod,[]);
 const statusById=id=>getAllStatuses().find(s=>s.id===id);
 const productById=id=>getAllProducts().find(p=>p.id===id);
-/* Bascule BtoB / BtoC réutilisable dans les paramètres */
-function segSwitcher(cb){
-  return `<div style="display:flex;gap:.4rem;align-items:center;margin-bottom:.9rem">
-    <span style="font-size:.72rem;font-weight:700;color:var(--text-mut);text-transform:uppercase;letter-spacing:.5px;margin-right:.2rem">Segment</span>
-    ${Object.entries(SEGMENTS).map(([k,v])=>`<button class="btn btn-sm ${SEGMENT===k?'btn-navy':'btn-ghost'}" onclick="setSegment('${k}');${cb}()">${v.ic} ${v.label}</button>`).join('')}
-  </div>`;
+/* Pages concernées par le segment — seules celles-ci affichent le sélecteur */
+const SEG_PAGES=['dash','leads','clients','planning','rappels','sav','compta','settings'];
+function segAllowed(){return Object.keys(SEGMENTS).filter(k=>can('segment_'+k));}
+function renderSegSwitch(){
+  const el=document.getElementById('segSwitch');if(!el)return;
+  const allowed=segAllowed();
+  // Masqué si la page ne s'y prête pas ou si un seul segment est autorisé
+  if(!SEG_PAGES.includes(CUR)||allowed.length<2){el.style.display='none';return;}
+  if(!allowed.includes(SEGMENT))setSegment(allowed[0]);
+  const recs=getRecs().filter(recVisible);
+  el.innerHTML=allowed.map(k=>{
+    const nb=recs.filter(r=>segOf(r)===k).length;
+    return `<button class="seg-btn ${SEGMENT===k?'on':''}" data-seg="${k}" onclick="switchSegment('${k}')" title="${esc(SEGMENTS[k].label)}">
+      ${SEGMENTS[k].ic} <span class="seg-lbl">${SEGMENTS[k].short}</span>${nb?`<span class="seg-count">${nb}</span>`:''}
+    </button>`;
+  }).join('');
+  el.style.display='flex';
+}
+function switchSegment(k){
+  if(SEGMENT===k)return;
+  setSegment(k);
+  renderSegSwitch();
+  // Réinitialise les filtres de liste, qui référencent statuts et opérations de l'autre segment
+  if(typeof LF==='object'){LF.status='';LF.prod='';}
+  if(PAGES[CUR])PAGES[CUR].r();
+  toast(`${SEGMENTS[k].ic} Segment ${SEGMENTS[k].short}`,'ok');
 }
 /* Fusionne une liste propre à un segment dans la liste complète, sans toucher l'autre segment */
 function mergeSeg(all,segList){
@@ -1731,13 +1761,9 @@ const NAV=[
   {id:'planning',ic:'📅',label:'Planning',perm:'planning_view'},
   {id:'rappels',ic:'⏰',label:'Rappels',perm:'rappels_view'},
   {id:'import',ic:'📥',label:'Import des leads',perm:'import_data'},
-  {sec:'BtoB — Professionnels'},
-  {id:'leads',ic:'🏢',label:'Leads BtoB',perm:'leads_view'},
-  {id:'clients',ic:'🏭',label:'Clients BtoB',perm:'clients_view'},
-  {sec:'BtoC — Particuliers'},
-  {id:'leads_c',ic:'🙋',label:'Leads BtoC',perm:'leads_view_btoc'},
-  {id:'clients_c',ic:'🏡',label:'Clients BtoC',perm:'clients_view_btoc'},
-  {sec:'Suivi'},
+  {sec:'Leads & Clients'},
+  {id:'leads',ic:'👥',label:'Leads',perm:'leads_view'},
+  {id:'clients',ic:'🏠',label:'Clients',perm:'clients_view'},
   {id:'sav',ic:'🔧',label:'SAV',perm:'sav_view'},
   {sec:'Administration'},
   {id:'compta',ic:'💼',label:'Comptabilité',perm:'compta_global'},
@@ -1751,10 +1777,8 @@ const PAGES={
   planning:{t:'Planning',s:'Calendrier & carte des rendez-vous',r:renderPlanning},
   rappels:{t:'Rappels',s:'Tous vos rappels planifiés',r:renderRappels},
   import:{t:'Import des leads',s:'Importez votre base client Excel / CSV',r:renderImport},
-  leads:{t:'Leads BtoB',s:'Prospects et dossiers professionnels',r:renderLeads},
-  clients:{t:'Clients BtoB',s:'Dossiers professionnels transmis & installés',r:renderClients},
-  leads_c:{t:'Leads BtoC',s:'Prospects et dossiers particuliers',r:renderLeadsC},
-  clients_c:{t:'Clients BtoC',s:'Dossiers particuliers transmis & installés',r:renderClientsC},
+  leads:{t:'Leads',s:'Tous vos prospects et dossiers',r:renderLeads},
+  clients:{t:'Clients',s:'Dossiers transmis & installés',r:renderClients},
   docs:{t:'Documents',s:'Modèles de documents générables depuis les fiches client',r:renderDocsTab},
   rdvs:{t:'RDVs',s:'Liste des rendez-vous',r:renderRdvs},
   sav:{t:'SAV',s:'Service après-vente',r:renderSav},
@@ -1785,6 +1809,7 @@ function go(id){
   document.getElementById('pageSub').textContent=PAGES[id].s;
   document.getElementById('pageActions').innerHTML='';
   buildNav();
+  renderSegSwitch();
   PAGES[id].r();
   document.getElementById('app').classList.remove('sb-open');
 }
@@ -2060,21 +2085,10 @@ function rdvTypeChange(){const t=(document.getElementById('rd_type')||{}).value|
 function visibleRecs(){return getRecs().filter(r=>segOf(r)===SEGMENT&&recVisible(r));}
 function allVisibleRecs(){return getRecs().filter(recVisible);}
 function renderLeads(){
-  setSegment('btob');
-  if(can('leads_create'))document.getElementById('pageActions').innerHTML=actionBtn('+ Nouveau lead BtoB','openLead()','btn-pri');
+  if(can('leads_create'))document.getElementById('pageActions').innerHTML=actionBtn('+ Nouveau lead','openLead()','btn-pri');
   drawRecTable('leads');
 }
 function renderClients(){
-  setSegment('btob');
-  drawRecTable('clients');
-}
-function renderLeadsC(){
-  setSegment('btoc');
-  if(can('leads_create'))document.getElementById('pageActions').innerHTML=actionBtn('+ Nouveau lead BtoC','openLead()','btn-pri');
-  drawRecTable('leads');
-}
-function renderClientsC(){
-  setSegment('btoc');
   drawRecTable('clients');
 }
 let REC_SELECTED=new Set(),REC_MODE='leads';
@@ -2384,9 +2398,8 @@ async function openDossier(id){
   const r=recById(id);if(!r){toast('Dossier introuvable','err');return;}
   DOSSIER_OPEN=id;
   // Se caler sur le segment du dossier pour résoudre statuts et opérations
-  if(segOf(r)!==SEGMENT)setSegment(segOf(r));
-  const suffixe=SEGMENT==='btoc'?'_c':'';
-  window._dossierBack=(CUR==='clients'||CUR==='clients_c')?('clients'+suffixe):('leads'+suffixe);
+  if(segOf(r)!==SEGMENT){setSegment(segOf(r));renderSegSwitch();}
+  window._dossierBack=(CUR==='clients')?'clients':'leads';
   document.getElementById('pageTitle').innerHTML=`Dossier ${esc(r.dossier||'')}`;
   document.getElementById('pageSub').textContent=recName(r);
   const locBtn=(r.dossier||'').includes('-LOC-')
@@ -6775,8 +6788,7 @@ function copyMail(){const su=document.getElementById('ms_subject').value;const b
 function setStatuts(){
   const sts=getStatuses();
   const subs=load('egncrm_sousstatuts',[]);
-  let h=segSwitcher('setStatuts');
-  h+=`<div class="panel"><div class="panel-h"><h3>Statuts du pipeline — ${SEGMENTS[SEGMENT].short}</h3><div class="sp"><button class="btn btn-pri btn-sm" onclick="openStatus()">+ Nouveau statut</button></div></div><div class="panel-b">
+  let h=`<div class="panel"><div class="panel-h"><h3>Statuts du pipeline <span style="font-size:.72rem;font-weight:700;background:rgba(45,125,210,.12);color:var(--blue);border-radius:6px;padding:1px 8px;margin-left:.3rem">${SEGMENTS[SEGMENT].ic} ${SEGMENTS[SEGMENT].short}</span></h3><div class="sp"><button class="btn btn-pri btn-sm" onclick="openStatus()">+ Nouveau statut</button></div></div><div class="panel-b">
     <p class="muted" style="margin-bottom:.9rem">Créez et ordonnez vos propres statuts par <b>glisser-déposer</b>. La <b>phase</b> détermine si le dossier apparaît dans Leads ou Clients.</p>
     <div class="cfg-list" id="statuts_drag_list">`;
   sts.forEach((s,i)=>{
@@ -7394,8 +7406,7 @@ function addrBlur(inputId){setTimeout(()=>addrClose(inputId),200);}
 /* -- onglet Paramètres ▸ Opérations -- */
 function setOperations(){
   const ops=getProducts();
-  let h=segSwitcher('setOperations');
-  h+=`<div class="panel"><div class="panel-h"><h3>Opérations (fiches CEE) — ${SEGMENTS[SEGMENT].short}</h3><div class="sp"><button class="btn btn-pri btn-sm" onclick="openOperation()">+ Nouvelle opération</button></div></div><div class="panel-b"><p class="muted" style="margin-bottom:.9rem">Définissez chaque fiche CEE et les <b>champs personnalisés</b> à remplir lors de la création d'un lead. Vous gérez tout : libellés, types, listes de choix, obligatoire ou non. Ces champs s'affichent automatiquement quand l'opération est sélectionnée sur un lead.</p><div class="cfg-list">`;
+  let h=`<div class="panel"><div class="panel-h"><h3>Opérations (fiches CEE) <span style="font-size:.72rem;font-weight:700;background:rgba(45,125,210,.12);color:var(--blue);border-radius:6px;padding:1px 8px;margin-left:.3rem">${SEGMENTS[SEGMENT].ic} ${SEGMENTS[SEGMENT].short}</span></h3><div class="sp"><button class="btn btn-pri btn-sm" onclick="openOperation()">+ Nouvelle opération</button></div></div><div class="panel-b"><p class="muted" style="margin-bottom:.9rem">Définissez chaque fiche CEE et les <b>champs personnalisés</b> à remplir lors de la création d'un lead. Vous gérez tout : libellés, types, listes de choix, obligatoire ou non. Ces champs s'affichent automatiquement quand l'opération est sélectionnée sur un lead.</p><div class="cfg-list">`;
   if(!ops.length)h+=`<div class="empty"><div class="big">📋</div>Aucune opération. Créez votre première fiche CEE.</div>`;
   ops.forEach(o=>{const nf=(o.fields||[]).length;h+=`<div class="cfg-item"><span class="nm">${esc(o.name)}</span><span class="tag" style="background:rgba(45,125,210,.12);color:#2D7DD2">${nf} champ${nf>1?'s':''}</span><span class="sp"><button class="iconbtn" title="Configurer" onclick="openOperation('${o.id}')">✏️</button><button class="iconbtn del" onclick="delOperation('${o.id}')">🗑️</button></span></div>`;});
   h+=`</div></div></div>`;document.getElementById('setBody').innerHTML=h;
