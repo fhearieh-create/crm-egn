@@ -595,34 +595,80 @@ const uid=()=>{if(typeof crypto!=='undefined'&&crypto.randomUUID)return crypto.r
 const esc=s=>(s==null?'':String(s)).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 
 /* ---- permissions ---- */
-const PERMS=[
-  {k:'dashboard',l:'Tableau de bord'},
-  {k:'leads_view',l:'Accès aux leads / dossiers'},
-  {k:'leads_view_all',l:'Voir TOUS les dossiers (sinon les siens)'},
-  {k:'leads_create',l:'Créer / importer des leads'},
-  {k:'leads_edit',l:'Modifier les fiches'},
-  {k:'leads_delete',l:'Supprimer des dossiers'},
-  {k:'status_change',l:'Changer les statuts'},
-  {k:'sousstatut_view',l:'Voir et modifier les sous-statuts administratifs'},
-  {k:'docs_generate',l:'Générer des documents depuis les fiches'},
-  {k:'clients_view',l:'Accès aux clients'},
-  {k:'planning_view',l:'Accès au planning + carte'},
-  {k:'planning_view_all',l:'Voir le planning de tous'},
-  {k:'rdv_manage',l:'Créer / gérer les RDV'},
-  {k:'sav_view',l:'Accès au SAV'},
-  {k:'import_data',l:'Import de données (Excel/CSV)'},
-  {k:'users_manage',l:'Gérer les utilisateurs'},
-  {k:'settings_access',l:'Accès aux paramètres'}
+const PERM_GROUPS=[
+  {g:'Navigation & tableau de bord',items:[
+    {k:'dashboard',l:'Tableau de bord'},
+    {k:'dash_kpis_global',l:'Voir les chiffres de toute la société (sinon les siens)'},
+    {k:'planning_view',l:'Planning + carte'},
+    {k:'planning_view_all',l:'Voir le planning de tous'},
+    {k:'rdv_manage',l:'Créer / gérer les RDV'},
+    {k:'rappels_view',l:'Rappels'},
+  ]},
+  {g:'Leads & dossiers',items:[
+    {k:'leads_view',l:'Accès aux leads / dossiers'},
+    {k:'leads_view_all',l:'Voir TOUS les dossiers (sinon les siens)'},
+    {k:'leads_create',l:'Créer des leads'},
+    {k:'leads_edit',l:'Modifier les fiches'},
+    {k:'leads_delete',l:'Supprimer des dossiers'},
+    {k:'status_change',l:'Changer les statuts'},
+    {k:'sousstatut_view',l:'Voir et modifier les sous-statuts'},
+    {k:'clients_view',l:'Accès aux clients'},
+    {k:'sav_view',l:'Accès au SAV'},
+    {k:'import_data',l:'Import de données (Excel / CSV)'},
+    {k:'doublons_view',l:'Détection des doublons'},
+  ]},
+  {g:'Fiche dossier — panneaux',items:[
+    {k:'fiche_deal',l:'Panneau Deal (prime, délégataire, cumac)'},
+    {k:'fiche_compta',l:'Panneau Comptabilité du dossier'},
+    {k:'fiche_docs',l:'Pièces jointes'},
+    {k:'fiche_comments',l:'Commentaires'},
+    {k:'fiche_history',l:'Historique'},
+    {k:'docs_generate',l:'Générer des documents depuis les fiches'},
+    {k:'etude_technique',l:'Étude technique & PDF'},
+  ]},
+  {g:'Comptabilité',items:[
+    {k:'compta_global',l:'Accès au module Comptabilité'},
+    {k:'compta_resume',l:'Résumé global (marges, rentabilité)'},
+    {k:'compta_facturation',l:'Appels à facturation'},
+    {k:'compta_paiements',l:'Suivi des paiements'},
+    {k:'compta_delegataires',l:'Paiements délégataires'},
+    {k:'compta_tva_payer',l:'TVA à payer'},
+    {k:'compta_tva_recup',l:'TVA à récupérer'},
+    {k:'compta_historique',l:'Historique des factures'},
+    {k:'compta_apf_create',l:'Générer des APF'},
+    {k:'compta_apf_delete',l:'Supprimer des APF'},
+  ]},
+  {g:'Stock',items:[
+    {k:'stock_view',l:'Accès au module Stock'},
+    {k:'stock_etat',l:'État du stock'},
+    {k:'stock_mouvements',l:'Mouvements'},
+    {k:'stock_catalogue',l:'Catalogue matériels'},
+    {k:'stock_edit',l:'Créer / modifier / supprimer'},
+    {k:'stock_prix',l:'Voir les prix et la valeur du stock'},
+  ]},
+  {g:'Administration',items:[
+    {k:'docs_manage',l:'Modèles de documents'},
+    {k:'users_manage',l:'Gérer les utilisateurs'},
+    {k:'settings_access',l:'Accès aux paramètres'},
+    {k:'settings_societe',l:'Paramètres — Société & TVA'},
+    {k:'settings_operations',l:'Paramètres — Opérations & fiches CEE'},
+    {k:'settings_statuts',l:'Paramètres — Statuts'},
+    {k:'settings_partenaires',l:'Paramètres — Poseurs, sources, VT, auditeurs'},
+    {k:'settings_delegataires',l:'Paramètres — Délégataires & valorisations'},
+    {k:'activity_log',l:'Journal d\'activité & connexions'},
+  ]}
 ];
+const PERMS=PERM_GROUPS.flatMap(g=>g.items);
 const ROLES={superadmin:'Super Admin',admin:'Administrateur',manager:'Manager',confirmateur:'Confirmateur',commercial:'Commercial / Régie',telepro:'Téléprospecteur',poseur:'Poseur'};
 function rolePerms(role){
   const all={};PERMS.forEach(p=>all[p.k]=true);
   const none={};PERMS.forEach(p=>none[p.k]=false);
+  const base={...none,dashboard:true,leads_view:true,fiche_comments:true,fiche_history:true,fiche_docs:true};
   if(role==='superadmin'||role==='admin')return {...all};
-  if(role==='manager')return {...all,users_manage:false,settings_access:false};
-  if(role==='confirmateur')return {...none,dashboard:true,leads_view:true,status_change:true,planning_view:true,rdv_manage:true};
-  if(role==='commercial')return {...none,dashboard:true,leads_view:true,leads_create:true,leads_edit:true,status_change:true,clients_view:true,planning_view:true,rdv_manage:true};
-  if(role==='telepro')return {...none,dashboard:true,leads_view:true,leads_create:true,status_change:true,planning_view:true,rdv_manage:true};
+  if(role==='manager')return {...all,users_manage:false,settings_access:false,settings_societe:false,settings_operations:false,settings_statuts:false,settings_partenaires:false,settings_delegataires:false,docs_manage:false,compta_apf_delete:false};
+  if(role==='confirmateur')return {...base,status_change:true,planning_view:true,rdv_manage:true,rappels_view:true};
+  if(role==='commercial')return {...base,leads_create:true,leads_edit:true,status_change:true,clients_view:true,planning_view:true,rdv_manage:true,rappels_view:true,docs_generate:true};
+  if(role==='telepro')return {...base,leads_create:true,status_change:true,planning_view:true,rdv_manage:true,rappels_view:true};
   if(role==='poseur')return {...none,dashboard:true,clients_view:true,planning_view:true,rdv_manage:true,sav_view:true};
   return {...none};
 }
@@ -938,7 +984,15 @@ async function deleteFactureRemote(id){
   try{await SUPA.from('factures_agents').delete().eq('id',id);}
   catch(e){console.error('[facture] suppression échouée',e);toast('⚠️ Suppression Supabase échouée : '+e.message,'err');}
 }
-function can(p){if(p==='compta_global')return ME&&(ME.role==='superadmin'||ME.role==='admin');if(p==='docs_manage')return ME&&ME.role==='superadmin';if(p==='stock_view')return ME&&(ME.role==='superadmin'||ME.role==='admin');return ME&&(ME.role==='superadmin'||(ME.perms&&ME.perms[p]));}
+/* Complète les permissions d'un compte existant avec les nouvelles clés,
+   en reprenant la valeur par défaut de son rôle — évite toute perte d'accès. */
+function normalizePerms(perms,role){
+  const def=rolePerms(role||'telepro');
+  const out={};
+  PERMS.forEach(p=>{out[p.k]=(perms&&perms[p.k]!==undefined)?!!perms[p.k]:!!def[p.k];});
+  return out;
+}
+function can(p){return ME&&(ME.role==='superadmin'||(ME.perms&&ME.perms[p]===true));}
 async function doLogin(){
   const code=document.getElementById('loginCode').value.trim().toUpperCase();
   const pwd=document.getElementById('loginPwd').value;
@@ -951,7 +1005,7 @@ async function doLogin(){
   const{data:profile,error:profErr}=await SUPA.from('profiles').select('*').eq('id',data.user.id).single();
   if(profErr||!profile){console.error('[Supabase profile error]',profErr);errEl.textContent='Profil introuvable : '+(profErr?profErr.message:'aucune ligne')+' — contactez un administrateur';errEl.style.display='block';await SUPA.auth.signOut();return;}
   if(!profile.active){errEl.textContent='Ce compte est désactivé';errEl.style.display='block';await SUPA.auth.signOut();return;}
-  ME={id:profile.id,code:profile.code,prenom:profile.prenom,nom:profile.nom,email:profile.email,team:profile.team,role:profile.role,perms:profile.perms||{},active:profile.active,assignedUsers:profile.assigned_users||[],sourceId:profile.source_id||''};
+  ME={id:profile.id,code:profile.code,prenom:profile.prenom,nom:profile.nom,email:profile.email,team:profile.team,role:profile.role,perms:normalizePerms(profile.perms,profile.role),active:profile.active,assignedUsers:profile.assigned_users||[],sourceId:profile.source_id||''};
   startApp();
 }
 async function logout(){await SUPA.auth.signOut();ME=null;location.reload();}
@@ -1649,7 +1703,7 @@ const NAV=[
   {sec:'Principal'},
   {id:'dash',ic:'📊',label:'Tableau de bord',perm:'dashboard'},
   {id:'planning',ic:'📅',label:'Planning',perm:'planning_view'},
-  {id:'rappels',ic:'⏰',label:'Rappels',perm:'planning_view'},
+  {id:'rappels',ic:'⏰',label:'Rappels',perm:'rappels_view'},
   {id:'import',ic:'📥',label:'Import des leads',perm:'import_data'},
   {sec:'Leads & Clients'},
   {id:'leads',ic:'👥',label:'Leads',perm:'leads_view'},
@@ -2033,7 +2087,7 @@ function renderRecRows(mode,recs){
   if(LF.q){const q=LF.q.toLowerCase();f=f.filter(r=>{const nomSite=(r.opFields&&Object.values(r.opFields).join(' '))||r.nomSite||'';return(recName(r)+' '+(r.tel||'')+' '+(r.telFixe||'')+' '+(r.ville||'')+' '+(r.dossier||'')+' '+(r.email||'')+' '+(r.siret||'')+' '+nomSite).toLowerCase().includes(q);});}
   f.sort((a,b)=>(b.created||0)-(a.created||0));
   REC_LAST_LIST=f;
-  const isAdminCompta=ME&&(ME.role==='superadmin'||ME.role==='admin');
+  const isAdminCompta=can('fiche_deal');
   const RESTRICTED_COLS=['prime','delegataire'];
   const cols=getCols(mode).filter(c=>c.visible&&COLS[c.key]&&(isAdminCompta||!RESTRICTED_COLS.includes(c.key)||(c.key==='sousstatut'&&can('sousstatut_view'))));
   let h='';
@@ -2139,7 +2193,7 @@ function bulkAssign(){
 /* ---- export Leads / Clients (XLSX / XLS / CSV) ---- */
 let EXPORT_COLS=null;
 function openExportModal(){
-  const isAdminCompta=ME&&(ME.role==='superadmin'||ME.role==='admin');
+  const isAdminCompta=can('fiche_deal');
   const RESTRICTED_COLS=['prime','delegataire'];
   const availCols=getCols(REC_MODE).filter(c=>COLS[c.key]&&(isAdminCompta||!RESTRICTED_COLS.includes(c.key)||(c.key==='sousstatut'&&can('sousstatut_view'))));
   if(!availCols.length){toast('Aucune colonne disponible','err');return;}
@@ -2269,7 +2323,7 @@ function openColsModal(mode){
 }
 function renderColList(){
   const el=document.getElementById('colList');if(!el)return;
-  const isAdminCompta=ME&&(ME.role==='superadmin'||ME.role==='admin');
+  const isAdminCompta=can('fiche_deal');
   const RESTRICTED_COLS=['prime','delegataire'];
   const list=COLWORK.filter(c=>!RESTRICTED_COLS.includes(c.key)||isAdminCompta||(c.key==='sousstatut'&&can('sousstatut_view')));
   el.innerHTML='<div class="cfg-list">'+list.map((c)=>{const i=COLWORK.indexOf(c);return `<div class="cfg-item col-item" draggable="true" ondragstart="colDragStart(event,${i})" ondragover="event.preventDefault()" ondrop="colDrop(event,${i})"><span class="grip">⠿</span><label style="display:flex;align-items:center;gap:.55rem;flex:1;cursor:pointer;font-weight:600;color:var(--navy)"><input type="checkbox" ${c.visible?'checked':''} onchange="COLWORK[${i}].visible=this.checked" style="width:17px;height:17px;accent-color:var(--green-dark);cursor:pointer"> ${esc(COLS[c.key].label)}</label><span class="sp"><button class="iconbtn" onclick="colMove(${i},-1)" style="${i===0?'opacity:.3;pointer-events:none':''}">↑</button><button class="iconbtn" onclick="colMove(${i},1)" style="${i===COLWORK.length-1?'opacity:.3;pointer-events:none':''}">↓</button></span></div>`;}).join('')+'</div>';
@@ -2293,7 +2347,7 @@ async function openDossier(id){
     :'';
   document.getElementById('pageActions').innerHTML=`${locBtn}<button class="btn btn-ghost btn-sm" onclick="go(window._dossierBack||'leads')">← Retour à la liste</button>`;
   logActivity('view',`👁️ Consultation du dossier ${r.dossier||''} — ${recName(r)}`,id);
-  const isAdminCompta=ME&&(ME.role==='superadmin'||ME.role==='admin');
+  const isAdminCompta=can('fiche_deal')||can('fiche_compta');
   if(isAdminCompta){document.getElementById('content').innerHTML='<div class="empty"><div class="big">⏳</div>Chargement du dossier…</div>';await Promise.all([loadComptaFor(id),loadDealFor(id),loadEtudeFor(id)]);}
   renderDossier(r);
 }
@@ -2438,7 +2492,7 @@ function renderDossier(r){
   else cmts.forEach(c=>{comm+=`<div class="cmt"><div class="cmt-txt">${renderCommentText(c.text,c.mentions)}</div><div class="cmt-meta"><span>${esc(c.user||'')} · ${new Date(c.date).toLocaleString('fr-FR')}</span>${ME&&ME.role==='superadmin'?`<button class="iconbtn del" style="width:24px;height:24px;font-size:.7rem" onclick="delComment('${r.id}','${c.id}')">🗑️</button>`:''}</div></div>`;});
   comm+=`</div></div></div>`;
   // panneau DEAL (compact, placé en bas à côté des commentaires) — réservé Admin / Super Admin, comme la Comptabilité
-  const isAdminCompta=ME&&(ME.role==='superadmin'||ME.role==='admin');
+  const isAdminCompta=can('fiche_deal');
   const delegs=getDelegataires();const deal=dealOf(r);
   let dealP='';
   if(isAdminCompta){
@@ -2464,7 +2518,7 @@ function renderDossier(r){
     +`<button class="btn btn-ghost" onclick="openMailSend('${r.id}')">✉️ Envoyer un e-mail</button>`
     +(can('sav_view')?`<button class="btn btn-ghost" onclick="openSav()">🔧 Nouveau ticket SAV</button>`:'')
     +`</div>`;
-  const comptaP=isAdminCompta?renderComptaPanel(r):'';
+  const comptaP=can('fiche_compta')?renderComptaPanel(r):'';
   document.getElementById('content').innerHTML=acts+doublonBanner+zoneBadge+`<div class="grid2"><div>${coord}${opf}${docs}${docsGen}</div><div>${suivi}${rappelP}${rdvP}${hist}</div></div><div class="grid-bottom">${comm}${dealP}${comptaP}</div>`;
   dealRecalc();
 }
@@ -2955,7 +3009,9 @@ async function renderComptaGlobal(){
   renderComptaTabs();
 }
 function renderComptaTabs(){
-  const tabs=[['resume','Résumé global'],['facturation','Appels à facturation'],['paiements','Suivi des paiements'],['delegataires','Paiements délégataires'],['tva_payer','TVA à payer'],['tva_recup','TVA à récupérer'],['historique','Historique des factures']];
+  const tabs=[['resume','Résumé global','compta_resume'],['facturation','Appels à facturation','compta_facturation'],['paiements','Suivi des paiements','compta_paiements'],['delegataires','Paiements délégataires','compta_delegataires'],['tva_payer','TVA à payer','compta_tva_payer'],['tva_recup','TVA à récupérer','compta_tva_recup'],['historique','Historique des factures','compta_historique']].filter(t=>can(t[2]));
+  if(!tabs.length){document.getElementById('content').innerHTML=`<div class="empty"><div class="big">🔒</div>Aucun onglet de comptabilité ne vous est accessible.</div>`;return;}
+  if(!tabs.some(t=>t[0]===COMPTA_TAB))COMPTA_TAB=tabs[0][0];
   let h=`<div class="tabs">`+tabs.map(t=>`<button class="tab ${COMPTA_TAB===t[0]?'act':''}" onclick="COMPTA_TAB='${t[0]}';renderComptaTabs()">${t[1]}</button>`).join('')+`</div><div id="comptaBody"></div>`;
   document.getElementById('content').innerHTML=h;
   if(COMPTA_TAB==='resume')renderComptaResume();
@@ -3504,7 +3560,21 @@ function renderComptaDelegataires(){
   const myApfs=apfs.filter(a=>a.delegId===curDeleg).sort((a,b)=>(b.date||0)-(a.date||0));
   // IDs déjà affiliés
   const affilieIds=new Set(myApfs.flatMap(a=>a.recIds||[]));
-  const filtered=filtreNonAffilie?recs.filter(r=>!affilieIds.has(r.id)):recs;
+  let filtered=filtreNonAffilie?recs.filter(r=>!affilieIds.has(r.id)):recs;
+  // Recherche client / n° dossier + filtre par opération
+  const dq=load('egncrm_deleg_q','');
+  const dop=load('egncrm_deleg_op','');
+  const opsDispo=[...new Set(recs.map(r=>r.productId).filter(Boolean))]
+    .map(id=>getProducts().find(o=>o.id===id)).filter(Boolean)
+    .sort((a,b)=>a.name.localeCompare(b.name));
+  if(dop)filtered=filtered.filter(r=>r.productId===dop);
+  if(dq){
+    const q=dq.toLowerCase();
+    filtered=filtered.filter(r=>{
+      const site=r.opFields?Object.values(r.opFields).join(' '):'';
+      return [r.dossier,clientNameOf(r),r.ville,r.cp,r.siret,site].join(' ').toLowerCase().includes(q);
+    });
+  }
   // Stats
   const totPrime=filtered.reduce((s,r)=>s+(dealOf(r).prime||0),0);
   // Grouper par opération
@@ -3519,7 +3589,18 @@ function renderComptaDelegataires(){
   h+=`<div class="panel"><div class="panel-h"><h3>Dossiers valorisés — ${esc(deleg.name)}</h3>
     <div class="sp"><button class="btn btn-pri btn-sm" onclick="ouvrirCreerApfDeleg('${curDeleg}')">+ Créer un APF délégataire</button></div>
   </div><div class="panel-b">`;
-  if(!filtered.length)h+=`<div class="empty"><div class="big">📋</div>Aucun dossier à afficher.</div>`;
+  // Barre de recherche + filtre opération
+  const fs="font-family:'Saira',sans-serif;font-size:.8rem;border:1.5px solid var(--border-grey);border-radius:8px;padding:.35rem .65rem;background:#fff;outline:none";
+  h+=`<div style="display:flex;gap:.5rem;flex-wrap:wrap;align-items:center;margin-bottom:.8rem">
+    <input id="deleg_q" type="text" value="${esc(dq)}" placeholder="🔍 Rechercher un client, un n° de dossier, une ville…" oninput="setDelegSearch('q',this)" style="${fs};flex:1;min-width:200px">
+    <select onchange="setDelegSearch('op',this)" style="${fs}">
+      <option value="">Toutes les opérations</option>
+      ${opsDispo.map(o=>`<option value="${o.id}" ${dop===o.id?'selected':''}>${esc(o.name)}</option>`).join('')}
+    </select>
+    ${(dq||dop)?`<button class="btn btn-ghost btn-sm" style="font-size:.72rem" onclick="resetDelegSearch()">✕ Réinitialiser</button>`:''}
+    ${(dq||dop)?`<span class="muted" style="font-size:.75rem">${filtered.length} sur ${recs.length}</span>`:''}
+  </div>`;
+  if(!filtered.length)h+=`<div class="empty"><div class="big">🔍</div>Aucun dossier ne correspond${(dq||dop)?' à votre recherche':''}.</div>`;
   else{
     h+=`<div class="tbl-wrap"><table class="tbl">
       <thead><tr>
@@ -3601,6 +3682,18 @@ async function deleteApfDelegFile(apfId){
   save('egncrm_apf_deleg',apfs);
   toast('Document supprimé ✓','ok');renderComptaDelegataires();
 }
+let DELEG_Q_FOCUS=null;
+function setDelegSearch(key,el){
+  save(key==='q'?'egncrm_deleg_q':'egncrm_deleg_op',el.value);
+  DELEG_Q_FOCUS=(key==='q')?(el.selectionStart||0):null;
+  renderComptaDelegataires();
+  if(DELEG_Q_FOCUS!==null){
+    const i=document.getElementById('deleg_q');
+    if(i){i.focus();try{i.setSelectionRange(DELEG_Q_FOCUS,DELEG_Q_FOCUS);}catch(e){}}
+    DELEG_Q_FOCUS=null;
+  }
+}
+function resetDelegSearch(){save('egncrm_deleg_q','');save('egncrm_deleg_op','');renderComptaDelegataires();}
 function selectDelegTab(val){save('egncrm_deleg_tab_sel',val);renderComptaDelegataires();}
 function toggleDelegFilter(val){save('egncrm_deleg_tab_filter',val?'1':'0');renderComptaDelegataires();}
 function delegToggleAll(checked){document.querySelectorAll('.deleg_chk:not(:disabled)').forEach(c=>c.checked=checked);}
@@ -5069,7 +5162,42 @@ function roleOptions(sel){
   if(ME.role!=='superadmin')roles=roles.filter(r=>r!=='superadmin'&&r!=='admin');
   return roles.map(r=>`<option value="${r}" ${r===sel?'selected':''}>${ROLES[r]}</option>`).join('');
 }
-function permGrid(perms){return PERMS.map(p=>`<label class="perm-item"><input type="checkbox" data-perm="${p.k}" ${perms&&perms[p.k]?'checked':''}>${p.l}</label>`).join('');}
+function permGrid(perms){
+  const p=perms||{};
+  return PERM_GROUPS.map((g,gi)=>{
+    const nbOn=g.items.filter(it=>p[it.k]).length;
+    return `<div class="perm-group" data-group="${gi}" style="margin-bottom:.9rem">
+      <div style="display:flex;align-items:center;gap:.6rem;margin-bottom:.35rem;padding-bottom:.3rem;border-bottom:1px solid var(--border-grey)">
+        <span style="font-size:.72rem;font-weight:800;color:var(--navy);text-transform:uppercase;letter-spacing:.5px;flex:1">${esc(g.g)}</span>
+        <span class="muted" id="pg_count_${gi}" style="font-size:.68rem">${nbOn}/${g.items.length}</span>
+        <button type="button" class="btn btn-ghost btn-sm" style="font-size:.66rem;padding:.15rem .5rem" onclick="toggleGroupPerms(${gi},true)">Tout</button>
+        <button type="button" class="btn btn-ghost btn-sm" style="font-size:.66rem;padding:.15rem .5rem" onclick="toggleGroupPerms(${gi},false)">Aucun</button>
+      </div>
+      <div class="perm-grid">${g.items.map(it=>`<label class="perm-item"><input type="checkbox" data-perm="${it.k}" data-grp="${gi}" ${p[it.k]?'checked':''} onchange="updatePermCount(${gi})">${esc(it.l)}</label>`).join('')}</div>
+    </div>`;
+  }).join('');
+}
+function toggleGroupPerms(gi,val){
+  document.querySelectorAll(`#us_perms input[data-grp="${gi}"]`).forEach(c=>c.checked=val);
+  updatePermCount(gi);
+}
+function updatePermCount(gi){
+  const boxes=[...document.querySelectorAll(`#us_perms input[data-grp="${gi}"]`)];
+  const el=document.getElementById('pg_count_'+gi);
+  if(el)el.textContent=`${boxes.filter(b=>b.checked).length}/${boxes.length}`;
+}
+function setAllPerms(val){
+  document.querySelectorAll('#us_perms input[data-perm]').forEach(c=>c.checked=val);
+  PERM_GROUPS.forEach((g,gi)=>updatePermCount(gi));
+}
+function applyRolePreset(){
+  const role=(document.getElementById('us_role')||{}).value;
+  if(!role)return;
+  const preset=rolePerms(role);
+  document.querySelectorAll('#us_perms input[data-perm]').forEach(c=>{c.checked=!!preset[c.dataset.perm];});
+  PERM_GROUPS.forEach((g,gi)=>updatePermCount(gi));
+  toast('Droits réinitialisés selon le rôle « '+(ROLES[role]||role)+' »','ok');
+}
 function openUser(id){
   const u=id?userById(id):null;
   if(u&&u.role==='superadmin'&&ME.role!=='superadmin'){toast('Seul un Super Admin peut modifier ce compte','err');return;}
@@ -5102,13 +5230,18 @@ function openUser(id){
   <p class="muted" style="margin-bottom:.5rem">Pour un <b>confirmateur</b> : choisissez les commerciaux / télépros dont il pourra voir et confirmer les rendez-vous. Vide = l'utilisateur ne voit que ses propres RDV (sauf si ses permissions lui donnent accès à tout).</p>
   <div class="fld"><label>Ajouter un accès</label><select id="us_assign_pick" onchange="addAssign(this.value)"></select></div>
   <div id="us_assign_chips" class="flex" style="flex-wrap:wrap;gap:.4rem;margin-top:.55rem"></div>
-  <div class="sectitle">Permissions <span style="font-weight:500;text-transform:none;letter-spacing:0;color:var(--text-mut)">(ajustées automatiquement selon le rôle)</span></div>
-  <div class="perm-grid" id="us_perms">${permGrid(d.perms||rolePerms(d.role))}</div>`;
+  <div class="sectitle" style="display:flex;align-items:center;gap:.6rem;flex-wrap:wrap">
+    <span style="flex:1">Permissions <span style="font-weight:500;text-transform:none;letter-spacing:0;color:var(--text-mut)">(cochez précisément ce que cet utilisateur peut voir)</span></span>
+    <button type="button" class="btn btn-ghost btn-sm" style="font-size:.68rem" onclick="applyRolePreset()">↺ Modèle du rôle</button>
+    <button type="button" class="btn btn-ghost btn-sm" style="font-size:.68rem" onclick="setAllPerms(true)">Tout cocher</button>
+    <button type="button" class="btn btn-ghost btn-sm" style="font-size:.68rem" onclick="setAllPerms(false)">Tout décocher</button>
+  </div>
+  <div id="us_perms">${permGrid(normalizePerms(d.perms,d.role))}</div>`;
   openModal(id?"Modifier l'utilisateur":'Nouvel utilisateur',body,`<button class="btn btn-ghost" onclick="closeModal()">Annuler</button><button class="btn btn-pri" onclick="saveUser()">💾 Enregistrer</button>`,'wide');
   renderAssignChips();
   if(!id&&!d.code)genCode();
 }
-function applyRolePerms(role){const p=rolePerms(role);document.querySelectorAll('#us_perms input[data-perm]').forEach(cb=>{cb.checked=!!p[cb.dataset.perm];});}
+function applyRolePerms(role){const p=rolePerms(role);document.querySelectorAll('#us_perms input[data-perm]').forEach(cb=>{cb.checked=!!p[cb.dataset.perm];});PERM_GROUPS.forEach((g,gi)=>updatePermCount(gi));}
 function toggleFamilyField(role){
   const w=document.getElementById('us_family_wrap');if(w)w.style.display=role==='poseur'?'':'none';
   const ws=document.getElementById('us_source_wrap');if(ws)ws.style.display=role==='commercial'?'':'none';
@@ -5239,7 +5372,9 @@ async function renderStock(){
     document.getElementById('content').innerHTML='<div class="empty"><div class="big">⏳</div>Chargement du stock…</div>';
     STOCK_LOADED=true;
   }
-  const tabs=[['etat','État du stock'],['mouvements','Mouvements'],['catalogue','Catalogue matériels']];
+  const tabs=[['etat','État du stock','stock_etat'],['mouvements','Mouvements','stock_mouvements'],['catalogue','Catalogue matériels','stock_catalogue']].filter(t=>can(t[2]));
+  if(!tabs.length){document.getElementById('content').innerHTML=`<div class="empty"><div class="big">🔒</div>Aucun onglet du stock ne vous est accessible.</div>`;return;}
+  if(!tabs.some(t=>t[0]===STOCK_TAB))STOCK_TAB=tabs[0][0];
   let h=`<div class="tabs">`+tabs.map(t=>`<button class="tab ${STOCK_TAB===t[0]?'act':''}" onclick="STOCK_TAB='${t[0]}';renderStock()">${t[1]}</button>`).join('')+`</div><div id="stockBody"></div>`;
   document.getElementById('content').innerHTML=h;
   if(STOCK_TAB==='etat')renderStockEtat();
@@ -5571,7 +5706,7 @@ function renderStockMouvements(){
   const sensLabels={entree:'📥 Entrée',sortie:'📤 Sortie',commande:'🛒 Commande',reception:'✅ Réception',localisation:'📍 Localisation'};
   const sensBg={entree:'background:#E6F7F0;color:#0F6E56',sortie:'background:#FFF4E5;color:#B96A0A',commande:'background:#E8F0FE;color:#1A5FD4',reception:'background:#EFF7E8;color:#3D7A1E',localisation:'background:#EFE9FC;color:#5B3AAA'};
   let h=`<div style="display:flex;justify-content:flex-end;margin-bottom:.7rem">
-    <button class="btn btn-pri btn-sm" onclick="openMvtModal()">+ Nouveau mouvement</button>
+    ${can('stock_edit')?`<button class="btn btn-pri btn-sm" onclick="openMvtModal()">+ Nouveau mouvement</button>`:''}
   </div>`;
   if(!mvts.length){h+=`<div class="empty"><div class="big">📋</div>Aucun mouvement enregistré.</div>`;document.getElementById('stockBody').innerHTML=h;return;}
   h+=stockFilterBar('mvt');
@@ -5629,7 +5764,7 @@ function renderStockMouvements(){
 /* ---- CATALOGUE ---- */
 function renderStockCatalogue(){
   const mats=getMats();
-  let h=`<div style="display:flex;justify-content:flex-end;margin-bottom:.7rem"><button class="btn btn-pri btn-sm" onclick="openMatModal()">+ Nouveau matériel</button></div>`;
+  let h=`<div style="display:flex;justify-content:flex-end;margin-bottom:.7rem">${can('stock_edit')?`<button class="btn btn-pri btn-sm" onclick="openMatModal()">+ Nouveau matériel</button>`:''}</div>`;
   if(!mats.length){h+=`<div class="empty"><div class="big">📦</div>Aucun matériel. Cliquez sur "+ Nouveau matériel".</div>`;document.getElementById('stockBody').innerHTML=h;return;}
   h+=stockFilterBar('cat');
   const matsF=filterMats(mats,'cat');
@@ -6038,7 +6173,24 @@ function exportStockCSV(){
 }
 
 function renderSettings(){
-  const tabs=[['statuts','Statuts'],['operations','Opérations'],['produits','Produits'],['delegataires','Délégataires'],['sources','Sources / Régies'],['vt','Visite technique'],['poseurs','Poseur'],['auditeurs','Auditeur'],['equipes','Équipes'],['documents','Types de docs'],['mails','Modèles e-mail'],['coefsu','Coefficients U'],['pac','Solutions PAC'],['societe','Société']];
+  const tabs=[
+    ['statuts','Statuts','settings_statuts'],
+    ['operations','Opérations','settings_operations'],
+    ['produits','Produits','settings_operations'],
+    ['delegataires','Délégataires','settings_delegataires'],
+    ['sources','Sources / Régies','settings_partenaires'],
+    ['vt','Visite technique','settings_partenaires'],
+    ['poseurs','Poseur','settings_partenaires'],
+    ['auditeurs','Auditeur','settings_partenaires'],
+    ['equipes','Équipes','settings_partenaires'],
+    ['documents','Types de docs','settings_operations'],
+    ['mails','Modèles e-mail','settings_operations'],
+    ['coefsu','Coefficients U','settings_operations'],
+    ['pac','Solutions PAC','settings_operations'],
+    ['societe','Société','settings_societe']
+  ].filter(t=>can(t[2]));
+  if(!tabs.length){document.getElementById('content').innerHTML=`<div class="empty"><div class="big">🔒</div>Aucun onglet de paramètres ne vous est accessible.</div>`;document.getElementById('pageActions').innerHTML='';return;}
+  if(!tabs.some(t=>t[0]===SETTAB))SETTAB=tabs[0][0];
   let h=`<div class="tabs">`+tabs.map(t=>`<button class="tab ${SETTAB===t[0]?'act':''}" onclick="SETTAB='${t[0]}';renderSettings()">${t[1]}</button>`).join('')+`</div><div id="setBody"></div>`;
   document.getElementById('content').innerHTML=h;
   document.getElementById('pageActions').innerHTML='';
@@ -7517,7 +7669,7 @@ injectLogos();
   if(session){
     const{data:profile}=await SUPA.from('profiles').select('*').eq('id',session.user.id).single();
     if(profile&&profile.active){
-      ME={id:profile.id,code:profile.code,prenom:profile.prenom,nom:profile.nom,email:profile.email,team:profile.team,role:profile.role,perms:profile.perms||{},active:profile.active,assignedUsers:profile.assigned_users||[],sourceId:profile.source_id||''};
+      ME={id:profile.id,code:profile.code,prenom:profile.prenom,nom:profile.nom,email:profile.email,team:profile.team,role:profile.role,perms:normalizePerms(profile.perms,profile.role),active:profile.active,assignedUsers:profile.assigned_users||[],sourceId:profile.source_id||''};
       startApp();return;
     }
     await SUPA.auth.signOut();
