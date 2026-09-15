@@ -6563,29 +6563,73 @@ function openLocModal(matId){
   const mvts=getMvts();
   const locaux=mvts.filter(v=>v.materielId===matId&&v.sens==='localisation').sort((a,b)=>(b.date||0)-(a.date||0));
   const curLoc=locaux[0];
-  const body=`<div style="background:#EFF7E8;border-radius:9px;padding:.7rem 1rem;margin-bottom:.8rem;font-size:.82rem">
-    📍 <b>Actuellement :</b> ${curLoc?esc(curLoc.lieu||'—')+' — '+new Date(curLoc.date).toLocaleDateString('fr-FR'):'Non localisé'}
+  const stockTotal=mvts.filter(v=>v.materielId===matId&&v.sens==='entree').reduce((s,v)=>s+(v.qte||0),0);
+  // Dossiers proposables : ceux du segment, filtrés sur l'opération du matériel si elle est définie
+  const dossiers=segRecs()
+    .filter(r=>!mat.operationId||r.productId===mat.operationId)
+    .sort((a,b)=>(b.updated||b.created||0)-(a.updated||a.created||0));
+  const opts=dossiers.map(r=>{
+    const st=statById(r.statusId);
+    return `<option value="${r.id}" ${curLoc&&curLoc.dossierId===r.id?'selected':''}>${esc(r.dossier||'—')} — ${esc(clientNameOf(r))}${r.ville?' ('+esc(r.ville)+')':''}${st?' · '+esc(st.name):''}</option>`;
+  }).join('');
+  const body=`<div style="background:${curLoc?'#EFF7E8':'#EEF1F4'};border-radius:9px;padding:.7rem 1rem;margin-bottom:.9rem;font-size:.82rem">
+    📍 <b>Actuellement :</b> ${curLoc?esc(curLoc.lieu||'—')+' <span style="color:#6b7785">depuis le '+new Date(curLoc.date).toLocaleDateString('fr-FR')+'</span>':'<span style="color:#6b7785">Non localisé</span>'}
   </div>
   <div class="fgrid">
-    <div class="fld" style="grid-column:1/-1"><label>Nouveau dossier (N°) ou lieu</label><input id="loc_dossier" placeholder="N° dossier ou nom du lieu"></div>
-    <div class="fld"><label>Quantité</label><input id="loc_qte" type="number" value="${mat?mvts.filter(v=>v.materielId===matId&&v.sens==='entree').reduce((s,v)=>s+(v.qte||0),0):1}"></div>
-    <div class="fld"><label>Date</label><input id="loc_date" type="date" value="${new Date().toISOString().slice(0,10)}"></div>
-    <div class="fld" style="grid-column:1/-1"><label>Notes</label><input id="loc_notes" placeholder="Notes complémentaires"></div>
+    <div class="fld" style="grid-column:1/-1"><label>Destination</label>
+      <select id="loc_type" onchange="toggleLocType()">
+        <option value="dossier">📁 Sur un chantier (dossier client)</option>
+        <option value="depot">🏬 Retour au dépôt / autre lieu</option>
+      </select>
+    </div>
+    <div class="fld" id="loc_dossier_wrap" style="grid-column:1/-1">
+      <label>Dossier ${mat.operationId?`<span class="muted" style="font-size:.62rem;text-transform:none;letter-spacing:0">— ${esc(mat.operation||'')}</span>`:''}</label>
+      <input id="loc_search" type="text" placeholder="🔍 Filtrer par client, n° de dossier, ville…" oninput="filterLocDossiers(this.value)" style="font-family:'Saira',sans-serif;font-size:.82rem;border:1.5px solid var(--border-grey);border-radius:9px;padding:.42rem .7rem;margin-bottom:.35rem;outline:none">
+      <select id="loc_dossier" size="6" style="height:auto;font-family:'Saira',sans-serif;font-size:.82rem;border:1.5px solid var(--border-grey);border-radius:9px;padding:.3rem;outline:none">
+        ${opts||'<option value="" disabled>Aucun dossier disponible pour cette opération</option>'}
+      </select>
+      <span class="muted" style="font-size:.68rem;margin-top:.2rem">${dossiers.length} dossier${dossiers.length>1?'s':''} — cliquez pour sélectionner</span>
+    </div>
+    <div class="fld" id="loc_depot_wrap" style="grid-column:1/-1;display:none"><label>Lieu</label><input id="loc_lieu" placeholder="Ex : Dépôt Saint-Denis, atelier…"></div>
+    <div class="fld"><label>Quantité déplacée</label><input id="loc_qte" type="number" min="1" value="${stockTotal||1}"></div>
+    <div class="fld"><label>Date du déplacement</label><input id="loc_date" type="date" value="${new Date().toISOString().slice(0,10)}"></div>
+    <div class="fld" style="grid-column:1/-1"><label>Notes</label><input id="loc_notes" placeholder="Ex : chantier terminé, récupéré le…"></div>
   </div>`;
   openModal('📍 Localisation — '+esc(mat.nom),body,
-    `<button class="btn btn-ghost" onclick="closeModal()">Annuler</button><button class="btn btn-pri" onclick="saveLoc('${matId}')">📍 Enregistrer</button>`);
+    `<button class="btn btn-ghost" onclick="closeModal()">Annuler</button><button class="btn btn-pri" onclick="saveLoc('${matId}')">📍 Enregistrer</button>`,'wide');
+}
+function toggleLocType(){
+  const t=(document.getElementById('loc_type')||{}).value;
+  const d=document.getElementById('loc_dossier_wrap'),p=document.getElementById('loc_depot_wrap');
+  if(d)d.style.display=t==='dossier'?'':'none';
+  if(p)p.style.display=t==='depot'?'':'none';
+}
+function filterLocDossiers(q){
+  const sel=document.getElementById('loc_dossier');if(!sel)return;
+  const s=(q||'').toLowerCase();
+  [...sel.options].forEach(o=>{o.style.display=!s||o.textContent.toLowerCase().includes(s)?'':'none';});
 }
 function saveLoc(matId){
-  const dossierNum=((document.getElementById('loc_dossier')||{}).value||'').trim();
+  const type=(document.getElementById('loc_type')||{}).value||'dossier';
   const qte=parseInt((document.getElementById('loc_qte')||{}).value||1)||1;
   const notes=((document.getElementById('loc_notes')||{}).value||'').trim();
-  const r=dossierNum?getRecs().find(x=>x.dossier===dossierNum):null;
-  const lieu=r?clientNameOf(r)+' ('+esc(r.dossier||'')+')':(dossierNum||'—');
+  const dateStr=(document.getElementById('loc_date')||{}).value;
+  const ts=dateStr?new Date(dateStr+'T12:00:00').getTime():Date.now();
+  let r=null,lieu='';
+  if(type==='dossier'){
+    const recId=(document.getElementById('loc_dossier')||{}).value;
+    if(!recId){toast('Sélectionnez un dossier dans la liste','err');return;}
+    r=recById(recId);if(!r){toast('Dossier introuvable','err');return;}
+    lieu=clientNameOf(r)+' ('+(r.dossier||'')+')';
+  } else {
+    lieu=((document.getElementById('loc_lieu')||{}).value||'').trim();
+    if(!lieu){toast('Indiquez le lieu','err');return;}
+  }
   const mvts=getMvts();
-  mvts.push({id:uid(),materielId:matId,sens:'localisation',qte,date:Date.now(),
+  mvts.push({id:uid(),materielId:matId,sens:'localisation',qte,date:ts,
     dossierId:r?r.id:null,lieu,notes,user:ME.prenom});
   save('egncrm_stock_mvt',mergeSeg(getAllMvts(),mvts));
-  closeModal();renderStock();toast('Localisation enregistrée ✓','ok');
+  closeModal();renderStock();toast('📍 '+lieu,'ok');
 }
 
 function exportStockCSV(){
