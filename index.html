@@ -1445,7 +1445,7 @@ async function removeEtudePhoto(recId,key){
 }
 async function etudePhotoThumbUrl(path){
   if(!path)return '';
-  try{const{data}=SUPA.storage.from(ATTACH_BUCKET).getPublicUrl(path);return data.publicUrl;}
+  try{return await signedUrl(path);}
   catch(e){console.error('[etudePhotoThumbUrl]',e);return '';}
 }
 function etudePhotoFieldHtml(recId,key,path){
@@ -3757,7 +3757,7 @@ function renderComptaPaiements(){
       :`<input type="text" value="${esc(p.facRef||'')}" placeholder="FAC-2026-…" onchange="savePaiementApf('${f.id}','facRef',this.value)" style="font-family:'Saira',sans-serif;font-size:.78rem;border:1.5px solid var(--border-grey);border-radius:7px;padding:3px 7px;width:100%;outline:none">`;
     // PJ — verrouillée après validate
     const pjCell=p.fileUrl
-      ?`<div style="display:flex;align-items:center;gap:.3rem"><a href="${p.fileUrl}" target="_blank" style="font-size:.72rem;color:var(--blue);font-weight:600;text-decoration:none">📎 ${esc(p.fileName||'Voir')}</a>${!locked?`<button class="iconbtn del" style="font-size:.65rem;padding:1px 3px" onclick="deletePaiementApfFile('${f.id}')">✕</button>`:''}</div>`
+      ?`<div style="display:flex;align-items:center;gap:.3rem">${attachLink(p.filePath,p.fileName||'Voir',p.fileUrl)}${!locked?`<button class="iconbtn del" style="font-size:.65rem;padding:1px 3px" onclick="deletePaiementApfFile('${f.id}')">✕</button>`:''}</div>`
       :locked?`<span class="muted" style="font-size:.72rem">—</span>`
       :`<label style="cursor:pointer;display:inline-flex;align-items:center;gap:.2rem;font-size:.72rem;font-weight:600;color:var(--blue)"><input type="file" accept=".pdf,image/*" style="display:none" onchange="uploadPaiementApfFile('${f.id}',this)">📎 Joindre</label>`;
     // Bouton valider/rouvrir + supprimer
@@ -3842,7 +3842,7 @@ async function uploadPaiementApfFile(factureId,input){
     const path=`paiements/${factureId}/${fid}.${ext}`;
     const{error:upErr}=await SUPA.storage.from('attachments').upload(path,file,{cacheControl:'3600',upsert:false});
     if(upErr)throw upErr;
-    const{data:pub}=SUPA.storage.from('attachments').getPublicUrl(path);
+    const pub={publicUrl:''}; // bucket prive : l'URL est signee a l'ouverture
     const f=FACTURES_CACHE&&FACTURES_CACHE.find(x=>x.id===factureId);if(!f)return;
     f.paiements=f.paiements||{};
     f.paiements.fileUrl=pub.publicUrl;f.paiements.filePath=path;f.paiements.fileName=file.name;
@@ -4008,7 +4008,7 @@ function renderComptaDelegataires(){
         <option value="recu" ${a.statut==='recu'?'selected':''}>✅ Virement reçu</option>
       </select>`;
       const pjCell=a.fileUrl
-        ?`<div style="display:flex;align-items:center;gap:.3rem"><a href="${a.fileUrl}" target="_blank" style="font-size:.72rem;color:var(--blue);font-weight:600;text-decoration:none">📎 ${esc(a.fileName||'Voir')}</a><button class="iconbtn del" style="font-size:.65rem;padding:1px 3px" onclick="deleteApfDelegFile('${a.id}')" title="Supprimer">✕</button></div>`
+        ?`<div style="display:flex;align-items:center;gap:.3rem">${attachLink(a.filePath,a.fileName||'Voir',a.fileUrl)}<button class="iconbtn del" style="font-size:.65rem;padding:1px 3px" onclick="deleteApfDelegFile('${a.id}')" title="Supprimer">✕</button></div>`
         :`<label style="cursor:pointer;display:inline-flex;align-items:center;gap:.2rem;font-size:.72rem;font-weight:600;color:var(--blue)"><input type="file" accept=".pdf,image/*" style="display:none" onchange="uploadApfDelegFile('${a.id}',this)">📎 Joindre</label>`;
       h+=`<tr>
         <td><span class="dossier-tag">${esc(a.numApf||'—')}</span></td>
@@ -4033,7 +4033,7 @@ async function uploadApfDelegFile(apfId,input){
     const path=`apf_deleg/${apfId}/${fid}.${ext}`;
     const{error}=await SUPA.storage.from('attachments').upload(path,file,{cacheControl:'3600',upsert:false});
     if(error)throw error;
-    const{data:pub}=SUPA.storage.from('attachments').getPublicUrl(path);
+    const pub={publicUrl:''}; // bucket prive : l'URL est signee a l'ouverture
     const apfs=load('egncrm_apf_deleg',[]);
     const a=apfs.find(x=>x.id===apfId);if(!a)return;
     a.fileUrl=pub.publicUrl;a.filePath=path;a.fileName=file.name;
@@ -4217,7 +4217,7 @@ function renderComptaFournisseurs(){
       <td style="text-align:right">${eur(ht)}</td>
       <td style="text-align:right;color:var(--text-mut)">${eur(ht*tva/100)}</td>
       <td style="text-align:right;font-weight:800">${eur(ttcOf(ht))}</td>
-      <td>${v.factureUrl?`<a href="${v.factureUrl}" target="_blank" style="font-size:.72rem;color:var(--blue);font-weight:600;text-decoration:none">📄 Voir</a>`:`<span style="font-size:.68rem;color:var(--coral);font-weight:700">⚠️ Manquante</span>`}</td>
+      <td>${v.factureUrl?`${attachLink(v.facturePath,'Voir',v.factureUrl)}`:`<span style="font-size:.68rem;color:var(--coral);font-weight:700">⚠️ Manquante</span>`}</td>
       <td><input type="text" value="${esc(p.ref||'')}" placeholder="Virement, chèque…" onchange="saveFournPaiement('${v.id}','ref',this.value)" style="font-family:'Saira',sans-serif;font-size:.76rem;border:1.5px solid var(--border-grey);border-radius:7px;padding:3px 7px;width:100%;outline:none"></td>
       <td><input type="date" value="${esc(p.date||'')}" onchange="saveFournPaiement('${v.id}','date',this.value)" style="font-family:'Saira',sans-serif;font-size:.76rem;border:1.5px solid var(--border-grey);border-radius:7px;padding:3px 5px;width:100%;outline:none"></td>
       <td><select onchange="saveFournPaiement('${v.id}','statut',this.value)" style="font-family:'Saira',sans-serif;font-size:.74rem;font-weight:700;border:none;border-radius:7px;padding:3px 7px;cursor:pointer;width:100%;${paye?'background:#E6F7F0;color:#0F6E56':'background:#FFF4E5;color:#B96A0A'}">
@@ -4493,6 +4493,39 @@ async function testWhatsApp(){
     ?`<div style="background:#EFF7E8;border:1.5px solid var(--green);border-radius:9px;padding:.6rem .9rem;font-size:.82rem"><b>✅ Message envoyé</b> — vérifiez le téléphone ${esc(normWaNumber(num))}.</div>`
     :`<div style="background:#FEE8E8;border:1.5px solid var(--coral);border-radius:9px;padding:.6rem .9rem;font-size:.82rem"><b>⛔ Échec</b><div class="muted" style="font-size:.76rem;margin-top:.2rem">${esc(res.error||'La fonction send-whatsapp est-elle déployée sur Supabase ?')}</div></div>`;
 }
+/* ============================================================
+   PIECES JOINTES — bucket prive, URLs signees a la demande
+   Une URL signee expire : on la genere au moment du clic plutot
+   que de la stocker, ce qui evite tout lien permanent en clair.
+   ============================================================ */
+async function signedUrl(path,secondes){
+  if(!path)return '';
+  try{
+    const{data,error}=await SUPA.storage.from(ATTACH_BUCKET).createSignedUrl(path,secondes||3600);
+    if(error)throw error;
+    return data.signedUrl;
+  }catch(e){console.error('[signedUrl]',path,e);return '';}
+}
+/* Ouvre une piece jointe dans un nouvel onglet */
+async function openAttachment(path,fallbackUrl){
+  if(!path&&fallbackUrl){window.open(fallbackUrl,'_blank');return;}
+  const w=window.open('','_blank'); // ouvert immediatement, sinon le navigateur bloque
+  if(w)w.document.write('<p style="font-family:sans-serif;padding:2rem">Ouverture du document…</p>');
+  const url=await signedUrl(path);
+  if(!url){
+    if(w)w.close();
+    toast('Document introuvable ou acces refuse','err');
+    return;
+  }
+  if(w)w.location.href=url;else window.open(url,'_blank');
+}
+/* Lien cliquable vers une piece jointe */
+function attachLink(path,libelle,url){
+  const txt=esc(libelle||'Voir');
+  if(!path&&!url)return '<span class="muted" style="font-size:.72rem">—</span>';
+  return `<a href="javascript:void(0)" onclick="openAttachment('${esc(path||'')}','${esc(url||'')}')" style="font-size:.72rem;color:var(--blue);font-weight:600;text-decoration:none">📎 ${txt}</a>`;
+}
+
 /* ============================================================
    NOTIFICATIONS WHATSAPP
    Le jeton d'API reste côté Supabase : le CRM appelle une Edge
@@ -4912,9 +4945,9 @@ async function viewDoc(fid,recId){
     const r=recId?recById(recId):null;
     const doc=r?(r.docs||[]).find(d=>d.id===fid):null;
     if(doc&&doc.path){
-      const{data}=SUPA.storage.from(ATTACH_BUCKET).getPublicUrl(doc.path);const error=null;
-      if(error)throw error;
-      window.open(data.signedUrl,'_blank');
+      const url=await signedUrl(doc.path);
+      if(!url){toast('Accès au document refusé','err');return;}
+      window.open(url,'_blank');
       return;
     }
     // secours : ancien fichier stocké localement avant l'étape 4 -> on l'ouvre et on le migre vers Supabase au passage
@@ -6407,7 +6440,7 @@ function renderStockMouvements(){
       <td style="text-align:right;font-weight:700;color:var(--green-deep)">${v.tvaRecup?eur(v.tvaRecup):'<span class="muted">—</span>'}</td>
       <td>${r?`<span class="dossier-tag" style="cursor:pointer" onclick="openDossier('${r.id}')">${esc(r.dossier||'—')}</span><div class="muted" style="font-size:.7rem">${esc(clientNameOf(r))}</div>`:`<span class="muted">${esc(v.lieu||'—')}</span>`}</td>
       <td class="muted" style="font-size:.75rem">${esc(v.notes||'')}</td>
-      <td>${v.factureUrl?`<a href="${v.factureUrl}" target="_blank" style="font-size:.72rem;color:var(--blue);font-weight:600;text-decoration:none">📄 ${esc(v.factureNom||'Facture')}</a>`:'<span class="muted" style="font-size:.72rem">—</span>'}</td>
+      <td>${v.factureUrl?`${attachLink(v.facturePath,v.factureNom||'Facture',v.factureUrl)}`:'<span class="muted" style="font-size:.72rem">—</span>'}</td>
       <td><div style="display:flex;gap:.3rem"><button class="iconbtn" onclick="editMvt('${v.id}')" title="Modifier">✏️</button><button class="iconbtn del" onclick="supprimerMvt('${v.id}')">🗑️</button></div></td>
     </tr>`;
   });
@@ -6711,7 +6744,7 @@ async function saveMvt(){
       const path=`stock_factures/${mvtId}.${ext}`;
       const{error}=await SUPA.storage.from('attachments').upload(path,file,{cacheControl:'3600',upsert:false});
       if(error)throw error;
-      const{data:pub}=SUPA.storage.from('attachments').getPublicUrl(path);
+      const pub={publicUrl:''}; // bucket prive : l'URL est signee a l'ouverture
       const idx=getMvts().findIndex(v=>v.id===mvtId);
       if(idx>=0){const mvts2=getMvts();mvts2[idx].factureUrl=pub.publicUrl;mvts2[idx].facturePath=path;mvts2[idx].factureNom=file.name;save('egncrm_stock_mvt',mvts2);}
       toast('Facture jointe ✓','ok');
@@ -6766,7 +6799,7 @@ function editMvt(id){
     <div id="mvt_lieu_block" class="fld" style="${v.sens==='localisation'?'':'display:none'}"><label>Localisation / Lieu</label><input id="mvt_lieu" value="${esc(v.lieu||'')}"></div>
     <div class="fld" style="grid-column:1/-1"><label>Notes</label><input id="mvt_notes" value="${esc(v.notes||'')}"></div>
     <div id="mvt_facture_block" class="fld" style="grid-column:1/-1;${isEntree?'':'display:none'}"><label>📄 Facture fournisseur</label>
-      <div style="font-size:.82rem;margin-bottom:.3rem">${v.factureUrl?`<a href="${v.factureUrl}" target="_blank" style="color:var(--blue);font-weight:600;text-decoration:none">📄 ${esc(v.factureNom||'Voir la facture')}</a> <span class="muted">— remplacer :</span>`:'Aucune facture jointe'}</div>
+      <div style="font-size:.82rem;margin-bottom:.3rem">${v.factureUrl?`${attachLink(v.facturePath,v.factureNom||'Voir la facture',v.factureUrl)} <span class="muted">— remplacer :</span>`:'Aucune facture jointe'}</div>
       <input type="file" id="mvt_facture_file" accept=".pdf,image/*" style="font-size:.8rem">
     </div>
   </div>`;
