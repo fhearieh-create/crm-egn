@@ -2131,7 +2131,9 @@ async function renderDashGlobal(){
                  vt:Object.keys(T.byVt).filter(k=>k!==T.NONE_KEY).length,
                  auditeur:Object.keys(T.byAud).filter(k=>k!==T.NONE_KEY).length};
     const sousTexte=k=>aVerser[k]>0?`${nbFam[k]} intervenant${nbFam[k]>1?'s':''} concerné${nbFam[k]>1?'s':''}`:'Rien à verser';
-    h+=`<div class="sectitle">Comptabilité</div><div class="kpis">`;
+    h+=`<div class="sectitle">Comptabilité</div>`;
+    h+=opFilterBar('renderDashGlobal');
+    h+=`<div class="kpis">`;
     h+=gCard({ic:'💶',lab:'Recettes',val:eur(recettes),sub:`${cRecs.length} dossier${cRecs.length>1?'s':''} chiffré${cRecs.length>1?'s':''}`,go:"dashGo('compta',{comptaTab:'resume'})"});
     h+=gCard({ic:'📤',lab:'Charges',val:eur(charges),sub:'poseurs, call center, VT, audits',go:"dashGo('compta',{comptaTab:'resume'})"});
     h+=gCard({ic:'📈',lab:'Marge nette',val:eur(marge),sub:recettes?margePct.toFixed(1)+'% de marge':'',accent:true,go:"dashGo('compta',{comptaTab:'resume'})"});
@@ -3346,9 +3348,29 @@ function openNonAssignes(label,recIds){
   openModal('⚠️ '+esc(label),b,`<button class="btn btn-ghost" onclick="closeModal()">Fermer</button>`,'wide');
 }
 /* Agrégation comptable unique — utilisée par le résumé ET le Dashboard Coco */
+/* Filtre par opération, partagé par le résumé comptable et le Dashboard Coco */
+let COMPTA_OP='';
+function setComptaOp(v,cb){COMPTA_OP=v;if(cb&&typeof window[cb]==='function')window[cb]();}
+function opFilterBar(cb){
+  const dispo=[...new Set(segRecs().filter(hasComptaData).map(r=>r.productId).filter(Boolean))]
+    .map(id=>getAllProducts().find(o=>o.id===id)).filter(Boolean)
+    .sort((a,b)=>a.name.localeCompare(b.name));
+  if(!dispo.length)return '';
+  if(COMPTA_OP&&!dispo.some(o=>o.id===COMPTA_OP))COMPTA_OP='';
+  const fs="font-family:'Saira',sans-serif;font-size:.8rem;border:1.5px solid var(--border-grey);border-radius:8px;padding:.35rem .7rem;background:#fff;outline:none;font-weight:700";
+  return `<div style="display:flex;gap:.5rem;align-items:center;flex-wrap:wrap;margin-bottom:.9rem">
+    <span style="font-size:.7rem;font-weight:700;color:var(--text-mut);text-transform:uppercase;letter-spacing:.5px">Opération</span>
+    <select onchange="setComptaOp(this.value,'${cb}')" style="${fs}">
+      <option value="">Toutes les opérations</option>
+      ${dispo.map(o=>`<option value="${o.id}" ${COMPTA_OP===o.id?'selected':''}>${esc(o.name)}</option>`).join('')}
+    </select>
+    ${COMPTA_OP?`<span style="font-size:.74rem;font-weight:700;background:rgba(45,125,210,.12);color:var(--blue);border-radius:6px;padding:2px 9px">Chiffres filtrés</span>
+      <button class="btn btn-ghost btn-sm" style="font-size:.72rem" onclick="setComptaOp('','${cb}')">✕ Tout afficher</button>`:''}
+  </div>`;
+}
 function comptaTotaux(){
   const NONE_KEY='__none__';
-  const recs=segRecs().filter(hasComptaData);
+  const recs=segRecs().filter(hasComptaData).filter(r=>!COMPTA_OP||r.productId===COMPTA_OP);
   let totRecettes=0,totCharges=0,totMarge=0;
   const byPoseur={},byCc={},byVt={},byAud={},byOp={};
   const tvaModesByFam={poseur:{},cc:{},vt:{},aud:{}};
@@ -3396,7 +3418,8 @@ function renderComptaResume(){
     const sub=allSansTva?'Sans TVA':allHT?`Payé HT`:`HT ${eur(htOf(sum))}`;
     return `${sub} · ${count} ${label}`;
   };
-  let h=`<p class="muted" style="font-size:.72rem;margin-bottom:.5rem">💶 Montants TTC — TVA ${tvaRate()}% déduite automatiquement (taux : Paramètres ▸ Société).</p><div class="kpis">
+  let h=opFilterBar('renderComptaResume');
+  h+=`<p class="muted" style="font-size:.72rem;margin-bottom:.5rem">💶 Montants TTC — TVA ${tvaRate()}% déduite automatiquement (taux : Paramètres ▸ Société).</p><div class="kpis">
     <div class="kpi"><div class="kico">💶</div><div class="klab">Recettes totales</div><div class="kval">${eur(totRecettes)}</div><div class="ksub">HT ${eur(htOf(totRecettes))} · ${recs.length} dossier${recs.length>1?'s':''} chiffré${recs.length>1?'s':''}</div></div>
     <div class="kpi"><div class="kico">📤</div><div class="klab">Charges totales</div><div class="kval">${eur(totCharges)}</div><div class="ksub">HT ${eur(htOf(totCharges))} · poseurs + call center + VT + audits + produits + faux frais</div></div>
     <div class="kpi accent"><div class="kico">📈</div><div class="klab">Marge nette</div><div class="kval">${eur(totMarge)}</div><div class="ksub">HT ${eur(htOf(totMarge))}${totRecettes>0?' · '+margePct.toFixed(1)+'% de marge':''}</div></div>
