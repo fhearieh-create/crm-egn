@@ -2076,7 +2076,7 @@ async function renderDashGlobal(){
   }
   const eur=n=>(n||0).toLocaleString('fr-FR',{maximumFractionDigits:0})+' €';
   const eur2=n=>(n||0).toLocaleString('fr-FR',{maximumFractionDigits:2})+' €';
-  const recs=visibleRecs();
+  const recs=visibleRecs().filter(r=>!COMPTA_OP||r.productId===COMPTA_OP);
   const sts=getStatuses();
   const isClient=r=>{const s=statById(r.statusId);return !!(s&&s.phase==='client');};
   const leads=recs.filter(r=>!isClient(r)),clients=recs.filter(isClient);
@@ -2087,6 +2087,7 @@ async function renderDashGlobal(){
   const won=recs.filter(r=>wonIds.includes(r.statusId)).length;
   const conv=recs.length?Math.round(won/recs.length*100):0;
   let h=segBanner();
+  h+=opFilterBar('renderDashGlobal');
 
   /* ---- Activité commerciale ---- */
   h+=`<div class="sectitle" style="margin-top:0">Activité commerciale</div><div class="kpis">`;
@@ -2094,7 +2095,8 @@ async function renderDashGlobal(){
   h+=gCard({ic:'🏠',lab:'Clients',val:clients.length,sub:'dossiers transmis & installés',go:"dashGo('clients')"});
   h+=gCard({ic:'🎯',lab:'Taux de conversion',val:conv+'%',sub:`${won} dossier${won>1?'s':''} gagné${won>1?'s':''}`,accent:true});
   // RDV
-  const rdvs=getRdvs().filter(rdvVisible);
+  const idsRecs=new Set(recs.map(r=>r.id));
+  const rdvs=getRdvs().filter(rdvVisible).filter(rd=>!COMPTA_OP||idsRecs.has(rd.recordId));
   const toTs=d=>{if(!d)return 0;const s=String(d).trim();if(s.includes('/')){const p=s.split('/');return new Date(p[2]+'-'+p[1].padStart(2,'0')+'-'+p[0].padStart(2,'0')+'T00:00:00').getTime();}return new Date(s+'T00:00:00').getTime();};
   const today0=new Date(now.getFullYear(),now.getMonth(),now.getDate()).getTime();
   const dans7=today0+7*86400000;
@@ -2131,9 +2133,7 @@ async function renderDashGlobal(){
                  vt:Object.keys(T.byVt).filter(k=>k!==T.NONE_KEY).length,
                  auditeur:Object.keys(T.byAud).filter(k=>k!==T.NONE_KEY).length};
     const sousTexte=k=>aVerser[k]>0?`${nbFam[k]} intervenant${nbFam[k]>1?'s':''} concerné${nbFam[k]>1?'s':''}`:'Rien à verser';
-    h+=`<div class="sectitle">Comptabilité</div>`;
-    h+=opFilterBar('renderDashGlobal');
-    h+=`<div class="kpis">`;
+    h+=`<div class="sectitle">Comptabilité</div><div class="kpis">`;
     h+=gCard({ic:'💶',lab:'Recettes',val:eur(recettes),sub:`${cRecs.length} dossier${cRecs.length>1?'s':''} chiffré${cRecs.length>1?'s':''}`,go:"dashGo('compta',{comptaTab:'resume'})"});
     h+=gCard({ic:'📤',lab:'Charges',val:eur(charges),sub:'poseurs, call center, VT, audits',go:"dashGo('compta',{comptaTab:'resume'})"});
     h+=gCard({ic:'📈',lab:'Marge nette',val:eur(marge),sub:recettes?margePct.toFixed(1)+'% de marge':'',accent:true,go:"dashGo('compta',{comptaTab:'resume'})"});
@@ -2180,7 +2180,12 @@ async function renderDashGlobal(){
 
   /* ---- Stock & fournisseurs ---- */
   if(can('stock_view')){
-    const mats=getMats(),mvts=getMvts();
+    // Le filtre par operation s'applique aussi au stock : on ne garde que
+    // les materiels rattaches a l'operation choisie, et leurs mouvements.
+    const opChoisie=COMPTA_OP?getAllProducts().find(o=>o.id===COMPTA_OP):null;
+    const mats=getMats().filter(m=>!COMPTA_OP||m.operationId===COMPTA_OP||(opChoisie&&m.operation===opChoisie.name));
+    const idsMat=new Set(mats.map(m=>m.id));
+    const mvts=getMvts().filter(v=>idsMat.has(v.materielId));
     const achats=mvts.filter(v=>['entree','reception'].includes(v.sens));
     const totAchete=achats.reduce((s,v)=>s+(v.totalHT||0),0);
     const duFourn=achats.filter(v=>(v.paiement||{}).statut!=='paye').reduce((s,v)=>s+(v.totalHT||0),0);
@@ -2198,7 +2203,9 @@ async function renderDashGlobal(){
       const reste=m.typeStock==='circulant'?e:Math.max(0,e-so);
       return s+reste*coutUnitaireMoyen(m,mvts);
     },0);
-    h+=`<div class="sectitle">Stock & fournisseurs</div><div class="kpis">`;
+    h+=`<div class="sectitle">Stock & fournisseurs${COMPTA_OP&&opChoisie?` <span style="font-weight:500;text-transform:none;letter-spacing:0;color:var(--blue)">— ${esc(opChoisie.name)}</span>`:''}</div>`;
+    if(COMPTA_OP&&!mats.length)h+=`<p class="muted" style="font-size:.8rem;margin-bottom:.9rem">Aucun matériel rattaché à cette opération.</p>`;
+    h+=`<div class="kpis">`;
     h+=gCard({ic:'💶',lab:'Valeur du stock',val:eur(valeurStock),sub:`${mats.length} matériel${mats.length>1?'s':''} au catalogue`,go:"dashGo('stock',{stockTab:'etat'})"});
     h+=gCard({ic:'🛒',lab:'Total acheté',val:eur(totAchete),sub:'HT, remises et frais inclus',go:"dashGo('stock',{stockTab:'mouvements'})"});
     h+=gCard({ic:'🧾',lab:'Reste à payer fournisseurs',val:eur(ttc(duFourn)),sub:'TTC · suivi des paiements',col:duFourn>0?'#B96A0A':'',go:"dashGo('compta',{comptaTab:'fournisseurs'})"});
