@@ -2122,16 +2122,31 @@ async function renderDashGlobal(){
   /* ---- Comptabilité ---- */
   if(can('compta_global')){
     const cRecs=segRecs().filter(hasComptaData);
-    let recettes=0,charges=0,sumPoseur=0,sumCc=0,sumVt=0,sumAud=0;
+    // Reste à facturer : dossiers sans APF généré
+    let recettes=0,charges=0;
+    const aFacturer={poseur:0,callcenter:0,vt:0,auditeur:0};
     cRecs.forEach(r=>{
       const m=recordComptaMetrics(r);
       recettes+=m.prime||0;charges+=m.charges||0;
-      const c=comptaOf(r);
-      if(!factureActive(r,'poseur'))sumPoseur+=m.aPayerPoseur||0;
-      if(!factureActive(r,'callcenter'))sumCc+=m.aPayerCallCenter||0;
-      if(!factureActive(r,'vt'))sumVt+=m.aPayerVt||0;
-      if(!factureActive(r,'auditeur'))sumAud+=m.aPayerAudit||0;
+      if(!factureActive(r,'poseur'))aFacturer.poseur+=m.aPayerPoseur||0;
+      if(!factureActive(r,'callcenter'))aFacturer.callcenter+=m.aPayerCallCenter||0;
+      if(!factureActive(r,'vt'))aFacturer.vt+=m.aPayerVt||0;
+      if(!factureActive(r,'auditeur'))aFacturer.auditeur+=m.aPayerAudit||0;
     });
+    // APF générés mais non soldés : toujours dus
+    const enAttente={poseur:0,callcenter:0,vt:0,auditeur:0};
+    segFactures().forEach(f=>{
+      if((f.paiements||{}).statut_apf==='paye')return;
+      const t=f.type||'poseur';
+      if(enAttente[t]!==undefined)enAttente[t]+=f.total||0;
+    });
+    const aVerser=k=>aFacturer[k]+enAttente[k];
+    const sousTexte=k=>{
+      const parts=[];
+      if(aFacturer[k]>0)parts.push(`${eur(aFacturer[k])} à facturer`);
+      if(enAttente[k]>0)parts.push(`${eur(enAttente[k])} facturé non payé`);
+      return parts.length?parts.join(' · '):'Rien à verser';
+    };
     const marge=recettes-charges;
     const margePct=recettes?(marge/recettes*100):0;
     h+=`<div class="sectitle">Comptabilité</div><div class="kpis">`;
@@ -2139,11 +2154,11 @@ async function renderDashGlobal(){
     h+=gCard({ic:'📤',lab:'Charges',val:eur(charges),sub:'poseurs, call center, VT, audits',go:"dashGo('compta',{comptaTab:'resume'})"});
     h+=gCard({ic:'📈',lab:'Marge nette',val:eur(marge),sub:recettes?margePct.toFixed(1)+'% de marge':'',accent:true,go:"dashGo('compta',{comptaTab:'resume'})"});
     h+=`</div>`;
-    h+=`<div class="sectitle" style="font-size:.66rem">Restant à facturer</div><div class="kpis">`;
-    h+=gCard({ic:'🔧',lab:'À verser aux poseurs',val:eur(sumPoseur),sub:'créer un appel à facturation',col:'#B96A0A',go:"dashGo('compta',{comptaTab:'facturation',factType:'poseur'})"});
-    h+=gCard({ic:'📞',lab:'À verser au call center',val:eur(sumCc),sub:'créer un appel à facturation',col:'#2D7DD2',go:"dashGo('compta',{comptaTab:'facturation',factType:'callcenter'})"});
-    h+=gCard({ic:'🧰',lab:'À verser aux VT',val:eur(sumVt),sub:'créer un appel à facturation',go:"dashGo('compta',{comptaTab:'facturation',factType:'vt'})"});
-    h+=gCard({ic:'📝',lab:'À verser aux auditeurs',val:eur(sumAud),sub:'créer un appel à facturation',go:"dashGo('compta',{comptaTab:'facturation',factType:'auditeur'})"});
+    h+=`<div class="sectitle" style="font-size:.66rem">Restant à verser</div><div class="kpis">`;
+    h+=gCard({ic:'🔧',lab:'À verser aux poseurs',val:eur(aVerser('poseur')),sub:sousTexte('poseur'),col:aVerser('poseur')>0?'#B96A0A':'var(--green-deep)',go:"dashGo('compta',{comptaTab:'facturation',factType:'poseur'})"});
+    h+=gCard({ic:'📞',lab:'À verser au call center',val:eur(aVerser('callcenter')),sub:sousTexte('callcenter'),col:aVerser('callcenter')>0?'#2D7DD2':'var(--green-deep)',go:"dashGo('compta',{comptaTab:'facturation',factType:'callcenter'})"});
+    h+=gCard({ic:'🧰',lab:'À verser aux VT',val:eur(aVerser('vt')),sub:sousTexte('vt'),col:aVerser('vt')>0?'':'var(--green-deep)',go:"dashGo('compta',{comptaTab:'facturation',factType:'vt'})"});
+    h+=gCard({ic:'📝',lab:'À verser aux auditeurs',val:eur(aVerser('auditeur')),sub:sousTexte('auditeur'),col:aVerser('auditeur')>0?'':'var(--green-deep)',go:"dashGo('compta',{comptaTab:'facturation',factType:'auditeur'})"});
     h+=`</div>`;
     // Encaissements et TVA
     const factures=segFactures();
@@ -3309,6 +3324,15 @@ function renderComptaResume(){
   }).sort((a,b)=>(b.r.updated||0)-(a.r.updated||0));
   const margePct=totRecettes>0?(totMarge/totRecettes*100):0;
   const ttcHt=n=>eur(n)+`<span style="display:block;font-size:.64rem;font-weight:500;color:var(--text-mut)">HT ${eur(htOf(n))}</span>`;
+  // Déduire les APF déjà soldés dans le suivi des paiements
+  const soldes={poseur:{},callcenter:{},vt:{},auditeur:{}};
+  segFactures().forEach(f=>{
+    if((f.paiements||{}).statut_apf!=='paye')return;
+    const t=f.type||'poseur';if(!soldes[t])return;
+    soldes[t][f.poseurId]=(soldes[t][f.poseurId]||0)+(f.total||0);
+  });
+  const deduire=(obj,type)=>{Object.keys(obj).forEach(k=>{if(soldes[type][k])obj[k].aPayer=Math.max(0,obj[k].aPayer-soldes[type][k]);});};
+  deduire(byPoseur,'poseur');deduire(byCc,'callcenter');deduire(byVt,'vt');deduire(byAud,'auditeur');
   const sumPoseur=Object.values(byPoseur).reduce((s,x)=>s+x.aPayer,0);
   const sumCc=Object.values(byCc).reduce((s,x)=>s+x.aPayer,0);
   const sumVt=Object.values(byVt).reduce((s,x)=>s+x.aPayer,0);
