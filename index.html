@@ -3315,6 +3315,7 @@ function renderComptaResume(){
   const recs=segRecs().filter(hasComptaData);
   const eur=n=>(n||0).toLocaleString('fr-FR',{maximumFractionDigits:2})+' €';
   let totRecettes=0,totCharges=0,totMarge=0;
+  const NONE_KEY='__none__';
   const byPoseur={},byCc={},byVt={},byAud={},byOp={};
   const tvaModesByFam={poseur:{},cc:{},vt:{},aud:{}};
   const rows=recs.map(r=>{
@@ -3326,10 +3327,18 @@ function renderComptaResume(){
     const vtAnnule=cc.factureVt&&cc.factureVt.statut==='annule';
     const audAnnule=cc.factureAudit&&cc.factureAudit.statut==='annule';
     const du=(t,montant)=>{const d=resteDu(r,t,montant);return d.aFacturer+d.enAttente;};
-    if(cc.poseurUserId){const k=cc.poseurUserId;byPoseur[k]=byPoseur[k]||{nb:0,aPayer:0};byPoseur[k].nb++;byPoseur[k].aPayer+=du('poseur',m.aPayerPoseur);tvaModesByFam.poseur[k]=effectiveTvaMode(r,'poseur');}
-    if(r.sourceId&&m.aPayerCallCenter>0){const k=r.sourceId;byCc[k]=byCc[k]||{nb:0,aPayer:0};byCc[k].nb++;byCc[k].aPayer+=du('callcenter',m.aPayerCallCenter);tvaModesByFam.cc[k]=effectiveTvaMode(r,'callcenter');}
-    if(m.vtC.sub&&m.aPayerVt>0){const k=m.vtC.sub.id;byVt[k]=byVt[k]||{nb:0,aPayer:0};byVt[k].nb++;byVt[k].aPayer+=du('vt',m.aPayerVt);tvaModesByFam.vt[k]=effectiveTvaMode(r,'vt');}
-    if(m.auditC.sub&&m.aPayerAudit>0){const k=m.auditC.sub.id;byAud[k]=byAud[k]||{nb:0,aPayer:0};byAud[k].nb++;byAud[k].aPayer+=du('auditeur',m.aPayerAudit);tvaModesByFam.aud[k]=effectiveTvaMode(r,'audit');}
+    // Une charge sans intervenant assigné est regroupée sous NONE pour que rien ne disparaisse du total
+    const add=(obj,k,t,montant,modeKey,famObj)=>{
+      const v=du(t,montant);
+      if(!v&&!k)return;
+      const key=k||NONE_KEY;
+      obj[key]=obj[key]||{nb:0,aPayer:0};obj[key].nb++;obj[key].aPayer+=v;
+      if(k)famObj[k]=effectiveTvaMode(r,modeKey);
+    };
+    add(byPoseur,cc.poseurUserId,'poseur',m.aPayerPoseur,'poseur',tvaModesByFam.poseur);
+    add(byCc,r.sourceId,'callcenter',m.aPayerCallCenter,'callcenter',tvaModesByFam.cc);
+    add(byVt,m.vtC.sub&&m.vtC.sub.id,'vt',m.aPayerVt,'vt',tvaModesByFam.vt);
+    add(byAud,m.auditC.sub&&m.auditC.sub.id,'auditeur',m.aPayerAudit,'audit',tvaModesByFam.aud);
     const opk=r.productId||'';byOp[opk]=byOp[opk]||{nb:0,recettes:0,charges:0,marge:0};byOp[opk].nb++;byOp[opk].recettes+=m.recettes;byOp[opk].charges+=m.charges;byOp[opk].marge+=m.marge;
     return{r,m};
   }).sort((a,b)=>(b.r.updated||0)-(a.r.updated||0));
@@ -3351,10 +3360,10 @@ function renderComptaResume(){
     <div class="kpi"><div class="kico">💶</div><div class="klab">Recettes totales</div><div class="kval">${eur(totRecettes)}</div><div class="ksub">HT ${eur(htOf(totRecettes))} · ${recs.length} dossier${recs.length>1?'s':''} chiffré${recs.length>1?'s':''}</div></div>
     <div class="kpi"><div class="kico">📤</div><div class="klab">Charges totales</div><div class="kval">${eur(totCharges)}</div><div class="ksub">HT ${eur(htOf(totCharges))} · poseurs + call center + VT + audits + produits + faux frais</div></div>
     <div class="kpi accent"><div class="kico">📈</div><div class="klab">Marge nette</div><div class="kval">${eur(totMarge)}</div><div class="ksub">HT ${eur(htOf(totMarge))}${totRecettes>0?' · '+margePct.toFixed(1)+'% de marge':''}</div></div>
-    <div class="kpi"><div class="kico">🔧</div><div class="klab">À verser aux poseurs</div><div class="kval">${eur(sumPoseur)}</div><div class="ksub">${kpiSub(sumPoseur,tvaModesByFam.poseur,Object.keys(byPoseur).length,'poseur')}</div></div>
-    <div class="kpi"><div class="kico">📞</div><div class="klab">À verser au call center</div><div class="kval">${eur(sumCc)}</div><div class="ksub">${kpiSub(sumCc,tvaModesByFam.cc,Object.keys(byCc).length,'source')}</div></div>
-    <div class="kpi"><div class="kico">🧰</div><div class="klab">À verser aux VT</div><div class="kval">${eur(sumVt)}</div><div class="ksub">${kpiSub(sumVt,tvaModesByFam.vt,Object.keys(byVt).length,'société')}</div></div>
-    <div class="kpi"><div class="kico">📝</div><div class="klab">À verser aux auditeurs</div><div class="kval">${eur(sumAud)}</div><div class="ksub">${kpiSub(sumAud,tvaModesByFam.aud,Object.keys(byAud).length,'auditeur')}</div></div>
+    <div class="kpi"><div class="kico">🔧</div><div class="klab">À verser aux poseurs</div><div class="kval">${eur(sumPoseur)}</div><div class="ksub">${kpiSub(sumPoseur,tvaModesByFam.poseur,Object.keys(byPoseur).filter(k=>k!==NONE_KEY).length,'poseur')}</div></div>
+    <div class="kpi"><div class="kico">📞</div><div class="klab">À verser au call center</div><div class="kval">${eur(sumCc)}</div><div class="ksub">${kpiSub(sumCc,tvaModesByFam.cc,Object.keys(byCc).filter(k=>k!==NONE_KEY).length,'source')}</div></div>
+    <div class="kpi"><div class="kico">🧰</div><div class="klab">À verser aux VT</div><div class="kval">${eur(sumVt)}</div><div class="ksub">${kpiSub(sumVt,tvaModesByFam.vt,Object.keys(byVt).filter(k=>k!==NONE_KEY).length,'société')}</div></div>
+    <div class="kpi"><div class="kico">📝</div><div class="klab">À verser aux auditeurs</div><div class="kval">${eur(sumAud)}</div><div class="ksub">${kpiSub(sumAud,tvaModesByFam.aud,Object.keys(byAud).filter(k=>k!==NONE_KEY).length,'auditeur')}</div></div>
   </div>`;
   // Calculer la TVA récupérable et le détail par mode
   let totTvaRecup=0,totSansTva=0,totTvaNonRecup=0;
@@ -3374,13 +3383,16 @@ function renderComptaResume(){
     if(totTvaRecup>0)h+=`<div style="background:rgba(45,125,210,.07);border:1px solid rgba(45,125,210,.2);border-radius:10px;padding:.75rem 1rem;display:flex;align-items:center;gap:.8rem"><span style="font-size:1.1rem">🏦</span><div><div style="font-size:.68rem;font-weight:700;color:#1A5FD4;text-transform:uppercase;letter-spacing:.4px">TVA récupérable (charges HT)</div><div style="font-size:1rem;font-weight:800;color:#1A5FD4">${eur(totTvaRecup)}</div></div></div>`;
     if(totSansTva>0)h+=`<div style="background:rgba(91,58,170,.07);border:1px solid rgba(91,58,170,.2);border-radius:10px;padding:.75rem 1rem;display:flex;align-items:center;gap:.8rem"><span style="font-size:1.1rem">🧾</span><div><div style="font-size:.68rem;font-weight:700;color:#5B3AAA;text-transform:uppercase;letter-spacing:.4px">Charges sans TVA (autoentrepreneurs)</div><div style="font-size:1rem;font-weight:800;color:#5B3AAA">${eur(totSansTva)}</div></div></div>`;
     h+=`</div>`;
-  }  // par poseur
+  }  const noneRow=(x,label)=>`<tr style="background:#FFF7ED"><td style="font-weight:700;color:#B96A0A">⚠️ ${label}</td><td>${x.nb}</td><td class="muted">—</td><td style="text-align:right;font-weight:700">${ttcHt(x.aPayer)}</td><td style="text-align:right"><span class="muted" style="font-size:.7rem">à assigner dans les fiches</span></td></tr>`;
+  // par poseur
   h+=`<div class="panel"><div class="panel-h"><h3>Rentabilité par poseur</h3></div><div class="panel-b">`;
   const poseurKeys=Object.keys(byPoseur);
   if(!poseurKeys.length)h+=`<div class="empty"><div class="big">🔧</div>Aucun dossier avec poseur assigné.</div>`;
   else{h+=`<div class="tbl-wrap"><table class="tbl"><thead><tr><th>Poseur</th><th>Dossiers</th><th>Mode TVA</th><th style="text-align:right">Total à verser</th><th></th></tr></thead><tbody>`;
     poseurKeys.forEach(k=>{
-      const u=userById(k);const x=byPoseur[k];
+      const x=byPoseur[k];
+      if(k===NONE_KEY){h+=noneRow(x,'Poseur non assigné');return;}
+      const u=userById(k);
       const fam=load('egncrm_poseurs',[]).find(f=>(f.userIds||[]).includes(k));
       const mode=fam?fam.tvaMode||'ttc':'ttc';
       const modeBadge=mode==='ht'?`<span style="font-size:.7rem;background:#EAF3DE;color:#3D7A1E;border-radius:5px;padding:1px 6px">HT</span>`:mode==='sans_tva'?`<span style="font-size:.7rem;background:#EFE9FC;color:#5B3AAA;border-radius:5px;padding:1px 6px">Sans TVA</span>`:`<span style="font-size:.7rem;background:#EEF0F2;color:#6b7785;border-radius:5px;padding:1px 6px">TTC</span>`;
@@ -3394,7 +3406,9 @@ function renderComptaResume(){
   if(!ccKeys.length)h+=`<div class="empty"><div class="big">📞</div>Aucun dossier avec un coût call center calculé.</div>`;
   else{h+=`<div class="tbl-wrap"><table class="tbl"><thead><tr><th>Source / Régie</th><th>Dossiers</th><th>Mode TVA</th><th style="text-align:right">Total à verser</th><th></th></tr></thead><tbody>`;
     ccKeys.forEach(k=>{
-      const src=getSources().find(s=>s.id===k);const x=byCc[k];
+      const x=byCc[k];
+      if(k===NONE_KEY){h+=noneRow(x,'Source non assignée');return;}
+      const src=getSources().find(s=>s.id===k);
       const mode=src?src.tvaMode||'ttc':'ttc';
       const modeBadge=mode==='ht'?`<span style="font-size:.7rem;background:#EAF3DE;color:#3D7A1E;border-radius:5px;padding:1px 6px">HT</span>`:mode==='sans_tva'?`<span style="font-size:.7rem;background:#EFE9FC;color:#5B3AAA;border-radius:5px;padding:1px 6px">Sans TVA</span>`:`<span style="font-size:.7rem;background:#EEF0F2;color:#6b7785;border-radius:5px;padding:1px 6px">TTC</span>`;
       h+=`<tr><td>${src?esc(src.name):'—'}</td><td>${x.nb}</td><td>${modeBadge}</td><td style="text-align:right;font-weight:700">${ttcHt(x.aPayer)}</td><td style="text-align:right"><button class="btn btn-ghost btn-sm" onclick="COMPTA_TAB='facturation';FACT_TYPE='callcenter';FACT_AGENT='${k}';renderComptaGlobal()">📄 Facturer</button></td></tr>`;
@@ -3406,7 +3420,7 @@ function renderComptaResume(){
   const vtKeys=Object.keys(byVt);
   if(!vtKeys.length)h+=`<div class="empty"><div class="big">🧰</div>Aucun dossier avec un coût VT actif.</div>`;
   else{h+=`<div class="tbl-wrap"><table class="tbl"><thead><tr><th>Société VT</th><th>Dossiers</th><th style="text-align:right">Total à verser</th><th></th></tr></thead><tbody>`;
-    vtKeys.forEach(k=>{const sub=load('egncrm_vt',[]).find(x=>x.id===k);const x=byVt[k];h+=`<tr><td>${sub?esc(sub.name):'—'}</td><td>${x.nb}</td><td style="text-align:right;font-weight:700">${ttcHt(x.aPayer)}</td><td style="text-align:right"><button class="btn btn-ghost btn-sm" onclick="COMPTA_TAB='facturation';FACT_TYPE='vt';FACT_AGENT='${k}';renderComptaGlobal()">📄 Facturer</button></td></tr>`;});
+    vtKeys.forEach(k=>{const x=byVt[k];if(k===NONE_KEY){h+=noneRow(x,'Société VT non assignée');return;}const sub=load('egncrm_vt',[]).find(y=>y.id===k);h+=`<tr><td>${sub?esc(sub.name):'—'}</td><td>${x.nb}</td><td style="text-align:right;font-weight:700">${ttcHt(x.aPayer)}</td><td style="text-align:right"><button class="btn btn-ghost btn-sm" onclick="COMPTA_TAB='facturation';FACT_TYPE='vt';FACT_AGENT='${k}';renderComptaGlobal()">📄 Facturer</button></td></tr>`;});
     h+=`</tbody></table></div>`;}
   h+=`</div></div>`;
   // par auditeur
@@ -3414,7 +3428,7 @@ function renderComptaResume(){
   const audKeys=Object.keys(byAud);
   if(!audKeys.length)h+=`<div class="empty"><div class="big">📝</div>Aucun dossier avec un coût audit actif.</div>`;
   else{h+=`<div class="tbl-wrap"><table class="tbl"><thead><tr><th>Auditeur</th><th>Dossiers</th><th style="text-align:right">Total à verser</th><th></th></tr></thead><tbody>`;
-    audKeys.forEach(k=>{const sub=load('egncrm_auditeurs',[]).find(x=>x.id===k);const x=byAud[k];h+=`<tr><td>${sub?esc(sub.name):'—'}</td><td>${x.nb}</td><td style="text-align:right;font-weight:700">${ttcHt(x.aPayer)}</td><td style="text-align:right"><button class="btn btn-ghost btn-sm" onclick="COMPTA_TAB='facturation';FACT_TYPE='auditeur';FACT_AGENT='${k}';renderComptaGlobal()">📄 Facturer</button></td></tr>`;});
+    audKeys.forEach(k=>{const x=byAud[k];if(k===NONE_KEY){h+=noneRow(x,'Auditeur non assigné');return;}const sub=load('egncrm_auditeurs',[]).find(y=>y.id===k);h+=`<tr><td>${sub?esc(sub.name):'—'}</td><td>${x.nb}</td><td style="text-align:right;font-weight:700">${ttcHt(x.aPayer)}</td><td style="text-align:right"><button class="btn btn-ghost btn-sm" onclick="COMPTA_TAB='facturation';FACT_TYPE='auditeur';FACT_AGENT='${k}';renderComptaGlobal()">📄 Facturer</button></td></tr>`;});
     h+=`</tbody></table></div>`;}
   h+=`</div></div>`;
   // par opération
