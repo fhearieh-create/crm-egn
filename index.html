@@ -6424,6 +6424,11 @@ function renderStockMouvements(){
       <span>TVA récupérable : <b style="color:var(--green-deep)">${eur(totTva)}</b></span>
     </div>`;
   }
+  const masques=mvts.length-mvtsF.length;
+  if(masques>0)h+=`<div style="background:#FFF4E5;border:1.5px solid #F0C486;border-radius:9px;padding:.5rem .9rem;margin-bottom:.7rem;font-size:.8rem;display:flex;align-items:center;gap:.6rem">
+    <span>🔍</span><span style="flex:1"><b>${masques}</b> mouvement${masques>1?'s':''} masqué${masques>1?'s':''} par les filtres</span>
+    <button class="btn btn-ghost btn-sm" style="font-size:.72rem" onclick="resetStockFilter('mvt')">✕ Tout afficher</button>
+  </div>`;
   if(!mvtsF.length){h+=`<div class="empty"><div class="big">🔍</div>Aucun mouvement ne correspond aux filtres.</div>`;document.getElementById('stockBody').innerHTML=h;restoreStockFocus();return;}
   h+=`<div class="tbl-wrap"><table class="tbl">
     <thead><tr><th>Date</th><th>Matériel</th><th>Type</th><th>Fournisseur</th><th class="r">Qté</th><th class="r">Total HT</th><th class="r">TVA récup.</th><th>Dossier</th><th>Notes</th><th>Facture</th><th></th></tr></thead><tbody>`;
@@ -6752,6 +6757,7 @@ async function saveMvt(){
   } else {
     closeModal();toast('Mouvement enregistré ✓','ok');
   }
+  if(!editId)resetStockFilter('mvt'); // un nouveau mouvement doit rester visible
   renderStock();
 }
 function editMvt(id){
@@ -6914,6 +6920,7 @@ function saveLoc(matId){
     fromId:from.recId,fromLieu:from.label,
     dossierId:to.recId,lieu:to.label,notes,user:ME.prenom});
   save('egncrm_stock_mvt',mergeSeg(getAllMvts(),mvts));
+  resetStockFilter('mvt'); // sinon un filtre actif masquerait le transfert
   closeModal();renderStock();toast(`🔄 ${from.label} → ${to.label}`,'ok');
 }
 
