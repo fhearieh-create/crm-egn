@@ -4452,6 +4452,67 @@ function delFacture(id){
     closeModal();renderComptaTabs();toast('Document supprimé','ok');
   });
 }
+function toggleWaEnabled(v){
+  const s=getSettings();s.waEnabled=!!v;save(K.set,s);
+  toast(v?'Notifications WhatsApp activées ✓':'Notifications WhatsApp désactivées','ok');
+}
+async function testWhatsApp(){
+  const num=(document.getElementById('wa_test_num')||{}).value||'';
+  const box=document.getElementById('wa_test_res');
+  if(!normWaNumber(num)){if(box)box.innerHTML='<span style="color:var(--coral);font-size:.8rem">Saisissez un numéro au format international.</span>';return;}
+  if(box)box.innerHTML='<span class="muted" style="font-size:.8rem">⏳ Envoi en cours…</span>';
+  const s=getSettings();const avant=s.waEnabled;
+  s.waEnabled=true;save(K.set,s); // le test ignore l'interrupteur
+  const res=await sendWhatsApp(num,`✅ Test depuis le CRM ${getSettings().company||'EGN'}\n\nSi vous lisez ce message, les notifications WhatsApp fonctionnent.`,'test');
+  s.waEnabled=avant;save(K.set,s);
+  if(!box)return;
+  box.innerHTML=res.ok
+    ?`<div style="background:#EFF7E8;border:1.5px solid var(--green);border-radius:9px;padding:.6rem .9rem;font-size:.82rem"><b>✅ Message envoyé</b> — vérifiez le téléphone ${esc(normWaNumber(num))}.</div>`
+    :`<div style="background:#FEE8E8;border:1.5px solid var(--coral);border-radius:9px;padding:.6rem .9rem;font-size:.82rem"><b>⛔ Échec</b><div class="muted" style="font-size:.76rem;margin-top:.2rem">${esc(res.error||'La fonction send-whatsapp est-elle déployée sur Supabase ?')}</div></div>`;
+}
+/* ============================================================
+   NOTIFICATIONS WHATSAPP
+   Le jeton d'API reste côté Supabase : le CRM appelle une Edge
+   Function, jamais l'API Meta directement.
+   ============================================================ */
+/* Met un numéro au format international sans espaces ni séparateurs */
+function normWaNumber(v){
+  let s=String(v||'').replace(/[^\d+]/g,'');
+  if(!s)return '';
+  if(s.startsWith('00'))s='+'+s.slice(2);
+  if(!s.startsWith('+')){
+    // 06… / 07… français -> +336… / +337…
+    if(s.startsWith('0')&&s.length===10)s='+33'+s.slice(1);
+    else s='+'+s;
+  }
+  return s;
+}
+function waEnabled(){const s=getSettings();return !!(s.waEnabled);}
+/* Envoi unitaire — n'interrompt jamais le flux du CRM en cas d'échec */
+async function sendWhatsApp(numero,texte,contexte){
+  const to=normWaNumber(numero);
+  if(!waEnabled()||!to)return{ok:false,skip:true};
+  try{
+    const{data,error}=await SUPA.functions.invoke('send-whatsapp',{body:{to,message:texte,contexte:contexte||''}});
+    if(error)throw error;
+    if(data&&data.error)throw new Error(data.error);
+    return{ok:true};
+  }catch(e){
+    console.error('[whatsapp]',e);
+    return{ok:false,error:e.message||String(e)};
+  }
+}
+/* Envoi à un utilisateur du CRM */
+async function sendWhatsAppToUser(userId,texte,contexte){
+  const u=getUsers().find(x=>x.id===userId);
+  if(!u||!u.whatsapp)return{ok:false,skip:true};
+  return sendWhatsApp(u.whatsapp,texte,contexte);
+}
+/* Lien direct vers la fiche, utilisable dans les messages */
+function lienDossier(r){
+  try{return location.origin+location.pathname+'#dossier='+r.id;}catch(e){return '';}
+}
+
 /* ---- mentions @utilisateur dans les commentaires ---- */
 let MENTION_TA=null,MENTION_IDX=0,MENTION_LIST=[];
 const nrm=s=>(s||'').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g,'');
@@ -4542,10 +4603,21 @@ async function notifyMentions(mentions,r,txt){
   const who=((ME.prenom||'')+' '+(ME.nom||'')).trim()||ME.code;
   const label=r.dossier||recName(r);
   const extrait=txt.length>70?txt.slice(0,70)+'…':txt;
+  const client=clientNameOf(r);
+  let envoyes=0;
   for(const uid of (mentions||[])){
     if(uid===ME.id)continue;
     await createNotification(uid,'mention',`💬 ${who} vous a mentionné sur ${label} : « ${extrait} »`,r.id);
+    // Notification WhatsApp — le texte complet, pas l'extrait
+    const msg=`💬 *${who}* vous a mentionné\n\n`
+      +`📁 Dossier ${label}\n`
+      +`👤 ${client}\n\n`
+      +`"${txt}"\n\n`
+      +`${lienDossier(r)}`;
+    const res=await sendWhatsAppToUser(uid,msg,'mention');
+    if(res.ok)envoyes++;
   }
+  if(envoyes)toast(`📱 ${envoyes} notification${envoyes>1?'s':''} WhatsApp envoyée${envoyes>1?'s':''}`,'ok');
 }
 
 /* ---- commentaires ---- */
@@ -5018,6 +5090,40 @@ function quickStatus(id,sid){
   if(DOSSIER_OPEN===id)openDossier(id);
   else applyRecFilter(CUR==='clients'?'clients':'leads');
   toast('Statut mis à jour','ok');
+  // Passage de lead à client : on prévient l'équipe concernée
+  const etaitLead=!old||old.phase!=='client';
+  if(etaitLead&&nw&&nw.phase==='client')notifierPassageClient(r,old,nw);
+}
+/* Prévient le propriétaire du dossier et les managers quand un lead devient client */
+async function notifierPassageClient(r,old,nw){
+  const who=((ME.prenom||'')+' '+(ME.nom||'')).trim()||ME.code;
+  const label=r.dossier||recName(r);
+  const op=getAllProducts().find(o=>o.id===r.productId);
+  const prime=dealOf(r).prime||0;
+  const msg=`🎉 *Nouveau client !*\n\n`
+    +`📁 Dossier ${label}\n`
+    +`👤 ${clientNameOf(r)}${r.ville?' — '+r.ville:''}\n`
+    +(op?`⚡ ${op.name}\n`:'')
+    +(prime?`💰 Prime : ${prime.toLocaleString('fr-FR')} €\n`:'')
+    +`\n${old?old.name:'—'} → *${nw.name}*\n`
+    +`Par ${who}\n\n`
+    +`${lienDossier(r)}`;
+  // Destinataires : propriétaire du dossier + comptes ayant la vue globale, sans doublon ni soi-même
+  const dest=new Set();
+  if(r.userId)dest.add(r.userId);
+  getUsers().forEach(u=>{
+    if(u.active===false||!u.whatsapp)return;
+    const p=normalizePerms(u.perms,u.role);
+    if(u.role==='superadmin'||p.dash_global)dest.add(u.id);
+  });
+  dest.delete(ME.id);
+  let envoyes=0;
+  for(const uid of dest){
+    await createNotification(uid,'client',`🎉 ${label} — ${clientNameOf(r)} est passé en ${nw.name}`,r.id);
+    const res=await sendWhatsAppToUser(uid,msg,'passage_client');
+    if(res.ok)envoyes++;
+  }
+  if(envoyes)toast(`📱 ${envoyes} notification${envoyes>1?'s':''} WhatsApp envoyée${envoyes>1?'s':''}`,'ok');
 }
 function delRec(id){
   modalConfirm('Supprimer ce dossier ?','Cette action est définitive (RDV liés et pièces jointes inclus).',async()=>{
@@ -5172,6 +5278,7 @@ async function saveLead(){
   if(isNew){r={id:uid(),dossier:await nextDossier(),created:Date.now(),history:[],segment:SEGMENT};recs.push(r);}
   if(!r.segment)r.segment=SEGMENT;
   const prevStatus=r.statusId;
+  const ancienStatut=statById(r.statusId);
   r.productId=opId;r.statusId=val('lf_status');r.sourceId=val('lf_src');r.userId=val('lf_user');r.updated=Date.now();
   // champs personnalisés de l'opération + synchronisation des données canoniques (par clé)
   const opVals={...(r.opFields||{})};
@@ -5193,10 +5300,13 @@ async function saveLead(){
   else if(prevStatus!==r.statusId){const o=statById(prevStatus),n=statById(r.statusId);r.history.unshift({date:Date.now(),user:ME.prenom,text:`Statut : ${o?o.name:'—'} → ${n?n.name:'—'}`});}
   if(note)r.history.unshift({date:Date.now(),user:ME.prenom,text:note});
   logActivity('action',isNew?`➕ Création du dossier ${r.dossier||r.id} — ${recName(r)}`:`✏️ Modification du dossier ${r.dossier||r.id} — ${recName(r)}`,r.id);
+  const nouveauStatut=statById(r.statusId);
+  const devientClient=!isNew&&nouveauStatut&&nouveauStatut.phase==='client'&&(!ancienStatut||ancienStatut.phase!=='client');
   save(K.recs,recs);closeModal();buildNav();
   if(DOSSIER_OPEN&&DOSSIER_OPEN===r.id)openDossier(r.id);
   else if(CUR==='leads')applyRecFilter('leads');else if(CUR==='clients')applyRecFilter('clients');else go(CUR);
   toast(isNew?'Lead créé ✓':'Dossier enregistré ✓','ok');
+  if(devientClient)notifierPassageClient(r,ancienStatut,nouveauStatut);
 }
 
 /* ====================================================================
@@ -5716,6 +5826,7 @@ function openUser(id){
     <div class="fld"><label>Prénom</label><input id="us_prenom" value="${esc(d.prenom)}"></div>
     <div class="fld"><label>Nom</label><input id="us_nom" value="${esc(d.nom)}"></div>
     <div class="fld"><label>Email</label><input id="us_email" value="${esc(d.email)}"></div>
+    <div class="fld"><label>📱 WhatsApp <span style="font-weight:500;text-transform:none;letter-spacing:0;color:var(--text-mut)">— format international</span></label><input id="us_whatsapp" value="${esc(d.whatsapp||'')}" placeholder="+33 6 12 34 56 78"></div>
     <div class="fld"><label>Équipe</label><select id="us_team"><option value="">—</option>${teams.map(t=>`<option value="${t.id}" ${t.id===d.team?'selected':''}>${esc(t.name)}</option>`).join('')}</select></div>
   </div>
   <div class="sectitle">Accès & connexion</div>
@@ -5813,7 +5924,7 @@ async function saveUser(){
   if(users.some(u=>u.code.toUpperCase()===code&&u.id!==id)){toast('Ce code est déjà utilisé','err');return;}
   let u=id?users.find(x=>x.id===id):null;const isNew=!u;
   const perms={};document.querySelectorAll('#us_perms input[data-perm]').forEach(cb=>perms[cb.dataset.perm]=cb.checked);
-  const email=val('us_email'),team=val('us_team');
+  const email=val('us_email'),team=val('us_team'),whatsapp=normWaNumber(val('us_whatsapp'));
   const passwordChanged=!isNew&&u.pwd!==pwd;
 
   if(isNew){
@@ -5829,7 +5940,7 @@ async function saveUser(){
     }catch(e){toast('⚠️ Compte enregistré localement mais non synchronisé avec Supabase : '+e.message,'err');}
   }
 
-  Object.assign(u,{prenom,nom,email,team,role,code,pwd,perms,sourceId:role==='commercial'?(val('us_source')||''):(u.sourceId||''),assignedUsers:US_ASSIGN.filter(x=>x!==u.id)});
+  Object.assign(u,{prenom,nom,email,whatsapp,team,role,code,pwd,perms,sourceId:role==='commercial'?(val('us_source')||''):(u.sourceId||''),assignedUsers:US_ASSIGN.filter(x=>x!==u.id)});
   assignUserToFamily(u.id,role==='poseur'?familyId:'');
   save(K.users,users);
   await pushAssignedUsers(u.id,u.assignedUsers,u.sourceId);
@@ -7671,7 +7782,28 @@ function setSociete(){
   const s=getSettings();
   const tarifs=s.tarifsEnergie||{};
   const energies=[['propane','Propane','€/L'],['fioul','Fioul domestique','€/L'],['gaz','Gaz naturel','€/kWh'],['electricite','Électricité','€/kWh'],['bois','Bois / granulés','€/kWh']];
-  let h=`<div class="panel"><div class="panel-h"><h3>🔄 Diagnostic de synchronisation</h3><div class="sp"><button class="btn btn-navy btn-sm" onclick="runSyncDiag()">Lancer le diagnostic</button></div></div><div class="panel-b" id="syncDiagBody"><p class="muted" style="font-size:.8rem">Vérifie que chaque type de données est bien enregistré sur Supabase et visible par toute l'équipe, et non uniquement sur cet appareil.</p></div></div>`;
+  let h=`<div class="panel"><div class="panel-h"><h3>📱 Notifications WhatsApp</h3><div class="sp">
+    <label style="display:flex;align-items:center;gap:.4rem;font-size:.82rem;cursor:pointer;font-weight:700">
+      <input type="checkbox" id="wa_enabled" ${s.waEnabled?'checked':''} onchange="toggleWaEnabled(this.checked)"> Activer
+    </label></div></div><div class="panel-b">
+    <p class="muted" style="font-size:.8rem;margin-bottom:.7rem">Les personnes mentionnées dans un commentaire et le passage d'un lead en client déclenchent un message WhatsApp. Le numéro de chaque destinataire se renseigne dans sa fiche utilisateur.</p>
+    <div style="display:flex;gap:.5rem;flex-wrap:wrap;align-items:flex-end">
+      <div class="fld" style="flex:1;min-width:200px"><label>Numéro de test</label><input id="wa_test_num" placeholder="+33 6 12 34 56 78" value="${esc((ME&&ME.whatsapp)||'')}"></div>
+      <button class="btn btn-navy btn-sm" onclick="testWhatsApp()">📤 Envoyer un message de test</button>
+    </div>
+    <div id="wa_test_res" style="margin-top:.6rem"></div>
+    <div style="margin-top:.8rem;padding-top:.7rem;border-top:1px solid var(--border-grey)">
+      <div style="font-size:.74rem;font-weight:700;color:var(--text-mut);text-transform:uppercase;letter-spacing:.4px;margin-bottom:.4rem">Destinataires configurés</div>
+      ${(function(){
+        const us=getUsers().filter(u=>u.active!==false);
+        const avec=us.filter(u=>u.whatsapp);
+        if(!avec.length)return '<p class="muted" style="font-size:.8rem">Aucun utilisateur n\'a de numéro WhatsApp renseigné.</p>';
+        return avec.map(u=>`<span style="display:inline-block;background:var(--bg-soft);border-radius:7px;padding:.2rem .6rem;margin:0 .3rem .3rem 0;font-size:.78rem"><b>${esc(u.prenom+' '+u.nom)}</b> <span class="muted">${esc(u.whatsapp)}</span></span>`).join('')
+          +`<div class="muted" style="font-size:.74rem;margin-top:.3rem">${avec.length} sur ${us.length} utilisateur${us.length>1?'s':''} actif${us.length>1?'s':''}</div>`;
+      })()}
+    </div>
+  </div></div>`;
+  h+=`<div class="panel"><div class="panel-h"><h3>🔄 Diagnostic de synchronisation</h3><div class="sp"><button class="btn btn-navy btn-sm" onclick="runSyncDiag()">Lancer le diagnostic</button></div></div><div class="panel-b" id="syncDiagBody"><p class="muted" style="font-size:.8rem">Vérifie que chaque type de données est bien enregistré sur Supabase et visible par toute l'équipe, et non uniquement sur cet appareil.</p></div></div>`;
   h+=`<div class="panel"><div class="panel-h"><h3>Informations société</h3></div><div class="panel-b"><div class="fgrid">
     <div class="fld"><label>Nom de la société</label><input id="co_name" value="${esc(s.company)}"></div>
     <div class="fld"><label>Email de contact</label><input id="co_email" value="${esc(s.email)}"></div>
