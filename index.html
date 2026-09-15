@@ -609,7 +609,7 @@ const PERM_GROUPS=[
   {g:'Navigation & tableau de bord',items:[
     {k:'dashboard',l:'Tableau de bord'},
     {k:'dash_kpis_global',l:'Voir les chiffres de toute la société (sinon les siens)'},
-    {k:'dash_global',l:'Vue globale (activité + comptabilité + stock)'},
+    {k:'dash_global',l:'Dashboard Coco (activité + comptabilité + stock)'},
     {k:'planning_view',l:'Planning + carte'},
     {k:'planning_view_all',l:'Voir le planning de tous'},
     {k:'rdv_manage',l:'Créer / gérer les RDV'},
@@ -1806,7 +1806,7 @@ function toast(msg,type){const t=document.getElementById('toast');t.textContent=
 const NAV=[
   {sec:'Principal'},
   {id:'dash',ic:'📊',label:'Tableau de bord',perm:'dashboard'},
-  {id:'dashglobal',ic:'🌐',label:'Vue globale',perm:'dash_global'},
+  {id:'dashglobal',ic:'🌐',label:'Dashboard Coco',perm:'dash_global'},
   {id:'planning',ic:'📅',label:'Planning',perm:'planning_view'},
   {id:'rappels',ic:'⏰',label:'Rappels',perm:'rappels_view'},
   {id:'import',ic:'📥',label:'Import des leads',perm:'import_data'},
@@ -1832,7 +1832,7 @@ const PAGES={
   rdvs:{t:'RDVs',s:'Liste des rendez-vous',r:renderRdvs},
   sav:{t:'SAV',s:'Service après-vente',r:renderSav},
   compta:{t:'Comptabilité',s:'Rentabilité globale & appels à facturation poseurs',r:renderComptaGlobal},
-  dashglobal:{t:'Vue globale',s:'Activité, comptabilité et stock en un coup d\'œil',r:renderDashGlobal},
+  dashglobal:{t:'Dashboard Coco',s:'Activité, comptabilité et stock en un coup d\'œil',r:renderDashGlobal},
   stock:{t:'Stock',s:'Gestion des matériels et mouvements de stock',r:renderStock},
   users:{t:'Utilisateurs',s:'Comptes, codes d\'accès & permissions',r:renderUsers},
   settings:{t:'Paramètres',s:'Statuts, produits, sources & société',r:renderSettings}
@@ -2046,7 +2046,7 @@ function actionBtn(html,fn,cls){return `<button class="btn ${cls||'btn-pri'} btn
    TABLEAU DE BORD
    ==================================================================== */
 /* ============================================================
-   VUE GLOBALE — activité, comptabilité, stock
+   DASHBOARD COCO — activité, comptabilité, stock
    Chaque bloc renvoie vers le module concerné
    ============================================================ */
 function dashGo(page,opts){
@@ -2128,10 +2128,13 @@ async function renderDashGlobal(){
     cRecs.forEach(r=>{
       const m=recordComptaMetrics(r);
       recettes+=m.prime||0;charges+=m.charges||0;
-      if(!factureActive(r,'poseur'))aFacturer.poseur+=m.aPayerPoseur||0;
-      if(!factureActive(r,'callcenter'))aFacturer.callcenter+=m.aPayerCallCenter||0;
-      if(!factureActive(r,'vt'))aFacturer.vt+=m.aPayerVt||0;
-      if(!factureActive(r,'auditeur'))aFacturer.auditeur+=m.aPayerAudit||0;
+      const cpt=comptaOf(r);
+      const annule=(f)=>!!(f&&f.statut==='annule');
+      const ttcDe=(key,montant)=>tvaLine(r,key,montant||0).ttc;
+      if(!factureActive(r,'poseur')&&!annule(cpt.facturePoseur))aFacturer.poseur+=ttcDe('poseur',m.aPayerPoseur);
+      if(!factureActive(r,'callcenter')&&!annule(cpt.factureCallCenter))aFacturer.callcenter+=ttcDe('callcenter',m.aPayerCallCenter);
+      if(!factureActive(r,'vt')&&!annule(cpt.factureVt))aFacturer.vt+=ttcDe('vt',m.aPayerVt);
+      if(!factureActive(r,'auditeur')&&!annule(cpt.factureAudit))aFacturer.auditeur+=ttcDe('audit',m.aPayerAudit);
     });
     // APF générés mais non soldés : toujours dus
     const enAttente={poseur:0,callcenter:0,vt:0,auditeur:0};
@@ -2154,7 +2157,7 @@ async function renderDashGlobal(){
     h+=gCard({ic:'📤',lab:'Charges',val:eur(charges),sub:'poseurs, call center, VT, audits',go:"dashGo('compta',{comptaTab:'resume'})"});
     h+=gCard({ic:'📈',lab:'Marge nette',val:eur(marge),sub:recettes?margePct.toFixed(1)+'% de marge':'',accent:true,go:"dashGo('compta',{comptaTab:'resume'})"});
     h+=`</div>`;
-    h+=`<div class="sectitle" style="font-size:.66rem">Restant à verser</div><div class="kpis">`;
+    h+=`<div class="sectitle" style="font-size:.66rem">Restant à verser <span style="font-weight:500;text-transform:none;letter-spacing:0;color:var(--text-mut)">— montants TTC</span></div><div class="kpis">`;
     h+=gCard({ic:'🔧',lab:'À verser aux poseurs',val:eur(aVerser('poseur')),sub:sousTexte('poseur'),col:aVerser('poseur')>0?'#B96A0A':'var(--green-deep)',go:"dashGo('compta',{comptaTab:'facturation',factType:'poseur'})"});
     h+=gCard({ic:'📞',lab:'À verser au call center',val:eur(aVerser('callcenter')),sub:sousTexte('callcenter'),col:aVerser('callcenter')>0?'#2D7DD2':'var(--green-deep)',go:"dashGo('compta',{comptaTab:'facturation',factType:'callcenter'})"});
     h+=gCard({ic:'🧰',lab:'À verser aux VT',val:eur(aVerser('vt')),sub:sousTexte('vt'),col:aVerser('vt')>0?'':'var(--green-deep)',go:"dashGo('compta',{comptaTab:'facturation',factType:'vt'})"});
@@ -3315,10 +3318,11 @@ function renderComptaResume(){
     const ccAnnule=cc.factureCallCenter&&cc.factureCallCenter.statut==='annule';
     const vtAnnule=cc.factureVt&&cc.factureVt.statut==='annule';
     const audAnnule=cc.factureAudit&&cc.factureAudit.statut==='annule';
-    if(cc.poseurUserId){const k=cc.poseurUserId;byPoseur[k]=byPoseur[k]||{nb:0,aPayer:0};byPoseur[k].nb++;if(!poseurAnnule)byPoseur[k].aPayer+=m.aPayerPoseur;tvaModesByFam.poseur[k]=effectiveTvaMode(r,'poseur');}
-    if(r.sourceId&&m.aPayerCallCenter>0){const k=r.sourceId;byCc[k]=byCc[k]||{nb:0,aPayer:0};byCc[k].nb++;if(!ccAnnule)byCc[k].aPayer+=m.aPayerCallCenter;tvaModesByFam.cc[k]=effectiveTvaMode(r,'callcenter');}
-    if(m.vtC.sub&&m.aPayerVt>0){const k=m.vtC.sub.id;byVt[k]=byVt[k]||{nb:0,aPayer:0};byVt[k].nb++;if(!vtAnnule)byVt[k].aPayer+=m.aPayerVt;tvaModesByFam.vt[k]=effectiveTvaMode(r,'vt');}
-    if(m.auditC.sub&&m.aPayerAudit>0){const k=m.auditC.sub.id;byAud[k]=byAud[k]||{nb:0,aPayer:0};byAud[k].nb++;if(!audAnnule)byAud[k].aPayer+=m.aPayerAudit;tvaModesByFam.aud[k]=effectiveTvaMode(r,'audit');}
+    const ttcDe=(key,montant)=>tvaLine(r,key,montant||0).ttc;
+    if(cc.poseurUserId){const k=cc.poseurUserId;byPoseur[k]=byPoseur[k]||{nb:0,aPayer:0};byPoseur[k].nb++;if(!poseurAnnule)byPoseur[k].aPayer+=ttcDe('poseur',m.aPayerPoseur);tvaModesByFam.poseur[k]=effectiveTvaMode(r,'poseur');}
+    if(r.sourceId&&m.aPayerCallCenter>0){const k=r.sourceId;byCc[k]=byCc[k]||{nb:0,aPayer:0};byCc[k].nb++;if(!ccAnnule)byCc[k].aPayer+=ttcDe('callcenter',m.aPayerCallCenter);tvaModesByFam.cc[k]=effectiveTvaMode(r,'callcenter');}
+    if(m.vtC.sub&&m.aPayerVt>0){const k=m.vtC.sub.id;byVt[k]=byVt[k]||{nb:0,aPayer:0};byVt[k].nb++;if(!vtAnnule)byVt[k].aPayer+=ttcDe('vt',m.aPayerVt);tvaModesByFam.vt[k]=effectiveTvaMode(r,'vt');}
+    if(m.auditC.sub&&m.aPayerAudit>0){const k=m.auditC.sub.id;byAud[k]=byAud[k]||{nb:0,aPayer:0};byAud[k].nb++;if(!audAnnule)byAud[k].aPayer+=ttcDe('audit',m.aPayerAudit);tvaModesByFam.aud[k]=effectiveTvaMode(r,'audit');}
     const opk=r.productId||'';byOp[opk]=byOp[opk]||{nb:0,recettes:0,charges:0,marge:0};byOp[opk].nb++;byOp[opk].recettes+=m.recettes;byOp[opk].charges+=m.charges;byOp[opk].marge+=m.marge;
     return{r,m};
   }).sort((a,b)=>(b.r.updated||0)-(a.r.updated||0));
