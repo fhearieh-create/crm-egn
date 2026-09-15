@@ -2121,39 +2121,26 @@ async function renderDashGlobal(){
 
   /* ---- Comptabilité ---- */
   if(can('compta_global')){
-    const cRecs=segRecs().filter(hasComptaData);
-    // Reste à facturer : dossiers sans APF généré
-    let recettes=0,charges=0;
-    const aFacturer={poseur:0,callcenter:0,vt:0,auditeur:0};
-    const enAttente={poseur:0,callcenter:0,vt:0,auditeur:0};
-    cRecs.forEach(r=>{
-      const m=recordComptaMetrics(r);
-      recettes+=m.prime||0;charges+=m.charges||0;
-      const montants={poseur:m.aPayerPoseur,callcenter:m.aPayerCallCenter,vt:m.aPayerVt,auditeur:m.aPayerAudit};
-      ['poseur','callcenter','vt','auditeur'].forEach(t=>{
-        const d=resteDu(r,t,montants[t]);
-        aFacturer[t]+=d.aFacturer;enAttente[t]+=d.enAttente;
-      });
-    });
-    const aVerser=k=>aFacturer[k]+enAttente[k];
-    const sousTexte=k=>{
-      const parts=[];
-      if(aFacturer[k]>0)parts.push(`${eur(aFacturer[k])} à facturer`);
-      if(enAttente[k]>0)parts.push(`${eur(enAttente[k])} facturé non payé`);
-      return parts.length?parts.join(' · '):'Rien à verser';
-    };
-    const marge=recettes-charges;
-    const margePct=recettes?(marge/recettes*100):0;
+    // Mêmes chiffres que l'onglet Comptabilité — aucune recomposition
+    const T=comptaTotaux();
+    const recettes=T.totRecettes,charges=T.totCharges,marge=T.totMarge,margePct=T.margePct;
+    const cRecs=T.recs;
+    const aVerser={poseur:T.sumPoseur,callcenter:T.sumCc,vt:T.sumVt,auditeur:T.sumAud};
+    const nbFam={poseur:Object.keys(T.byPoseur).filter(k=>k!==T.NONE_KEY).length,
+                 callcenter:Object.keys(T.byCc).filter(k=>k!==T.NONE_KEY).length,
+                 vt:Object.keys(T.byVt).filter(k=>k!==T.NONE_KEY).length,
+                 auditeur:Object.keys(T.byAud).filter(k=>k!==T.NONE_KEY).length};
+    const sousTexte=k=>aVerser[k]>0?`${nbFam[k]} intervenant${nbFam[k]>1?'s':''} concerné${nbFam[k]>1?'s':''}`:'Rien à verser';
     h+=`<div class="sectitle">Comptabilité</div><div class="kpis">`;
     h+=gCard({ic:'💶',lab:'Recettes',val:eur(recettes),sub:`${cRecs.length} dossier${cRecs.length>1?'s':''} chiffré${cRecs.length>1?'s':''}`,go:"dashGo('compta',{comptaTab:'resume'})"});
     h+=gCard({ic:'📤',lab:'Charges',val:eur(charges),sub:'poseurs, call center, VT, audits',go:"dashGo('compta',{comptaTab:'resume'})"});
     h+=gCard({ic:'📈',lab:'Marge nette',val:eur(marge),sub:recettes?margePct.toFixed(1)+'% de marge':'',accent:true,go:"dashGo('compta',{comptaTab:'resume'})"});
     h+=`</div>`;
     h+=`<div class="sectitle" style="font-size:.66rem">Restant à verser <span style="font-weight:500;text-transform:none;letter-spacing:0;color:var(--text-mut)">— montants TTC</span></div><div class="kpis">`;
-    h+=gCard({ic:'🔧',lab:'À verser aux poseurs',val:eur(aVerser('poseur')),sub:sousTexte('poseur'),col:aVerser('poseur')>0?'#B96A0A':'var(--green-deep)',go:"dashGo('compta',{comptaTab:'facturation',factType:'poseur'})"});
-    h+=gCard({ic:'📞',lab:'À verser au call center',val:eur(aVerser('callcenter')),sub:sousTexte('callcenter'),col:aVerser('callcenter')>0?'#2D7DD2':'var(--green-deep)',go:"dashGo('compta',{comptaTab:'facturation',factType:'callcenter'})"});
-    h+=gCard({ic:'🧰',lab:'À verser aux VT',val:eur(aVerser('vt')),sub:sousTexte('vt'),col:aVerser('vt')>0?'':'var(--green-deep)',go:"dashGo('compta',{comptaTab:'facturation',factType:'vt'})"});
-    h+=gCard({ic:'📝',lab:'À verser aux auditeurs',val:eur(aVerser('auditeur')),sub:sousTexte('auditeur'),col:aVerser('auditeur')>0?'':'var(--green-deep)',go:"dashGo('compta',{comptaTab:'facturation',factType:'auditeur'})"});
+    h+=gCard({ic:'🔧',lab:'À verser aux poseurs',val:eur(aVerser.poseur),sub:sousTexte('poseur'),col:aVerser.poseur>0?'#B96A0A':'var(--green-deep)',go:"dashGo('compta',{comptaTab:'facturation',factType:'poseur'})"});
+    h+=gCard({ic:'📞',lab:'À verser au call center',val:eur(aVerser.callcenter),sub:sousTexte('callcenter'),col:aVerser.callcenter>0?'#2D7DD2':'var(--green-deep)',go:"dashGo('compta',{comptaTab:'facturation',factType:'callcenter'})"});
+    h+=gCard({ic:'🧰',lab:'À verser aux VT',val:eur(aVerser.vt),sub:sousTexte('vt'),col:aVerser.vt>0?'':'var(--green-deep)',go:"dashGo('compta',{comptaTab:'facturation',factType:'vt'})"});
+    h+=gCard({ic:'📝',lab:'À verser aux auditeurs',val:eur(aVerser.auditeur),sub:sousTexte('auditeur'),col:aVerser.auditeur>0?'':'var(--green-deep)',go:"dashGo('compta',{comptaTab:'facturation',factType:'auditeur'})"});
     h+=`</div>`;
     // Encaissements et TVA
     const factures=segFactures();
@@ -3311,11 +3298,11 @@ function renderComptaTabs(){
   else if(COMPTA_TAB==='fournisseurs')renderComptaFournisseurs();
   else renderComptaHistorique();
 }
-function renderComptaResume(){
-  const recs=segRecs().filter(hasComptaData);
-  const eur=n=>(n||0).toLocaleString('fr-FR',{maximumFractionDigits:2})+' €';
-  let totRecettes=0,totCharges=0,totMarge=0;
+/* Agrégation comptable unique — utilisée par le résumé ET le Dashboard Coco */
+function comptaTotaux(){
   const NONE_KEY='__none__';
+  const recs=segRecs().filter(hasComptaData);
+  let totRecettes=0,totCharges=0,totMarge=0;
   const byPoseur={},byCc={},byVt={},byAud={},byOp={};
   const tvaModesByFam={poseur:{},cc:{},vt:{},aud:{}};
   const rows=recs.map(r=>{
@@ -3343,11 +3330,17 @@ function renderComptaResume(){
     return{r,m};
   }).sort((a,b)=>(b.r.updated||0)-(a.r.updated||0));
   const margePct=totRecettes>0?(totMarge/totRecettes*100):0;
-  const ttcHt=n=>eur(n)+`<span style="display:block;font-size:.64rem;font-weight:500;color:var(--text-mut)">HT ${eur(htOf(n))}</span>`;
   const sumPoseur=Object.values(byPoseur).reduce((s,x)=>s+x.aPayer,0);
   const sumCc=Object.values(byCc).reduce((s,x)=>s+x.aPayer,0);
   const sumVt=Object.values(byVt).reduce((s,x)=>s+x.aPayer,0);
   const sumAud=Object.values(byAud).reduce((s,x)=>s+x.aPayer,0);
+  return{recs,rows,totRecettes,totCharges,totMarge,margePct,byPoseur,byCc,byVt,byAud,byOp,tvaModesByFam,sumPoseur,sumCc,sumVt,sumAud,NONE_KEY};
+}
+function renderComptaResume(){
+  const eur=n=>(n||0).toLocaleString('fr-FR',{maximumFractionDigits:2})+' €';
+  const T=comptaTotaux();
+  const {recs,rows,totRecettes,totCharges,totMarge,margePct,byPoseur,byCc,byVt,byAud,byOp,tvaModesByFam,sumPoseur,sumCc,sumVt,sumAud,NONE_KEY}=T;
+  const ttcHt=n=>eur(n)+`<span style="display:block;font-size:.64rem;font-weight:500;color:var(--text-mut)">HT ${eur(htOf(n))}</span>`;
   // Helper : sous-texte KPI selon mode TVA dominant
   const kpiSub=(sum,modes,count,label)=>{
     const vals=Object.values(modes);
