@@ -2125,23 +2125,15 @@ async function renderDashGlobal(){
     // Reste à facturer : dossiers sans APF généré
     let recettes=0,charges=0;
     const aFacturer={poseur:0,callcenter:0,vt:0,auditeur:0};
+    const enAttente={poseur:0,callcenter:0,vt:0,auditeur:0};
     cRecs.forEach(r=>{
       const m=recordComptaMetrics(r);
       recettes+=m.prime||0;charges+=m.charges||0;
-      const cpt=comptaOf(r);
-      const annule=(f)=>!!(f&&f.statut==='annule');
-      const ttcDe=(key,montant)=>tvaLine(r,key,montant||0).ttc;
-      if(!factureActive(r,'poseur')&&!annule(cpt.facturePoseur))aFacturer.poseur+=ttcDe('poseur',m.aPayerPoseur);
-      if(!factureActive(r,'callcenter')&&!annule(cpt.factureCallCenter))aFacturer.callcenter+=ttcDe('callcenter',m.aPayerCallCenter);
-      if(!factureActive(r,'vt')&&!annule(cpt.factureVt))aFacturer.vt+=ttcDe('vt',m.aPayerVt);
-      if(!factureActive(r,'auditeur')&&!annule(cpt.factureAudit))aFacturer.auditeur+=ttcDe('audit',m.aPayerAudit);
-    });
-    // APF générés mais non soldés : toujours dus
-    const enAttente={poseur:0,callcenter:0,vt:0,auditeur:0};
-    segFactures().forEach(f=>{
-      if((f.paiements||{}).statut_apf==='paye')return;
-      const t=f.type||'poseur';
-      if(enAttente[t]!==undefined)enAttente[t]+=f.total||0;
+      const montants={poseur:m.aPayerPoseur,callcenter:m.aPayerCallCenter,vt:m.aPayerVt,auditeur:m.aPayerAudit};
+      ['poseur','callcenter','vt','auditeur'].forEach(t=>{
+        const d=resteDu(r,t,montants[t]);
+        aFacturer[t]+=d.aFacturer;enAttente[t]+=d.enAttente;
+      });
     });
     const aVerser=k=>aFacturer[k]+enAttente[k];
     const sousTexte=k=>{
@@ -3248,6 +3240,21 @@ const AGENT_TYPES={
 const STATUT_COMPTA={transmis:'Transmis',recu:'Reçu',valide:'Validé',paye:'Payé',annule:'Annulé'};
 const STATUT_COMPTA_COLOR={transmis:'grey',recu:'blue',valide:'blue',paye:'green',annule:'red'};
 // Un statut "actif" = déjà envoyé et non annulé -> verrouille l'édition et exclut des futurs appels à facturation.
+/* Restant dû sur une ligne de charge, en TTC, réparti entre
+   « à facturer » (aucun APF) et « facturé non payé » (APF émis, pas encore soldé).
+   Source unique pour le résumé comptable et le Dashboard Coco. */
+function resteDu(r,type,montant){
+  const key=type==='auditeur'?'audit':type;
+  const ttc=tvaLine(r,key,montant||0).ttc;
+  const vide={aFacturer:0,enAttente:0};
+  if(!ttc)return vide;
+  const f=comptaOf(r)[AGENT_TYPES[type].factureField];
+  if(!f)return{aFacturer:ttc,enAttente:0};      // pas encore d'APF
+  if(f.statut==='annule')return vide;            // facturation annulée
+  const fac=(FACTURES_CACHE||[]).find(x=>x.id===f.factureId);
+  if(fac&&(fac.paiements||{}).statut_apf==='paye')return vide; // soldé
+  return{aFacturer:0,enAttente:ttc};             // APF émis, en attente de paiement
+}
 function factureActive(r,type){const c=comptaOf(r);const f=c[AGENT_TYPES[type].factureField];return !!(f&&f.statut!=='annule');}
 function factureStatut(r,type){return factureActive(r,type)?'facture':'non_facture';}
 function factureStatutBadge(r,type){
@@ -3318,25 +3325,16 @@ function renderComptaResume(){
     const ccAnnule=cc.factureCallCenter&&cc.factureCallCenter.statut==='annule';
     const vtAnnule=cc.factureVt&&cc.factureVt.statut==='annule';
     const audAnnule=cc.factureAudit&&cc.factureAudit.statut==='annule';
-    const ttcDe=(key,montant)=>tvaLine(r,key,montant||0).ttc;
-    if(cc.poseurUserId){const k=cc.poseurUserId;byPoseur[k]=byPoseur[k]||{nb:0,aPayer:0};byPoseur[k].nb++;if(!poseurAnnule)byPoseur[k].aPayer+=ttcDe('poseur',m.aPayerPoseur);tvaModesByFam.poseur[k]=effectiveTvaMode(r,'poseur');}
-    if(r.sourceId&&m.aPayerCallCenter>0){const k=r.sourceId;byCc[k]=byCc[k]||{nb:0,aPayer:0};byCc[k].nb++;if(!ccAnnule)byCc[k].aPayer+=ttcDe('callcenter',m.aPayerCallCenter);tvaModesByFam.cc[k]=effectiveTvaMode(r,'callcenter');}
-    if(m.vtC.sub&&m.aPayerVt>0){const k=m.vtC.sub.id;byVt[k]=byVt[k]||{nb:0,aPayer:0};byVt[k].nb++;if(!vtAnnule)byVt[k].aPayer+=ttcDe('vt',m.aPayerVt);tvaModesByFam.vt[k]=effectiveTvaMode(r,'vt');}
-    if(m.auditC.sub&&m.aPayerAudit>0){const k=m.auditC.sub.id;byAud[k]=byAud[k]||{nb:0,aPayer:0};byAud[k].nb++;if(!audAnnule)byAud[k].aPayer+=ttcDe('audit',m.aPayerAudit);tvaModesByFam.aud[k]=effectiveTvaMode(r,'audit');}
+    const du=(t,montant)=>{const d=resteDu(r,t,montant);return d.aFacturer+d.enAttente;};
+    if(cc.poseurUserId){const k=cc.poseurUserId;byPoseur[k]=byPoseur[k]||{nb:0,aPayer:0};byPoseur[k].nb++;byPoseur[k].aPayer+=du('poseur',m.aPayerPoseur);tvaModesByFam.poseur[k]=effectiveTvaMode(r,'poseur');}
+    if(r.sourceId&&m.aPayerCallCenter>0){const k=r.sourceId;byCc[k]=byCc[k]||{nb:0,aPayer:0};byCc[k].nb++;byCc[k].aPayer+=du('callcenter',m.aPayerCallCenter);tvaModesByFam.cc[k]=effectiveTvaMode(r,'callcenter');}
+    if(m.vtC.sub&&m.aPayerVt>0){const k=m.vtC.sub.id;byVt[k]=byVt[k]||{nb:0,aPayer:0};byVt[k].nb++;byVt[k].aPayer+=du('vt',m.aPayerVt);tvaModesByFam.vt[k]=effectiveTvaMode(r,'vt');}
+    if(m.auditC.sub&&m.aPayerAudit>0){const k=m.auditC.sub.id;byAud[k]=byAud[k]||{nb:0,aPayer:0};byAud[k].nb++;byAud[k].aPayer+=du('auditeur',m.aPayerAudit);tvaModesByFam.aud[k]=effectiveTvaMode(r,'audit');}
     const opk=r.productId||'';byOp[opk]=byOp[opk]||{nb:0,recettes:0,charges:0,marge:0};byOp[opk].nb++;byOp[opk].recettes+=m.recettes;byOp[opk].charges+=m.charges;byOp[opk].marge+=m.marge;
     return{r,m};
   }).sort((a,b)=>(b.r.updated||0)-(a.r.updated||0));
   const margePct=totRecettes>0?(totMarge/totRecettes*100):0;
   const ttcHt=n=>eur(n)+`<span style="display:block;font-size:.64rem;font-weight:500;color:var(--text-mut)">HT ${eur(htOf(n))}</span>`;
-  // Déduire les APF déjà soldés dans le suivi des paiements
-  const soldes={poseur:{},callcenter:{},vt:{},auditeur:{}};
-  segFactures().forEach(f=>{
-    if((f.paiements||{}).statut_apf!=='paye')return;
-    const t=f.type||'poseur';if(!soldes[t])return;
-    soldes[t][f.poseurId]=(soldes[t][f.poseurId]||0)+(f.total||0);
-  });
-  const deduire=(obj,type)=>{Object.keys(obj).forEach(k=>{if(soldes[type][k])obj[k].aPayer=Math.max(0,obj[k].aPayer-soldes[type][k]);});};
-  deduire(byPoseur,'poseur');deduire(byCc,'callcenter');deduire(byVt,'vt');deduire(byAud,'auditeur');
   const sumPoseur=Object.values(byPoseur).reduce((s,x)=>s+x.aPayer,0);
   const sumCc=Object.values(byCc).reduce((s,x)=>s+x.aPayer,0);
   const sumVt=Object.values(byVt).reduce((s,x)=>s+x.aPayer,0);
