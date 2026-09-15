@@ -824,9 +824,10 @@ function renderSegSwitch(){
 function switchSegment(k){
   if(SEGMENT===k)return;
   setSegment(k);
-  renderSegSwitch();
   // Réinitialise les filtres de liste, qui référencent statuts et opérations de l'autre segment
   if(typeof LF==='object'){LF.status='';LF.prod='';}
+  buildNav();        // compteurs leads / clients du nouveau segment
+  renderSegSwitch(); // pastilles du sélecteur
   if(PAGES[CUR])PAGES[CUR].r();
   toast(`${SEGMENTS[k].ic} Segment ${SEGMENTS[k].short}`,'ok');
 }
@@ -2446,7 +2447,7 @@ async function openDossier(id){
   const r=recById(id);if(!r){toast('Dossier introuvable','err');return;}
   DOSSIER_OPEN=id;
   // Se caler sur le segment du dossier pour résoudre statuts et opérations
-  if(segOf(r)!==SEGMENT){setSegment(segOf(r));renderSegSwitch();}
+  if(segOf(r)!==SEGMENT){setSegment(segOf(r));buildNav();renderSegSwitch();}
   window._dossierBack=(CUR==='clients')?'clients':'leads';
   document.getElementById('pageTitle').innerHTML=`Dossier ${esc(r.dossier||'')}`;
   document.getElementById('pageSub').textContent=recName(r);
