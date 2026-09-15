@@ -2163,13 +2163,17 @@ async function renderDashGlobal(){
     h+=gCard({ic:'🧰',lab:'À verser aux VT',val:eur(aVerser.vt),sub:sousTexte('vt'),col:aVerser.vt>0?'':'var(--green-deep)',go:"dashGo('compta',{comptaTab:'facturation',factType:'vt'})"});
     h+=gCard({ic:'📝',lab:'À verser aux auditeurs',val:eur(aVerser.auditeur),sub:sousTexte('auditeur'),col:aVerser.auditeur>0?'':'var(--green-deep)',go:"dashGo('compta',{comptaTab:'facturation',factType:'auditeur'})"});
     h+=`</div>`;
-    // Encaissements et TVA
-    const factures=segFactures();
+    // Encaissements et TVA — suivent le filtre par operation
+    const dansFiltre=id=>{if(!COMPTA_OP)return true;const r=recById(id);return !!(r&&r.productId===COMPTA_OP);};
+    // Un APF est retenu s'il contient au moins un dossier de l'operation choisie,
+    // et son montant est recalcule sur ces seules lignes.
+    const factures=segFactures().filter(f=>(f.lignes||[]).some(l=>dansFiltre(l.recId)));
+    const partFiltree=f=>(f.lignes||[]).filter(l=>dansFiltre(l.recId)).reduce((s,l)=>s+(l.montant||0),0);
     const apfDus=factures.filter(f=>(f.paiements||{}).statut_apf!=='paye');
-    const totApfDus=apfDus.reduce((s,f)=>s+(f.total||0),0);
-    const apfDeleg=segApfDeleg();
+    const totApfDus=apfDus.reduce((s,f)=>s+partFiltree(f),0);
+    const apfDeleg=segApfDeleg().filter(a=>(a.recIds||[]).some(dansFiltre));
     const delegAttente=apfDeleg.filter(a=>a.statut!=='recu');
-    const totDelegAttente=delegAttente.reduce((s,a)=>s+(a.recIds||[]).reduce((t,id)=>{const r=recById(id);return t+(r?dealOf(r).prime||0:0);},0),0);
+    const totDelegAttente=delegAttente.reduce((s,a)=>s+(a.recIds||[]).filter(dansFiltre).reduce((t,id)=>{const r=recById(id);return t+(r?dealOf(r).prime||0:0);},0),0);
     h+=`<div class="sectitle" style="font-size:.66rem">Encaissements & TVA</div><div class="kpis">`;
     h+=gCard({ic:'🏦',lab:'Virements délégataires attendus',val:eur(totDelegAttente),sub:`${delegAttente.length} APF en attente`,col:'#B96A0A',go:"dashGo('compta',{comptaTab:'delegataires'})"});
     h+=gCard({ic:'💳',lab:'APF non soldés',val:eur(totApfDus),sub:`${apfDus.length} appel${apfDus.length>1?'s':''} à facturation`,go:"dashGo('compta',{comptaTab:'paiements'})"});
