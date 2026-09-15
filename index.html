@@ -609,6 +609,7 @@ const PERM_GROUPS=[
   {g:'Navigation & tableau de bord',items:[
     {k:'dashboard',l:'Tableau de bord'},
     {k:'dash_kpis_global',l:'Voir les chiffres de toute la société (sinon les siens)'},
+    {k:'dash_global',l:'Vue globale (activité + comptabilité + stock)'},
     {k:'planning_view',l:'Planning + carte'},
     {k:'planning_view_all',l:'Voir le planning de tous'},
     {k:'rdv_manage',l:'Créer / gérer les RDV'},
@@ -793,7 +794,7 @@ const getAllProducts=()=>load(K.prod,[]);
 const statusById=id=>getAllStatuses().find(s=>s.id===id);
 const productById=id=>getAllProducts().find(p=>p.id===id);
 /* Pages concernées par le segment — seules celles-ci affichent le sélecteur */
-const SEG_PAGES=['dash','leads','clients','planning','rappels','sav','compta','settings'];
+const SEG_PAGES=['dash','dashglobal','leads','clients','planning','rappels','sav','compta','settings'];
 /* Rappel visuel du segment en cours, pour les modules à données séparées */
 function segBanner(){
   if(segAllowed().length<2)return '';
@@ -1805,6 +1806,7 @@ function toast(msg,type){const t=document.getElementById('toast');t.textContent=
 const NAV=[
   {sec:'Principal'},
   {id:'dash',ic:'📊',label:'Tableau de bord',perm:'dashboard'},
+  {id:'dashglobal',ic:'🌐',label:'Vue globale',perm:'dash_global'},
   {id:'planning',ic:'📅',label:'Planning',perm:'planning_view'},
   {id:'rappels',ic:'⏰',label:'Rappels',perm:'rappels_view'},
   {id:'import',ic:'📥',label:'Import des leads',perm:'import_data'},
@@ -1830,6 +1832,7 @@ const PAGES={
   rdvs:{t:'RDVs',s:'Liste des rendez-vous',r:renderRdvs},
   sav:{t:'SAV',s:'Service après-vente',r:renderSav},
   compta:{t:'Comptabilité',s:'Rentabilité globale & appels à facturation poseurs',r:renderComptaGlobal},
+  dashglobal:{t:'Vue globale',s:'Activité, comptabilité et stock en un coup d\'œil',r:renderDashGlobal},
   stock:{t:'Stock',s:'Gestion des matériels et mouvements de stock',r:renderStock},
   users:{t:'Utilisateurs',s:'Comptes, codes d\'accès & permissions',r:renderUsers},
   settings:{t:'Paramètres',s:'Statuts, produits, sources & société',r:renderSettings}
@@ -2042,6 +2045,171 @@ function actionBtn(html,fn,cls){return `<button class="btn ${cls||'btn-pri'} btn
 /* ====================================================================
    TABLEAU DE BORD
    ==================================================================== */
+/* ============================================================
+   VUE GLOBALE — activité, comptabilité, stock
+   Chaque bloc renvoie vers le module concerné
+   ============================================================ */
+function dashGo(page,opts){
+  opts=opts||{};
+  if(opts.comptaTab)COMPTA_TAB=opts.comptaTab;
+  if(opts.factType){FACT_TYPE=opts.factType;FACT_AGENT='';}
+  if(opts.stockTab)STOCK_TAB=opts.stockTab;
+  if(opts.recMode)REC_MODE=opts.recMode;
+  go(page);
+}
+function gCard(o){
+  const clickable=o.go?`onclick="${o.go}" style="cursor:pointer"`:'';
+  return `<div class="kpi ${o.accent?'accent':''}" ${clickable} ${o.border?`style="border:1.5px solid ${o.border};cursor:${o.go?'pointer':'default'}"`:''}>
+    <div class="kico">${o.ic}</div>
+    <div class="klab">${esc(o.lab)}</div>
+    <div class="kval" ${o.col?`style="color:${o.col}"`:''}>${o.val}</div>
+    <div class="ksub">${o.sub||''}${o.go?` <span style="color:var(--blue);font-weight:700">→</span>`:''}</div>
+  </div>`;
+}
+async function renderDashGlobal(){
+  const el=document.getElementById('content');
+  el.innerHTML='<div class="empty"><div class="big">⏳</div>Consolidation des données…</div>';
+  // La comptabilité vit dans Supabase : on la charge avant d'agréger
+  if(can('compta_global')){
+    if(!COMPTA_LOADED){await Promise.all([loadAllCompta(),loadFactures(),loadAllDeal()]);COMPTA_LOADED=true;}
+    else await Promise.all([loadAllDeal(),loadFactures()]);
+  }
+  const eur=n=>(n||0).toLocaleString('fr-FR',{maximumFractionDigits:0})+' €';
+  const eur2=n=>(n||0).toLocaleString('fr-FR',{maximumFractionDigits:2})+' €';
+  const recs=visibleRecs();
+  const sts=getStatuses();
+  const isClient=r=>{const s=statById(r.statusId);return !!(s&&s.phase==='client');};
+  const leads=recs.filter(r=>!isClient(r)),clients=recs.filter(isClient);
+  const now=new Date();
+  const debutMois=new Date(now.getFullYear(),now.getMonth(),1).getTime();
+  const nouveaux=recs.filter(r=>(r.created||0)>=debutMois).length;
+  const wonIds=sts.filter(s=>s.won).map(s=>s.id);
+  const won=recs.filter(r=>wonIds.includes(r.statusId)).length;
+  const conv=recs.length?Math.round(won/recs.length*100):0;
+  let h=segBanner();
+
+  /* ---- Activité commerciale ---- */
+  h+=`<div class="sectitle" style="margin-top:0">Activité commerciale</div><div class="kpis">`;
+  h+=gCard({ic:'👥',lab:'Leads en cours',val:leads.length,sub:`${nouveaux} créé${nouveaux>1?'s':''} ce mois-ci`,go:"dashGo('leads')"});
+  h+=gCard({ic:'🏠',lab:'Clients',val:clients.length,sub:'dossiers transmis & installés',go:"dashGo('clients')"});
+  h+=gCard({ic:'🎯',lab:'Taux de conversion',val:conv+'%',sub:`${won} dossier${won>1?'s':''} gagné${won>1?'s':''}`,accent:true});
+  // RDV
+  const rdvs=getRdvs().filter(rdvVisible);
+  const toTs=d=>{if(!d)return 0;const s=String(d).trim();if(s.includes('/')){const p=s.split('/');return new Date(p[2]+'-'+p[1].padStart(2,'0')+'-'+p[0].padStart(2,'0')+'T00:00:00').getTime();}return new Date(s+'T00:00:00').getTime();};
+  const today0=new Date(now.getFullYear(),now.getMonth(),now.getDate()).getTime();
+  const dans7=today0+7*86400000;
+  const rdvAvenir=rdvs.filter(r=>toTs(r.date)>=today0);
+  const rdvSemaine=rdvAvenir.filter(r=>toTs(r.date)<dans7);
+  const rdvAujourdhui=rdvs.filter(r=>toTs(r.date)===today0);
+  h+=gCard({ic:'📅',lab:'RDV à venir',val:rdvAvenir.length,sub:`${rdvAujourdhui.length} aujourd'hui · ${rdvSemaine.length} sous 7 jours`,go:"dashGo('planning')"});
+  h+=`</div>`;
+
+  /* ---- Répartition par statut ---- */
+  const parStatut=sts.map(s=>({s,nb:recs.filter(r=>r.statusId===s.id).length})).filter(x=>x.nb>0);
+  if(parStatut.length){
+    const maxNb=Math.max(...parStatut.map(x=>x.nb));
+    h+=`<div class="panel"><div class="panel-h"><h3>Répartition du pipeline</h3><div class="sp"><span class="muted">${recs.length} dossier${recs.length>1?'s':''}</span></div></div><div class="panel-b">`;
+    parStatut.forEach(({s,nb})=>{
+      h+=`<div style="display:flex;align-items:center;gap:.7rem;margin-bottom:.45rem;cursor:pointer" onclick="LF.status='${s.id}';dashGo('${s.phase==='client'?'clients':'leads'}')">
+        <span style="width:150px;font-size:.8rem;font-weight:700;color:${s.color||'var(--text)'};flex-shrink:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(s.name)}</span>
+        <div style="flex:1;background:#EEF1F4;border-radius:20px;height:16px;overflow:hidden"><div style="width:${Math.round(nb/maxNb*100)}%;height:100%;background:${s.color||'var(--green)'};border-radius:20px"></div></div>
+        <span style="width:42px;text-align:right;font-weight:800;font-size:.84rem">${nb}</span>
+      </div>`;
+    });
+    h+=`</div></div>`;
+  }
+
+  /* ---- Comptabilité ---- */
+  if(can('compta_global')){
+    const cRecs=segRecs().filter(hasComptaData);
+    let recettes=0,charges=0,sumPoseur=0,sumCc=0,sumVt=0,sumAud=0;
+    cRecs.forEach(r=>{
+      const m=recordComptaMetrics(r);
+      recettes+=m.prime||0;charges+=m.charges||0;
+      const c=comptaOf(r);
+      if(!factureActive(r,'poseur'))sumPoseur+=m.aPayerPoseur||0;
+      if(!factureActive(r,'callcenter'))sumCc+=m.aPayerCallCenter||0;
+      if(!factureActive(r,'vt'))sumVt+=m.aPayerVt||0;
+      if(!factureActive(r,'auditeur'))sumAud+=m.aPayerAudit||0;
+    });
+    const marge=recettes-charges;
+    const margePct=recettes?(marge/recettes*100):0;
+    h+=`<div class="sectitle">Comptabilité</div><div class="kpis">`;
+    h+=gCard({ic:'💶',lab:'Recettes',val:eur(recettes),sub:`${cRecs.length} dossier${cRecs.length>1?'s':''} chiffré${cRecs.length>1?'s':''}`,go:"dashGo('compta',{comptaTab:'resume'})"});
+    h+=gCard({ic:'📤',lab:'Charges',val:eur(charges),sub:'poseurs, call center, VT, audits',go:"dashGo('compta',{comptaTab:'resume'})"});
+    h+=gCard({ic:'📈',lab:'Marge nette',val:eur(marge),sub:recettes?margePct.toFixed(1)+'% de marge':'',accent:true,go:"dashGo('compta',{comptaTab:'resume'})"});
+    h+=`</div>`;
+    h+=`<div class="sectitle" style="font-size:.66rem">Restant à facturer</div><div class="kpis">`;
+    h+=gCard({ic:'🔧',lab:'À verser aux poseurs',val:eur(sumPoseur),sub:'créer un appel à facturation',col:'#B96A0A',go:"dashGo('compta',{comptaTab:'facturation',factType:'poseur'})"});
+    h+=gCard({ic:'📞',lab:'À verser au call center',val:eur(sumCc),sub:'créer un appel à facturation',col:'#2D7DD2',go:"dashGo('compta',{comptaTab:'facturation',factType:'callcenter'})"});
+    h+=gCard({ic:'🧰',lab:'À verser aux VT',val:eur(sumVt),sub:'créer un appel à facturation',go:"dashGo('compta',{comptaTab:'facturation',factType:'vt'})"});
+    h+=gCard({ic:'📝',lab:'À verser aux auditeurs',val:eur(sumAud),sub:'créer un appel à facturation',go:"dashGo('compta',{comptaTab:'facturation',factType:'auditeur'})"});
+    h+=`</div>`;
+    // Encaissements et TVA
+    const factures=segFactures();
+    const apfDus=factures.filter(f=>(f.paiements||{}).statut_apf!=='paye');
+    const totApfDus=apfDus.reduce((s,f)=>s+(f.total||0),0);
+    const apfDeleg=segApfDeleg();
+    const delegAttente=apfDeleg.filter(a=>a.statut!=='recu');
+    const totDelegAttente=delegAttente.reduce((s,a)=>s+(a.recIds||[]).reduce((t,id)=>{const r=recById(id);return t+(r?dealOf(r).prime||0:0);},0),0);
+    h+=`<div class="sectitle" style="font-size:.66rem">Encaissements & TVA</div><div class="kpis">`;
+    h+=gCard({ic:'🏦',lab:'Virements délégataires attendus',val:eur(totDelegAttente),sub:`${delegAttente.length} APF en attente`,col:'#B96A0A',go:"dashGo('compta',{comptaTab:'delegataires'})"});
+    h+=gCard({ic:'💳',lab:'APF non soldés',val:eur(totApfDus),sub:`${apfDus.length} appel${apfDus.length>1?'s':''} à facturation`,go:"dashGo('compta',{comptaTab:'paiements'})"});
+    h+=gCard({ic:'🏛️',lab:'TVA à payer',val:'Voir',sub:'sur primes encaissées',go:"dashGo('compta',{comptaTab:'tva_payer'})"});
+    h+=gCard({ic:'✅',lab:'TVA à récupérer',val:'Voir',sub:'sur charges et achats HT',go:"dashGo('compta',{comptaTab:'tva_recup'})"});
+    h+=`</div>`;
+  }
+
+  /* ---- Stock & fournisseurs ---- */
+  if(can('stock_view')){
+    const mats=getMats(),mvts=getMvts();
+    const achats=mvts.filter(v=>['entree','reception'].includes(v.sens));
+    const totAchete=achats.reduce((s,v)=>s+(v.totalHT||0),0);
+    const duFourn=achats.filter(v=>(v.paiement||{}).statut!=='paye').reduce((s,v)=>s+(v.totalHT||0),0);
+    const ttc=n=>n*(1+tvaRate()/100);
+    const alertes=mats.filter(m=>{
+      if(m.typeStock==='circulant'||m.typeStock==='commande')return false;
+      const e=mvts.filter(v=>v.materielId===m.id&&v.sens==='entree').reduce((s,v)=>s+(v.qte||0),0);
+      const so=mvts.filter(v=>v.materielId===m.id&&v.sens==='sortie').reduce((s,v)=>s+(v.qte||0),0)+calcSortiesAuto(m);
+      return m.seuilAlerte&&(e-so)<=m.seuilAlerte;
+    });
+    const valeurStock=mats.reduce((s,m)=>{
+      if(m.typeStock==='commande')return s;
+      const e=mvts.filter(v=>v.materielId===m.id&&v.sens==='entree').reduce((a,v)=>a+(v.qte||0),0);
+      const so=mvts.filter(v=>v.materielId===m.id&&v.sens==='sortie').reduce((a,v)=>a+(v.qte||0),0)+calcSortiesAuto(m);
+      const reste=m.typeStock==='circulant'?e:Math.max(0,e-so);
+      return s+reste*coutUnitaireMoyen(m,mvts);
+    },0);
+    h+=`<div class="sectitle">Stock & fournisseurs</div><div class="kpis">`;
+    h+=gCard({ic:'💶',lab:'Valeur du stock',val:eur(valeurStock),sub:`${mats.length} matériel${mats.length>1?'s':''} au catalogue`,go:"dashGo('stock',{stockTab:'etat'})"});
+    h+=gCard({ic:'🛒',lab:'Total acheté',val:eur(totAchete),sub:'HT, remises et frais inclus',go:"dashGo('stock',{stockTab:'mouvements'})"});
+    h+=gCard({ic:'🧾',lab:'Reste à payer fournisseurs',val:eur(ttc(duFourn)),sub:'TTC · suivi des paiements',col:duFourn>0?'#B96A0A':'',go:"dashGo('compta',{comptaTab:'fournisseurs'})"});
+    h+=gCard({ic:alertes.length?'⚠️':'✅',lab:'Alertes stock bas',val:alertes.length,sub:alertes.length?alertes.map(m=>esc(m.nom)).slice(0,2).join(', '):'Tout est OK',col:alertes.length?'var(--coral)':'var(--green-deep)',border:alertes.length?'rgba(230,57,70,.3)':'',go:"dashGo('stock',{stockTab:'etat'})"});
+    h+=`</div>`;
+  }
+
+  /* ---- Prochains RDV ---- */
+  if(rdvAvenir.length){
+    const prochains=rdvAvenir.sort((a,b)=>toTs(a.date)-toTs(b.date)).slice(0,6);
+    h+=`<div class="panel"><div class="panel-h"><h3>Prochains rendez-vous</h3><div class="sp"><button class="btn btn-ghost btn-sm" onclick="dashGo('planning')">Voir le planning →</button></div></div><div class="panel-b">`;
+    h+=`<div class="tbl-wrap"><table class="tbl"><thead><tr><th>Date</th><th>Heure</th><th>Type</th><th>Dossier</th><th>Client</th><th>Intervenant</th></tr></thead><tbody>`;
+    prochains.forEach(rd=>{
+      const r=recById(rd.recordId);
+      h+=`<tr ${r?`style="cursor:pointer" onclick="openDossier('${r.id}')"`:''}>
+        <td class="muted">${new Date(toTs(rd.date)).toLocaleDateString('fr-FR')}</td>
+        <td style="font-weight:700">${esc(rd.heure||'—')}</td>
+        <td>${esc(rd.type||'—')}</td>
+        <td>${r?`<span class="dossier-tag">${esc(r.dossier||'')}</span>`:'—'}</td>
+        <td>${r?esc(clientNameOf(r)):'—'}</td>
+        <td class="muted">${esc(rdvWho(rd)||'—')}</td>
+      </tr>`;
+    });
+    h+=`</tbody></table></div></div></div>`;
+  }
+  el.innerHTML=h;
+  document.getElementById('pageActions').innerHTML='';
+}
+
 function renderDash(){
   const recs=visibleRecs(),rdvs=getRdvs(),sts=getStatuses(),users=getUsers();
   const wonIds=sts.filter(s=>s.won).map(s=>s.id);
