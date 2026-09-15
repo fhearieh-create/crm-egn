@@ -590,12 +590,12 @@ async function pullProfiles(){
   try{
     const{data,error}=await SUPA.from('profiles').select('*');
     if(error)throw error;
-    const users=(data||[]).map(p=>({id:p.id,code:p.code,prenom:p.prenom,nom:p.nom,email:p.email,team:p.team,role:p.role,perms:p.perms||{},active:p.active,assignedUsers:p.assigned_users||[],sourceId:p.source_id||'',created:p.created_at?new Date(p.created_at).getTime():Date.now()}));
+    const users=(data||[]).map(p=>({id:p.id,code:p.code,prenom:p.prenom,nom:p.nom,email:p.email,team:p.team,role:p.role,perms:p.perms||{},active:p.active,whatsapp:p.whatsapp||'',assignedUsers:p.assigned_users||[],sourceId:p.source_id||'',created:p.created_at?new Date(p.created_at).getTime():Date.now()}));
     _localSave(K.users,users);
   }catch(e){console.error('[sync pull] profiles',e);}
 }
-async function pushAssignedUsers(userId,assignedUsers,sourceId){
-  try{await SUPA.from('profiles').update({assigned_users:assignedUsers||[],source_id:sourceId||null}).eq('id',userId);}
+async function pushAssignedUsers(userId,assignedUsers,sourceId,whatsapp){
+  try{await SUPA.from('profiles').update({assigned_users:assignedUsers||[],source_id:sourceId||null,whatsapp:whatsapp||''}).eq('id',userId);}
   catch(e){console.error('[sync] assigned_users/source',e);toast('⚠️ Synchronisation des accès/source affiliée échouée','err');}
 }
 async function syncPullAll(){await Promise.all([...SYNC_TABLES.map(pullTable),pullProfiles()]);}
@@ -5966,7 +5966,7 @@ async function saveUser(){
   Object.assign(u,{prenom,nom,email,whatsapp,team,role,code,pwd,perms,sourceId:role==='commercial'?(val('us_source')||''):(u.sourceId||''),assignedUsers:US_ASSIGN.filter(x=>x!==u.id)});
   assignUserToFamily(u.id,role==='poseur'?familyId:'');
   save(K.users,users);
-  await pushAssignedUsers(u.id,u.assignedUsers,u.sourceId);
+  await pushAssignedUsers(u.id,u.assignedUsers,u.sourceId,u.whatsapp);
   if(u.id===ME.id){ME=u;document.getElementById('meName').textContent=ME.prenom+' '+ME.nom;document.getElementById('meRole').textContent=ROLES[ME.role]||ME.role;}
   closeModal();buildNav();renderUsers();toast(isNew?'Utilisateur créé ✓':'Utilisateur enregistré ✓','ok');
 }
