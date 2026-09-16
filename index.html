@@ -3652,17 +3652,49 @@ function renderComptaFacturation(){
   if(FACT_AGENT){
     const at=AGENT_TYPES[FACT_TYPE];
     const agentInfo=at.getAgent(FACT_AGENT);
-    const recs=segRecs().filter(r=>at.agentIdFn(r)===FACT_AGENT);
+    const recs=segRecs().filter(r=>at.agentIdFn(r)===FACT_AGENT)
+      .filter(r=>!FACT_SRC||r.sourceId===FACT_SRC)
+      .filter(r=>!FACT_OP||r.productId===FACT_OP)
+      .filter(r=>{
+        if(!FACT_Q)return true;
+        const q=FACT_Q.toLowerCase();
+        const site=r.opFields?Object.values(r.opFields).join(' '):'';
+        return [r.dossier,clientNameOf(r),r.ville,r.cp,r.siret,site].join(' ').toLowerCase().includes(q);
+      })
+      .filter(r=>{
+        if(!FACT_DU&&!FACT_AU)return true;
+        const t=tsInstallation(r);
+        if(t===null)return false; // sans date d'installation, hors periode
+        if(FACT_DU&&t<new Date(FACT_DU+'T00:00:00').getTime())return false;
+        if(FACT_AU&&t>new Date(FACT_AU+'T23:59:59').getTime())return false;
+        return true;
+      });
     const showDejaFact=load('egncrm_fact_show_deja','0')==='1';
     const rows=recs.map(r=>({r,m:recordComptaMetrics(r)})).filter(x=>at.montantFn(x.m)>0&&(showDejaFact||!factureActive(x.r,FACT_TYPE)));
     h+=`<div class="panel"><div class="panel-h"><h3>Dossiers à facturer</h3><div class="sp"><span class="muted">${rows.length} dossier${rows.length>1?'s':''}</span></div></div><div class="panel-b">`;
-    if(FACT_SRC||FACT_OP){
+    // Recherche client et periode d'installation
+    const fs="font-family:'Saira',sans-serif;font-size:.8rem;border:1.5px solid var(--border-grey);border-radius:8px;padding:.35rem .65rem;background:#fff;outline:none";
+    h+=`<div style="display:flex;gap:.5rem;flex-wrap:wrap;align-items:center;margin-bottom:.7rem">
+      <input id="fact_q" type="text" value="${esc(FACT_Q)}" placeholder="🔍 Rechercher un client, un n° de dossier, une ville…" oninput="setFactFiltre('q',this)" style="${fs};flex:1;min-width:200px">
+      <span style="font-size:.72rem;color:var(--text-mut);font-weight:700">Installé du</span>
+      <input type="date" value="${esc(FACT_DU)}" onchange="setFactFiltre('du',this)" style="${fs}">
+      <span style="font-size:.72rem;color:var(--text-mut);font-weight:700">au</span>
+      <input type="date" value="${esc(FACT_AU)}" onchange="setFactFiltre('au',this)" style="${fs}">
+      ${(FACT_Q||FACT_DU||FACT_AU||FACT_SRC||FACT_OP)?`<button class="btn btn-ghost btn-sm" style="font-size:.72rem" onclick="resetFactFiltres()">✕ Réinitialiser</button>`:''}
+    </div>`;
+    if(FACT_SRC||FACT_OP||FACT_Q||FACT_DU||FACT_AU){
       const s=FACT_SRC?getSources().find(x=>x.id===FACT_SRC):null;
       const o=FACT_OP?getAllProducts().find(x=>x.id===FACT_OP):null;
+      const fr=d=>{if(!d)return '';const p=d.split('-');return `${p[2]}/${p[1]}/${p[0]}`;};
       h+=`<div style="background:rgba(45,125,210,.09);border-left:3px solid var(--blue);border-radius:0 8px 8px 0;padding:.5rem .9rem;margin-bottom:.7rem;font-size:.8rem;display:flex;align-items:center;gap:.6rem;flex-wrap:wrap">
         <span style="font-weight:700;color:var(--blue)">Sélection restreinte</span>
-        <span class="muted">${[s?'source : '+esc(s.name):'',o?'opération : '+esc(o.name):''].filter(Boolean).join(' · ')}</span>
-        <button class="btn btn-ghost btn-sm" style="font-size:.72rem;margin-left:auto" onclick="FACT_SRC='';FACT_OP='';renderComptaTabs()">✕ Retirer les filtres</button>
+        <span class="muted">${[
+          s?'source : '+esc(s.name):'',
+          o?'opération : '+esc(o.name):'',
+          FACT_Q?'recherche : « '+esc(FACT_Q)+' »':'',
+          (FACT_DU||FACT_AU)?'installé '+(FACT_DU?'du '+fr(FACT_DU):'')+(FACT_AU?' au '+fr(FACT_AU):''):''
+        ].filter(Boolean).join(' · ')}</span>
+        <button class="btn btn-ghost btn-sm" style="font-size:.72rem;margin-left:auto" onclick="resetFactFiltres()">✕ Retirer les filtres</button>
       </div>`;
     }
     h+=`<div style="display:flex;align-items:center;gap:1rem;margin-bottom:.7rem;flex-wrap:wrap">
