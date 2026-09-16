@@ -3414,6 +3414,28 @@ function statutComptaSelect(r,type){
 }
 let COMPTA_TAB='resume',FACT_TYPE='poseur',FACT_AGENT='',COMPTA_LOADED=false;
 let FACT_SRC='',FACT_OP=''; // filtres facultatifs de l'appel a facturation
+let FACT_Q='',FACT_DU='',FACT_AU=''; // recherche client et periode d'installation
+let FACT_FOCUS=null;
+function setFactFiltre(cle,el){
+  if(cle==='q'){FACT_Q=el.value;FACT_FOCUS=el.selectionStart||0;}
+  else if(cle==='du')FACT_DU=el.value;
+  else FACT_AU=el.value;
+  renderComptaTabs();
+  if(FACT_FOCUS!==null){
+    const i=document.getElementById('fact_q');
+    if(i){i.focus();try{i.setSelectionRange(FACT_FOCUS,FACT_FOCUS);}catch(e){}}
+    FACT_FOCUS=null;
+  }
+}
+function resetFactFiltres(){FACT_SRC='';FACT_OP='';FACT_Q='';FACT_DU='';FACT_AU='';renderComptaTabs();}
+/* Date d'installation ramenee a un horodatage, pour comparer une periode */
+function tsInstallation(r){
+  const d=dateInstallation(r);if(!d)return null;
+  const s=String(d).trim();
+  const iso=s.includes('/')?(()=>{const p=s.split('/');return p[2]+'-'+p[1].padStart(2,'0')+'-'+p[0].padStart(2,'0');})():s;
+  const t=new Date(iso+'T00:00:00').getTime();
+  return isNaN(t)?null:t;
+}
 async function renderComptaGlobal(){
   document.getElementById('pageActions').innerHTML='';
   if(!COMPTA_LOADED){
