@@ -2052,7 +2052,7 @@ function actionBtn(html,fn,cls){return `<button class="btn ${cls||'btn-pri'} btn
 function dashGo(page,opts){
   opts=opts||{};
   if(opts.comptaTab)COMPTA_TAB=opts.comptaTab;
-  if(opts.factType){FACT_TYPE=opts.factType;FACT_AGENT='';}
+  if(opts.factType){FACT_TYPE=opts.factType;FACT_AGENT='';FACT_SRC='';FACT_OP='';}
   if(opts.stockTab)STOCK_TAB=opts.stockTab;
   if(opts.recMode)REC_MODE=opts.recMode;
   go(page);
@@ -2239,8 +2239,42 @@ async function renderDashGlobal(){
   document.getElementById('pageActions').innerHTML='';
 }
 
+/* ============================================================
+   TABLEAU DE BORD — filtre par operation et pipeline interactif
+   ============================================================ */
+let DASH_OP='';
+function setDashOp(v){DASH_OP=v;renderDash();}
+function dashOpBar(){
+  const dispo=[...new Set(visibleRecs().map(r=>r.productId).filter(Boolean))]
+    .map(id=>getAllProducts().find(o=>o.id===id)).filter(Boolean)
+    .sort((a,b)=>a.name.localeCompare(b.name));
+  if(!dispo.length)return '';
+  if(DASH_OP&&!dispo.some(o=>o.id===DASH_OP))DASH_OP='';
+  const fs="font-family:'Saira',sans-serif;font-size:.8rem;border:1.5px solid var(--border-grey);border-radius:8px;padding:.35rem .7rem;background:#fff;outline:none;font-weight:700";
+  return `<div style="display:flex;gap:.5rem;align-items:center;flex-wrap:wrap;margin-bottom:.9rem">
+    <span style="font-size:.7rem;font-weight:700;color:var(--text-mut);text-transform:uppercase;letter-spacing:.5px">Opération</span>
+    <select onchange="setDashOp(this.value)" style="${fs}">
+      <option value="">Toutes les opérations</option>
+      ${dispo.map(o=>`<option value="${o.id}" ${DASH_OP===o.id?'selected':''}>${esc(o.name)}</option>`).join('')}
+    </select>
+    ${DASH_OP?`<span style="font-size:.74rem;font-weight:700;background:rgba(45,125,210,.12);color:var(--blue);border-radius:6px;padding:2px 9px">Chiffres filtrés</span>
+      <button class="btn btn-ghost btn-sm" style="font-size:.72rem" onclick="setDashOp('')">✕ Tout afficher</button>`:''}
+  </div>`;
+}
+/* Clic sur une ligne du pipeline : ouvre la liste filtree sur ce statut */
+function dashOuvrirStatut(sid){
+  const s=statById(sid);if(!s)return;
+  LF.status=sid;
+  LF.prod=DASH_OP||'';      // on conserve le filtre opération du tableau de bord
+  LF.q='';LF.src='';LF.user='';LF.sousstatut='';LF.zone='';LF.crmDevis='';
+  go(s.phase==='client'?'clients':'leads');
+}
 function renderDash(){
-  const recs=visibleRecs(),rdvs=getRdvs(),sts=getStatuses(),users=getUsers();
+  const sts=getStatuses(),users=getUsers();
+  // Filtre par operation : les indicateurs et le pipeline s'y adaptent
+  const recs=visibleRecs().filter(r=>!DASH_OP||r.productId===DASH_OP);
+  const idsDash=new Set(recs.map(r=>r.id));
+  const rdvs=getRdvs().filter(rd=>!DASH_OP||idsDash.has(rd.recordId));
   const wonIds=sts.filter(s=>s.won).map(s=>s.id);
   const won=recs.filter(r=>wonIds.includes(r.statusId)).length;
   const conv=recs.length?Math.round(won/recs.length*100):0;
@@ -2264,7 +2298,8 @@ function renderDash(){
   const counts={};sts.forEach(s=>counts[s.id]=0);recs.forEach(r=>{if(counts[r.statusId]!=null)counts[r.statusId]++;});
   const maxC=Math.max(1,...Object.values(counts));
 
-  let h=`<div class="kpis">
+  let h=dashOpBar();
+  h+=`<div class="kpis">
     <div class="kpi"><div class="kico">👥</div><div class="klab">Leads totaux</div><div class="kval">${recs.length}</div><div class="ksub">tous statuts</div></div>
     <div class="kpi"><div class="kico">📅</div><div class="klab">RDV à venir</div><div class="kval">${upcoming.length}</div><div class="ksub">${visRdvs.length} au total</div></div>
     <div class="kpi accent"><div class="kico">✅</div><div class="klab">Taux de conversion</div><div class="kval">${conv}%</div><div class="ksub">${won} installé${won>1?'s':''}</div></div>
@@ -2272,7 +2307,15 @@ function renderDash(){
   </div>
   <div class="grid2">
     <div class="panel"><div class="panel-h"><h3>Pipeline commercial</h3></div><div class="panel-b">`;
-  sts.forEach(s=>{const n=counts[s.id]||0;h+=`<div class="pipe-row"><div class="pl"><span class="pdot" style="background:${s.color}"></span>${esc(s.name)}</div><div class="pbar"><div class="pfill" style="width:${n/maxC*100}%;background:${s.color}"></div></div><div class="pn">${n}</div></div>`;});
+  sts.forEach(s=>{
+    const n=counts[s.id]||0;
+    const cliquable=n>0;
+    h+=`<div class="pipe-row" ${cliquable?`onclick="dashOuvrirStatut('${s.id}')" style="cursor:pointer" title="Voir les ${n} dossier${n>1?'s':''} à ce statut"`:''}>
+      <div class="pl"><span class="pdot" style="background:${s.color}"></span>${esc(s.name)}</div>
+      <div class="pbar"><div class="pfill" style="width:${n/maxC*100}%;background:${s.color}"></div></div>
+      <div class="pn">${n}${cliquable?' <span style="color:var(--blue);font-weight:700">›</span>':''}</div>
+    </div>`;
+  });
   h+=`</div></div>
     <div class="panel"><div class="panel-h"><h3>Prochains RDV</h3></div><div class="panel-b">`;
   if(!dashList.length){h+=`<div class="empty"><div class="big">🗓️</div>Aucun RDV à venir</div>`;}
@@ -3303,6 +3346,7 @@ function statutComptaSelect(r,type){
   return `<select class="statut-compta-sel" onchange="updateFactureStatut('${r.id}','${type}',this.value)" style="font-size:.72rem;padding:.2rem .4rem;border-radius:6px;border:1px solid var(--border-grey)">${Object.entries(STATUT_COMPTA).map(([k,l])=>`<option value="${k}" ${(f.statut||'transmis')===k?'selected':''}>${l}</option>`).join('')}</select>`;
 }
 let COMPTA_TAB='resume',FACT_TYPE='poseur',FACT_AGENT='',COMPTA_LOADED=false;
+let FACT_SRC='',FACT_OP=''; // filtres facultatifs de l'appel a facturation
 async function renderComptaGlobal(){
   document.getElementById('pageActions').innerHTML='';
   if(!COMPTA_LOADED){
@@ -3526,7 +3570,7 @@ function renderComptaFacturation(){
   const eur=n=>(n||0).toLocaleString('fr-FR',{maximumFractionDigits:2})+' €';
   let h=`<div class="panel"><div class="panel-h"><h3>Créer un appel à facturation</h3></div><div class="panel-b">
     <div class="fgrid">
-      <div class="fld"><label>Type</label><select id="fact_type" onchange="FACT_TYPE=this.value;FACT_AGENT='';renderComptaTabs()">
+      <div class="fld"><label>Type</label><select id="fact_type" onchange="FACT_TYPE=this.value;FACT_AGENT='';FACT_SRC='';FACT_OP='';renderComptaTabs()">
         <option value="poseur" ${FACT_TYPE==='poseur'?'selected':''}>🔧 Poseur</option>
         <option value="callcenter" ${FACT_TYPE==='callcenter'?'selected':''}>📞 Call Center (Source / Régie)</option>
         <option value="vt" ${FACT_TYPE==='vt'?'selected':''}>🧰 Visite Technique</option>
@@ -3545,6 +3589,15 @@ function renderComptaFacturation(){
     const showDejaFact=load('egncrm_fact_show_deja','0')==='1';
     const rows=recs.map(r=>({r,m:recordComptaMetrics(r)})).filter(x=>at.montantFn(x.m)>0&&(showDejaFact||!factureActive(x.r,FACT_TYPE)));
     h+=`<div class="panel"><div class="panel-h"><h3>Dossiers à facturer</h3><div class="sp"><span class="muted">${rows.length} dossier${rows.length>1?'s':''}</span></div></div><div class="panel-b">`;
+    if(FACT_SRC||FACT_OP){
+      const s=FACT_SRC?getSources().find(x=>x.id===FACT_SRC):null;
+      const o=FACT_OP?getAllProducts().find(x=>x.id===FACT_OP):null;
+      h+=`<div style="background:rgba(45,125,210,.09);border-left:3px solid var(--blue);border-radius:0 8px 8px 0;padding:.5rem .9rem;margin-bottom:.7rem;font-size:.8rem;display:flex;align-items:center;gap:.6rem;flex-wrap:wrap">
+        <span style="font-weight:700;color:var(--blue)">Sélection restreinte</span>
+        <span class="muted">${[s?'source : '+esc(s.name):'',o?'opération : '+esc(o.name):''].filter(Boolean).join(' · ')}</span>
+        <button class="btn btn-ghost btn-sm" style="font-size:.72rem;margin-left:auto" onclick="FACT_SRC='';FACT_OP='';renderComptaTabs()">✕ Retirer les filtres</button>
+      </div>`;
+    }
     h+=`<div style="display:flex;align-items:center;gap:1rem;margin-bottom:.7rem;flex-wrap:wrap">
       <p class="muted" style="font-size:.76rem;flex:1">💡 Les dossiers déjà facturés sont masqués par défaut.</p>
       <label style="display:flex;align-items:center;gap:.4rem;font-size:.82rem;cursor:pointer;white-space:nowrap">
