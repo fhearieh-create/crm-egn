@@ -2984,9 +2984,10 @@ function renderComptaPanel(r){
   const ffTotal=ff.reduce((s,x)=>s+(x.amount||0),0);
   const ffPoseur=ff.filter(x=>x.origin==='poseur').reduce((s,x)=>s+(x.amount||0),0);
   const ffSociete=ffTotal-ffPoseur;
+  const march=marchandiseDossier(r);
   const prime=primeOf(r)||0;
   const recettes=(prime||0);
-  const charges=pc.montant+ccC.montant+vtC.montant+auditC.montant+prC.montant+ffTotal;
+  const charges=pc.montant+ccC.montant+vtC.montant+auditC.montant+prC.montant+ffTotal+march.ttc;
   const marge=recettes-charges;
   const margePct=recettes>0?(marge/recettes*100):0;
   const poseurLocked=factureActive(r,'poseur');
@@ -3054,6 +3055,18 @@ function renderComptaPanel(r){
       <div class="info-row">${ovLine(r,'callcenter','Coût Call Center'+(ccC.mode?` — ${esc(ccC.label)}`:''),ccC.montant,c)}</div>
       <div class="info-row">${ovLine(r,'vt','Coût VT — '+esc(vtC.label),vtC.montant,c)}</div>
       <div class="info-row">${ovLine(r,'audit','Coût Audit — '+esc(auditC.label),auditC.montant,c)}</div>
+      ${(function(){
+        const mr=march;
+        if(!r.fournisseurDossier)return `<div class="info-row"><span class="il">Marchandise <span class="muted" style="font-size:.68rem">(fournisseur non renseigné dans la fiche)</span></span><span class="iv muted">—</span></div>`;
+        if(!mr.ttc)return `<div class="info-row"><span class="il">Marchandise — ${esc(mr.fournisseur)} <span class="muted" style="font-size:.68rem">(aucune quantité saisie ou tarif absent du catalogue)</span></span><span class="iv muted">—</span></div>`;
+        const det=mr.lignes.map(l=>`${l.qte} ${esc(l.unite)} × ${eur(l.prix)}`).join(' · ');
+        return `<div class="info-row">
+          <span class="il">Marchandise — <b style="color:var(--purple)">${esc(mr.fournisseur)}</b>
+            <span class="muted" style="font-size:.68rem;display:block">${esc(det)}</span></span>
+          <span class="iv">${eur(mr.ttc)}
+            <span class="muted" style="display:block;font-size:.64rem;font-weight:500">HT ${eur(mr.ht)} · TVA ${eur(mr.tva)}</span></span>
+        </div>`;
+      })()}
       <div class="info-row"><span class="il">Faux frais — Société</span><span class="iv">${ttcHt(ffSociete)}</span></div>
       <div class="info-row"><span class="il">Faux frais — Poseur</span><span class="iv">${ttcHt(ffPoseur)}</span></div>
       <div class="info-row" style="font-weight:700"><span class="il">Charges totales</span><span class="iv" style="font-weight:700">${ttcHt(charges)}</span></div>
@@ -3264,6 +3277,46 @@ async function delFauxFrais(id,fid){
 /* ====================================================================
    COMPTABILITÉ GLOBALE (Super Admin / Admin) — résumé & appels à facturation poseurs
    ==================================================================== */
+/* ============================================================
+   MARCHANDISE D'UN DOSSIER
+   Croise le fournisseur choisi dans la fiche avec le catalogue :
+   quantite posee x prix du fournisseur pour ce materiel.
+   ============================================================ */
+function marchandiseDossier(r){
+  const vide={fournisseur:'',lignes:[],ht:0,tva:0,ttc:0,qte:0};
+  if(!r||!r.fournisseurDossier)return vide;
+  const fourn=r.fournisseurDossier;
+  const t=tvaRate()/100;
+  const lignes=[];
+  getAllMats().forEach(m=>{
+    // Le materiel doit concerner l'operation du dossier et ce fournisseur
+    if(m.operationId&&m.operationId!==r.productId)return;
+    const f=(m.fournisseurs||[]).find(x=>x.nom===fourn);
+    if(!f)return;
+    const prix=parseFloat(String(f.prix??'').replace(',','.'))||0;
+    if(!prix)return;
+    // Quantite posee : somme des champs configures sur le materiel
+    const champs=[].concat(m.champsDossier||m.champDossier||[]).filter(Boolean);
+    let qte=0;
+    champs.forEach(cid=>{
+      let v=r.opFields?r.opFields[cid]:null;
+      if(v==null){
+        const op=getAllProducts().find(p=>p.id===r.productId);
+        const fd=(op?op.fields||[]:[]).find(x=>x.key===cid||x.label===cid);
+        if(fd&&r.opFields)v=r.opFields[fd.id];
+      }
+      qte+=parseFloat(v)||0;
+    });
+    if(!qte)return;
+    const ht=Math.round(qte*prix*100)/100;
+    lignes.push({materiel:m.nom,unite:m.unite||'u',qte,prix,ht});
+  });
+  if(!lignes.length)return{...vide,fournisseur:fourn};
+  const ht=Math.round(lignes.reduce((s,l)=>s+l.ht,0)*100)/100;
+  const tva=Math.round(ht*t*100)/100;
+  return{fournisseur:fourn,lignes,ht,tva,ttc:Math.round((ht+tva)*100)/100,
+         qte:lignes.reduce((s,l)=>s+l.qte,0)};
+}
 function recordComptaMetrics(r){
   const c=comptaOf(r);
   const pc=effectiveCost(r,'poseur',poseurCostFor);
@@ -3274,16 +3327,17 @@ function recordComptaMetrics(r){
   const ff=c.fauxFrais||[];
   const ffTotal=ff.reduce((s,x)=>s+(x.amount||0),0);
   const ffPoseur=ff.filter(x=>x.origin==='poseur').reduce((s,x)=>s+(x.amount||0),0);
+  const march=marchandiseDossier(r);
   const prime=primeOf(r)||0;
   const recettes=prime;
-  const charges=pc.montant+ccC.montant+vtC.montant+auditC.montant+prC.montant+ffTotal;
+  const charges=pc.montant+ccC.montant+vtC.montant+auditC.montant+prC.montant+ffTotal+march.ttc;
   const marge=recettes-charges;
   const margePct=recettes>0?(marge/recettes*100):0;
   const aPayerPoseur=pc.montant+ffPoseur;
   const aPayerCallCenter=ccC.montant;
   const aPayerVt=vtC.montant;
   const aPayerAudit=auditC.montant;
-  return{c,pc,ccC,vtC,auditC,prC,ffTotal,ffPoseur,prime,recettes,charges,marge,margePct,aPayerPoseur,aPayerCallCenter,aPayerVt,aPayerAudit};
+  return{c,pc,ccC,vtC,auditC,prC,march,ffTotal,ffPoseur,prime,recettes,charges,marge,margePct,aPayerPoseur,aPayerCallCenter,aPayerVt,aPayerAudit};
 }
 function hasComptaData(r){
   const c=COMPTA_CACHE[r.id];
