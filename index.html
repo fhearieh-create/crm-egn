@@ -1129,6 +1129,22 @@ function dateVisiteVt(r){
   const rdv=subAssignedFor(r,'vt');
   return rdv?rdv.date:'';
 }
+/* Date d'installation : dernier RDV de pose du dossier */
+function dateInstallation(r){
+  const rdvs=rdvsOf(r)
+    .filter(x=>rdvKind(x.type)==='poseur')
+    .sort((a,b)=>((a.date||'')+(a.heure||'')).localeCompare((b.date||'')+(b.heure||'')));
+  return rdvs.length?rdvs[rdvs.length-1].date:'';
+}
+/* Meme date, au format francais, prete a l'affichage */
+function dateInstallationFr(r){
+  const d=dateInstallation(r);
+  if(!d)return '';
+  const s=String(d).trim();
+  if(s.includes('/'))return s;
+  const p=s.split('-');
+  return p.length===3?`${p[2]}/${p[1]}/${p[0]}`:s;
+}
 /* ---- coût énergie actuel estimé = consommation saisie (manuelle) × tarif configuré ---- */
 function coutEnergieActuel(consommation,typeEnergie){
   const s=getSettings();
@@ -3669,7 +3685,7 @@ function renderComptaFacturation(){
           :tvaM==='ht'
           ?`${eur(at.montantFn(m))} <span style="font-size:.62rem;font-weight:500">· payé HT</span>`
           :`${eur(at.montantFn(m))} <span style="font-size:.62rem;font-weight:500">· HT ${eur(htOf(at.montantFn(m)))}</span>`;
-        return `<div class="cfg-item" style="${dejaFact?'opacity:.8':''}"><input type="checkbox" class="fact_chk" data-rid="${r.id}" data-montant="${at.montantFn(m)}" ${dejaFact?'':'checked'} style="margin-right:.3rem"><span class="nm"><span class="dossier-tag" style="margin-right:.4rem">${esc(r.dossier||'—')}</span>${esc(clientNameOf(r))}${dejaTag}<span class="muted" style="font-weight:400"> — ${op?esc(op.name):''}</span></span><span class="tag" style="background:rgba(45,125,210,.12);color:#2D7DD2">${montantTag}</span></div>`;
+        return `<div class="cfg-item" style="${dejaFact?'opacity:.8':''}"><input type="checkbox" class="fact_chk" data-rid="${r.id}" data-montant="${at.montantFn(m)}" ${dejaFact?'':'checked'} style="margin-right:.3rem"><span class="nm"><span class="dossier-tag" style="margin-right:.4rem">${esc(r.dossier||'—')}</span>${esc(clientNameOf(r))}${dejaTag}<span class="muted" style="font-weight:400"> — ${op?esc(op.name):''}</span>${(function(){const di=dateInstallationFr(r);return di?`<span style="font-size:.68rem;font-weight:700;background:#FFF4E5;color:#B96A0A;border-radius:5px;padding:1px 6px;margin-left:5px">🔧 ${esc(di)}</span>`:`<span style="font-size:.68rem;font-weight:600;color:var(--text-mut);margin-left:5px">date d'installation non renseignée</span>`;})()}</span><span class="tag" style="background:rgba(45,125,210,.12);color:#2D7DD2">${montantTag}</span></div>`;
       }).join('')+`</div>
       <label style="display:flex;align-items:center;gap:.5rem;margin-top:1rem;cursor:${agentInfo&&agentInfo.email?'pointer':'not-allowed'}"><input type="checkbox" id="fact_sendmail" ${agentInfo&&agentInfo.email?'':'disabled'}> Envoyer aussi par e-mail à ${agentInfo&&agentInfo.email?esc(agentInfo.email):'(aucun email renseigné pour ce partenaire)'}</label>
       <button class="btn btn-pri" style="margin-top:1rem" onclick="genererFactureAgent()">📄 Générer le document d'appel à facturation</button>`;
@@ -3712,7 +3728,8 @@ async function genererFactureAgent(){
   const hasTva=det.some(l=>l.tvaMode!=='sans_tva');
   const rowsHtml=det.map(l=>{
     const op=getAllProducts().find(o=>o.id===l.r.productId);
-    const base=`<td>${esc(l.r.dossier||'—')}</td><td>${esc(clientNameOf(l.r))}</td><td>${op?esc(op.name):''}</td>`;
+    const di=dateInstallationFr(l.r);
+    const base=`<td>${esc(l.r.dossier||'—')}</td><td>${esc(clientNameOf(l.r))}</td><td>${op?esc(op.name):''}</td><td style="white-space:nowrap">${di?esc(di):'<span style="color:#9aa5b1">—</span>'}</td>`;
     if(!hasTva)return `<tr>${base}<td style="text-align:right;font-weight:700">${eur(l.ttc)}</td></tr>`;
     if(l.tvaMode==='sans_tva')
       return `<tr>${base}<td style="text-align:right;color:#6b7785">${eur(l.ht)}</td><td style="text-align:right;color:#5B3AAA;font-size:.82rem">Sans TVA</td><td style="text-align:right;font-weight:700">${eur(l.ttc)}</td></tr>`;
@@ -3746,9 +3763,9 @@ async function genererFactureAgent(){
     <div class="sub">Édité le ${dateStr}</div>
   </div>
   <div class="meta"><b>${esc(at.label)} :</b> ${esc(agentName)}<br>${agent&&agent.email?'<b>Email :</b> '+esc(agent.email)+'<br>':''}${metaTva}</div>
-  <table><thead><tr><th>N° Dossier</th><th>Client</th><th>Opération</th>${theadTva}</tr></thead>
+  <table><thead><tr><th>N° Dossier</th><th>Client</th><th>Opération</th><th>Date d'installation</th>${theadTva}</tr></thead>
   <tbody>${rowsHtml}</tbody>
-  <tfoot><tr><td colspan="3">Total à verser</td>${tfootTva}</tr></tfoot>
+  <tfoot><tr><td colspan="4">Total à verser</td>${tfootTva}</tr></tfoot>
   </table>
   <button class="print-btn" onclick="window.print()" style="padding:10px 18px;background:#7CC242;color:#fff;border:none;border-radius:8px;font-weight:700;cursor:pointer">🖨️ Imprimer / Enregistrer en PDF</button>
   </body></html>`;
