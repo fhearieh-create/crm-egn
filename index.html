@@ -3687,12 +3687,53 @@ function exportChargesCSV(){
   const url=URL.createObjectURL(blob);const a=document.createElement('a');
   a.href=url;a.download='charges_par_dossier.csv';a.click();URL.revokeObjectURL(url);
 }
-let RESUME_VUE=''; // '' = synthese, 'recettes' ou 'charges' = detail par dossier
+/* Detail de la marge : CA, charges et marge pour chaque dossier */
+function renderDetailMarge(T,eur){
+  const ttcHt=n=>eur(n)+`<span style="display:block;font-size:.64rem;font-weight:500;color:var(--text-mut)">HT ${eur(htOf(n))}</span>`;
+  const rows=T.rows.slice().sort((a,b)=>b.m.marge-a.m.marge);
+  let h=`<div style="display:flex;align-items:center;gap:.8rem;flex-wrap:wrap;margin-bottom:.9rem">
+    <button class="btn btn-ghost btn-sm" onclick="RESUME_VUE='';renderComptaResume()">← Retour au résumé</button>
+    <span style="font-weight:800;font-size:.95rem">Marge par dossier</span>
+    <span class="muted" style="font-size:.8rem">${rows.length} dossier${rows.length>1?'s':''} · ${eur(T.totMarge)} de marge</span>
+  </div>`;
+  h+=opFilterBar('renderComptaResume');
+  if(!rows.length){
+    h+=`<div class="empty"><div class="big">📈</div>Aucun dossier chiffré — renseignez la comptabilité d'un dossier.</div>`;
+    document.getElementById('comptaBody').innerHTML=h;return;
+  }
+  h+=`<div class="tbl-wrap"><table class="tbl"><thead><tr>
+    <th>N° Dossier</th><th>Client</th><th>Opération</th>
+    <th class="r">CA TTC</th><th class="r">Charges variables TTC</th><th class="r">Marge brute</th><th class="r">%</th>
+  </tr></thead><tbody>`;
+  rows.forEach(({r,m})=>{
+    const op=getAllProducts().find(o=>o.id===r.productId);
+    const pct=m.recettes>0?(m.marge/m.recettes*100):0;
+    h+=`<tr style="cursor:pointer" onclick="openDossier('${r.id}')">
+      <td><span class="dossier-tag">${esc(r.dossier||'—')}</span></td>
+      <td style="font-weight:700">${esc(clientNameOf(r))}${r.ville?`<div class="muted" style="font-size:.68rem">${esc(r.ville)}</div>`:''}</td>
+      <td class="muted">${op?esc(op.name):'—'}</td>
+      <td style="text-align:right">${ttcHt(m.recettes)}</td>
+      <td style="text-align:right">${ttcHt(m.charges)}</td>
+      <td style="text-align:right;font-weight:800;color:${m.marge>=0?'var(--green-deep)':'#E63946'}">${eur(m.marge)}</td>
+      <td style="text-align:right;font-weight:700;color:${pct>=0?'var(--green-deep)':'#E63946'}">${m.recettes>0?pct.toFixed(1)+'%':'—'}</td>
+    </tr>`;
+  });
+  h+=`<tr style="background:#f8faf5;font-weight:800">
+    <td colspan="3">Total</td>
+    <td style="text-align:right">${eur(T.totRecettes)}</td>
+    <td style="text-align:right">${eur(T.totCharges)}</td>
+    <td style="text-align:right;color:${T.totMarge>=0?'var(--green-deep)':'#E63946'}">${eur(T.totMarge)}</td>
+    <td style="text-align:right">${T.totRecettes>0?T.margePct.toFixed(1)+'%':'—'}</td>
+  </tr></tbody></table></div>`;
+  document.getElementById('comptaBody').innerHTML=h;
+}
+let RESUME_VUE=''; // '' = synthese, 'recettes' / 'charges' / 'marge' = detail par dossier
 function renderComptaResume(){
   const eur=n=>(n||0).toLocaleString('fr-FR',{maximumFractionDigits:2})+' €';
   const T=comptaTotaux();
   if(RESUME_VUE==='recettes')return renderDetailRecettes(T,eur);
   if(RESUME_VUE==='charges')return renderDetailCharges(T,eur);
+  if(RESUME_VUE==='marge')return renderDetailMarge(T,eur);
   const {recs,rows,totRecettes,totCharges,totMarge,margePct,byPoseur,byCc,byVt,byAud,byOp,tvaModesByFam,sumPoseur,sumCc,sumVt,sumAud,NONE_KEY}=T;
   const ttcHt=n=>eur(n)+`<span style="display:block;font-size:.64rem;font-weight:500;color:var(--text-mut)">HT ${eur(htOf(n))}</span>`;
   // Helper : sous-texte KPI selon mode TVA dominant
@@ -3707,7 +3748,7 @@ function renderComptaResume(){
   h+=`<p class="muted" style="font-size:.72rem;margin-bottom:.5rem">💶 Montants TTC — TVA ${tvaRate()}% déduite automatiquement (taux : Paramètres ▸ Société).</p><div class="kpis">
     <div class="kpi" onclick="RESUME_VUE='recettes';renderComptaResume()" style="cursor:pointer"><div class="kico">💶</div><div class="klab">CA TTC</div><div class="kval">${eur(totRecettes)}</div><div class="ksub">HT ${eur(htOf(totRecettes))} · ${recs.length} dossier${recs.length>1?'s':''} chiffré${recs.length>1?'s':''} <span style="color:var(--blue);font-weight:700">→</span></div></div>
     <div class="kpi" onclick="RESUME_VUE='charges';renderComptaResume()" style="cursor:pointer"><div class="kico">📤</div><div class="klab">Charges variables TTC</div><div class="kval">${eur(totCharges)}</div><div class="ksub">HT ${eur(htOf(totCharges))} · poseurs, call center, VT, audits, marchandise <span style="color:var(--blue);font-weight:700">→</span></div></div>
-    <div class="kpi accent"><div class="kico">📈</div><div class="klab">Marge brute</div><div class="kval">${eur(totMarge)}</div><div class="ksub">HT ${eur(htOf(totMarge))}${totRecettes>0?' · '+margePct.toFixed(1)+'% de marge':''}</div></div>
+    <div class="kpi accent" onclick="RESUME_VUE='marge';renderComptaResume()" style="cursor:pointer"><div class="kico">📈</div><div class="klab">Marge brute</div><div class="kval">${eur(totMarge)}</div><div class="ksub">HT ${eur(htOf(totMarge))}${totRecettes>0?' · '+margePct.toFixed(1)+'% de marge':''}</div></div>
   </div>`;
   // par opération
   h+=`<div class="panel"><div class="panel-h"><h3>Rentabilité par opération</h3></div><div class="panel-b">`;
@@ -3715,13 +3756,6 @@ function renderComptaResume(){
   if(!opKeys.length)h+=`<div class="empty"><div class="big">📋</div>Aucune donnée.</div>`;
   else{h+=`<div class="tbl-wrap"><table class="tbl"><thead><tr><th>Opération</th><th>Dossiers</th><th style="text-align:right">Recettes</th><th style="text-align:right">Charges</th><th style="text-align:right">Marge</th></tr></thead><tbody>`;
     opKeys.forEach(k=>{const op=getAllProducts().find(o=>o.id===k);const x=byOp[k];h+=`<tr><td>${op?esc(op.name):'—'}</td><td>${x.nb}</td><td style="text-align:right">${ttcHt(x.recettes)}</td><td style="text-align:right">${ttcHt(x.charges)}</td><td style="text-align:right;font-weight:700;color:${x.marge>=0?'var(--green-deep)':'#E63946'}">${ttcHt(x.marge)}</td></tr>`;});
-    h+=`</tbody></table></div>`;}
-  h+=`</div></div>`;
-  // détail par dossier
-  h+=`<div class="panel"><div class="panel-h"><h3>Détail par dossier</h3></div><div class="panel-b">`;
-  if(!rows.length)h+=`<div class="empty"><div class="big">📋</div>Aucun dossier chiffré pour l'instant — renseignez la comptabilité depuis une fiche client.</div>`;
-  else{h+=`<div class="tbl-wrap"><table class="tbl"><thead><tr><th>N° Dossier</th><th>Client</th><th>Opération</th><th style="text-align:right">Recettes</th><th style="text-align:right">Charges</th><th style="text-align:right">Marge</th></tr></thead><tbody>`;
-    rows.forEach(({r,m})=>{const op=getAllProducts().find(o=>o.id===r.productId);h+=`<tr><td style="cursor:pointer" onclick="openDossier('${r.id}')"><span class="dossier-tag">${esc(r.dossier||'—')}</span></td><td style="cursor:pointer" onclick="openDossier('${r.id}')">${esc(clientNameOf(r))}</td><td class="muted">${op?esc(op.name):'—'}</td><td style="text-align:right">${ttcHt(m.recettes)}</td><td style="text-align:right">${ttcHt(m.charges)}</td><td style="text-align:right;font-weight:700;color:${m.marge>=0?'var(--green-deep)':'#E63946'}">${ttcHt(m.marge)}</td></tr>`;});
     h+=`</tbody></table></div>`;}
   h+=`</div></div>`;
   document.getElementById('comptaBody').innerHTML=h;
