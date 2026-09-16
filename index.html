@@ -3742,7 +3742,12 @@ function renderComptaFacturation(){
         return `<div class="cfg-item" style="${dejaFact?'opacity:.8':''}"><input type="checkbox" class="fact_chk" data-rid="${r.id}" data-montant="${at.montantFn(m)}" ${dejaFact?'':'checked'} style="margin-right:.3rem"><span class="nm"><span class="dossier-tag" style="margin-right:.4rem">${esc(r.dossier||'—')}</span>${esc(clientNameOf(r))}${dejaTag}<span class="muted" style="font-weight:400"> — ${op?esc(op.name):''}</span>${(function(){const di=dateInstallationFr(r);return di?`<span style="font-size:.68rem;font-weight:700;background:#FFF4E5;color:#B96A0A;border-radius:5px;padding:1px 6px;margin-left:5px">🔧 ${esc(di)}</span>`:`<span style="font-size:.68rem;font-weight:600;color:var(--text-mut);margin-left:5px">date d'installation non renseignée</span>`;})()}</span><span class="tag" style="background:rgba(45,125,210,.12);color:#2D7DD2">${montantTag}</span></div>`;
       }).join('')+`</div>
       <label style="display:flex;align-items:center;gap:.5rem;margin-top:1rem;cursor:${agentInfo&&agentInfo.email?'pointer':'not-allowed'}"><input type="checkbox" id="fact_sendmail" ${agentInfo&&agentInfo.email?'':'disabled'}> Envoyer aussi par e-mail à ${agentInfo&&agentInfo.email?esc(agentInfo.email):'(aucun email renseigné pour ce partenaire)'}</label>
-      <button class="btn btn-pri" style="margin-top:1rem" onclick="genererFactureAgent()">📄 Générer le document d'appel à facturation</button>`;
+      <div style="display:flex;align-items:center;gap:.6rem;margin-top:1rem;flex-wrap:wrap;background:var(--bg-soft);border-radius:9px;padding:.55rem .85rem">
+        <span style="font-size:.78rem;font-weight:700;color:var(--text-mut)">📅 Date de l'appel à facturation</span>
+        <input type="date" id="fact_date" value="${new Date().toISOString().slice(0,10)}" style="font-family:'Saira',sans-serif;font-size:.85rem;font-weight:700;border:1.5px solid var(--border-grey);border-radius:8px;padding:.35rem .65rem;background:#fff;outline:none">
+        <span class="muted" style="font-size:.72rem">modifiable avant génération</span>
+      </div>
+      <button class="btn btn-pri" style="margin-top:.7rem" onclick="genererFactureAgent()">📄 Générer le document d'appel à facturation</button>`;
     }
     h+=`</div></div>`;
   }
@@ -3767,7 +3772,10 @@ async function genererFactureAgent(){
     return{r,montant,tvaMode};
   });
   const eur=n=>(n||0).toLocaleString('fr-FR',{minimumFractionDigits:2,maximumFractionDigits:2})+' €';
-  const dateStr=new Date().toLocaleDateString('fr-FR');
+  // Date choisie dans le formulaire, sinon celle du jour
+  const dSaisie=(document.getElementById('fact_date')||{}).value||'';
+  const dApf=dSaisie?new Date(dSaisie+'T12:00:00'):new Date();
+  const dateStr=dApf.toLocaleDateString('fr-FR');
   const t=tvaRate()/100;
   // Chaque ligne porte son propre régime : le montant saisi est HT, TTC ou hors champ TVA
   const det=lignes.map(l=>{
@@ -3835,7 +3843,7 @@ async function genererFactureAgent(){
   }
   // enregistrement de la facture (Supabase, protégé par RLS)
   const factureId=uid();
-  const factureObj={id:factureId,apfNum,type,date:Date.now(),poseurId:agentId,poseurName:agentName,
+  const factureObj={id:factureId,apfNum,type,date:dApf.getTime(),poseurId:agentId,poseurName:agentName,
     user:(ME.prenom+' '+ME.nom).trim()||ME.code,total,
     lignes:det.map(l=>({recId:l.r.id,client:clientNameOf(l.r),montant:l.ttc,ht:l.ht,tva:l.tva,tvaMode:l.tvaMode})),html:doc};
   await persistFacture(factureObj);
@@ -3847,7 +3855,7 @@ async function genererFactureAgent(){
   let nbPasse=0;
   for(const l of lignes){
     const c=comptaOf(l.r);
-    c[at.factureField]={date:Date.now(),montant:l.montant,factureId,apfNum,user:(ME.prenom+' '+ME.nom).trim()||ME.code,statut:'transmis'};
+    c[at.factureField]={date:dApf.getTime(),montant:l.montant,factureId,apfNum,user:(ME.prenom+' '+ME.nom).trim()||ME.code,statut:'transmis'};
     await persistCompta(l.r.id);
     const rr=recs.find(x=>x.id===l.r.id);
     if(rr&&installStatus&&rr.statusId!==installStatus.id){rr.statusId=installStatus.id;rr.updated=Date.now();nbPasse++;}
