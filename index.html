@@ -3050,7 +3050,6 @@ function renderComptaPanel(r){
       <p class="muted" style="font-size:.7rem;margin:.15rem 0 .45rem">Montants saisis <b>TTC</b> — TVA ${tvaRate()}% déduite automatiquement (taux modifiable dans Paramètres ▸ Société).</p>
       <div class="info-row"><span class="il">Montant du devis <span class="muted" style="font-size:.68rem">(base de calcul commission poseur — non compté en recette)</span></span><span class="iv muted">${ttcHt(c.devisTTC)}</span></div>
       <div class="info-row"><span class="il">Prime CEE TTC <span class="muted" style="font-size:.68rem">(recette prise en compte pour la rentabilité)</span></span><span class="iv">${ttcHt(prime)}</span></div>
-      <div class="info-row"><span class="il" style="font-weight:700">Recettes totales (= prime CEE TTC)</span><span class="iv" style="font-weight:700">${ttcHt(recettes)}</span></div>
       <div class="info-row">${ovLine(r,'poseur','Coût poseur'+(pc.mode?` — ${esc(pc.label)}`:''),pc.montant,c)}</div>
       <div class="info-row">${ovLine(r,'callcenter','Coût Call Center'+(ccC.mode?` — ${esc(ccC.label)}`:''),ccC.montant,c)}</div>
       <div class="info-row">${ovLine(r,'vt','Coût VT — '+esc(vtC.label),vtC.montant,c)}</div>
