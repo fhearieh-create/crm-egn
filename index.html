@@ -2067,6 +2067,12 @@ function actionBtn(html,fn,cls){return `<button class="btn ${cls||'btn-pri'} btn
    DASHBOARD COCO — activité, comptabilité, stock
    Chaque bloc renvoie vers le module concerné
    ============================================================ */
+/* Depuis Coco : ouvrir directement un tableau detaille du resume comptable */
+function dashGoResume(vue){
+  COMPTA_TAB='resume';
+  RESUME_VUE=vue;
+  go('compta');
+}
 function dashGo(page,opts){
   opts=opts||{};
   if(opts.comptaTab)COMPTA_TAB=opts.comptaTab;
@@ -2152,8 +2158,8 @@ async function renderDashGlobal(){
                  auditeur:Object.keys(T.byAud).filter(k=>k!==T.NONE_KEY).length};
     const sousTexte=k=>aVerser[k]>0?`${nbFam[k]} intervenant${nbFam[k]>1?'s':''} concerné${nbFam[k]>1?'s':''}`:'Rien à verser';
     h+=`<div class="sectitle">Comptabilité</div><div class="kpis">`;
-    h+=gCard({ic:'💶',lab:'Recettes',val:eur(recettes),sub:`${cRecs.length} dossier${cRecs.length>1?'s':''} chiffré${cRecs.length>1?'s':''}`,go:"dashGo('compta',{comptaTab:'resume'})"});
-    h+=gCard({ic:'📤',lab:'Charges',val:eur(charges),sub:'poseurs, call center, VT, audits',go:"dashGo('compta',{comptaTab:'resume'})"});
+    h+=gCard({ic:'💶',lab:'CA TTC',val:eur(recettes),sub:`${cRecs.length} dossier${cRecs.length>1?'s':''} chiffré${cRecs.length>1?'s':''}`,go:"dashGoResume('recettes')"});
+    h+=gCard({ic:'📤',lab:'Charges variables TTC',val:eur(charges),sub:'poseurs, call center, VT, audits, marchandise',go:"dashGoResume('charges')"});
     h+=gCard({ic:'📈',lab:'Marge brute',val:eur(marge),sub:recettes?margePct.toFixed(1)+'% de marge':'',accent:true,go:"dashGo('compta',{comptaTab:'resume'})"});
     h+=`</div>`;
     // Alerte : charges sans intervenant assigné, non facturables en l'état
@@ -3607,11 +3613,86 @@ function exportRecettesCSV(){
   const url=URL.createObjectURL(blob);const a=document.createElement('a');
   a.href=url;a.download='recettes_par_dossier.csv';a.click();URL.revokeObjectURL(url);
 }
-let RESUME_VUE=''; // '' = synthese, 'recettes' = detail par dossier
+/* Detail des charges, dossier par dossier, poste par poste */
+function renderDetailCharges(T,eur){
+  const lignes=T.recs.map(r=>{
+    const m=recordComptaMetrics(r);
+    const ttc=(key,montant)=>tvaLine(r,key,montant||0).ttc;
+    const cc=ttc('callcenter',m.aPayerCallCenter);
+    const vt=ttc('vt',m.aPayerVt);
+    const au=ttc('audit',m.aPayerAudit);
+    const po=ttc('poseur',m.aPayerPoseur);
+    const ma=m.march?m.march.ttc:0;
+    return{r,cc,vt,au,po,ma,total:cc+vt+au+po+ma,march:m.march};
+  }).filter(x=>x.total>0).sort((a,b)=>b.total-a.total);
+  const som=k=>lignes.reduce((s,x)=>s+(x[k]||0),0);
+  const totGen=som('total');
+  let h=`<div style="display:flex;align-items:center;gap:.8rem;flex-wrap:wrap;margin-bottom:.9rem">
+    <button class="btn btn-ghost btn-sm" onclick="RESUME_VUE='';renderComptaResume()">← Retour au résumé</button>
+    <span style="font-weight:800;font-size:.95rem">Détail des charges par dossier</span>
+    <span class="muted" style="font-size:.8rem">${lignes.length} dossier${lignes.length>1?'s':''} · ${eur(totGen)} TTC</span>
+  </div>`;
+  h+=opFilterBar('renderComptaResume');
+  if(!lignes.length){
+    h+=`<div class="empty"><div class="big">📤</div>Aucune charge enregistrée.</div>`;
+    document.getElementById('comptaBody').innerHTML=h;return;
+  }
+  const cel=v=>v?eur(v):'<span class="muted">—</span>';
+  h+=`<div class="tbl-wrap"><table class="tbl"><thead><tr>
+    <th>N° Dossier</th><th>Client</th><th>Opération</th>
+    <th class="r">Call center</th><th class="r">VT</th><th class="r">Audit</th><th class="r">Poseur</th><th class="r">Marchandise</th><th class="r">Total</th>
+  </tr></thead><tbody>`;
+  lignes.forEach(x=>{
+    const op=getAllProducts().find(o=>o.id===x.r.productId);
+    h+=`<tr style="cursor:pointer" onclick="openDossier('${x.r.id}')">
+      <td><span class="dossier-tag">${esc(x.r.dossier||'—')}</span></td>
+      <td style="font-weight:700">${esc(clientNameOf(x.r))}${x.r.ville?`<div class="muted" style="font-size:.68rem">${esc(x.r.ville)}</div>`:''}</td>
+      <td class="muted">${op?esc(op.name):'—'}</td>
+      <td style="text-align:right">${cel(x.cc)}</td>
+      <td style="text-align:right">${cel(x.vt)}</td>
+      <td style="text-align:right">${cel(x.au)}</td>
+      <td style="text-align:right">${cel(x.po)}</td>
+      <td style="text-align:right">${x.ma?`${eur(x.ma)}${x.march&&x.march.fournisseur?`<div class="muted" style="font-size:.64rem;color:var(--purple)">${esc(x.march.fournisseur)}</div>`:''}`:'<span class="muted">—</span>'}</td>
+      <td style="text-align:right;font-weight:800;color:#B96A0A">${eur(x.total)}</td>
+    </tr>`;
+  });
+  h+=`<tr style="background:#f8faf5;font-weight:800">
+    <td colspan="3">Total</td>
+    <td style="text-align:right">${eur(som('cc'))}</td>
+    <td style="text-align:right">${eur(som('vt'))}</td>
+    <td style="text-align:right">${eur(som('au'))}</td>
+    <td style="text-align:right">${eur(som('po'))}</td>
+    <td style="text-align:right">${eur(som('ma'))}</td>
+    <td style="text-align:right;color:#B96A0A">${eur(totGen)}</td>
+  </tr></tbody></table></div>`;
+  h+=`<div style="display:flex;justify-content:flex-end;margin-top:.6rem"><button class="btn btn-navy btn-sm" onclick="exportChargesCSV()">📤 Exporter CSV</button></div>`;
+  document.getElementById('comptaBody').innerHTML=h;
+}
+function exportChargesCSV(){
+  const T=comptaTotaux();
+  const nb=n=>(n||0).toLocaleString('fr-FR',{minimumFractionDigits:2,maximumFractionDigits:2});
+  let csv='N Dossier;Client;Ville;Operation;Call center;VT;Audit;Poseur;Marchandise;Fournisseur;Total\n';
+  T.recs.forEach(r=>{
+    const m=recordComptaMetrics(r);
+    const ttc=(key,montant)=>tvaLine(r,key,montant||0).ttc;
+    const cc=ttc('callcenter',m.aPayerCallCenter),vt=ttc('vt',m.aPayerVt),
+          au=ttc('audit',m.aPayerAudit),po=ttc('poseur',m.aPayerPoseur),
+          ma=m.march?m.march.ttc:0;
+    const tot=cc+vt+au+po+ma;
+    if(!tot)return;
+    const op=getAllProducts().find(o=>o.id===r.productId);
+    csv+=`${r.dossier||''};${clientNameOf(r)};${r.ville||''};${op?op.name:''};${nb(cc)};${nb(vt)};${nb(au)};${nb(po)};${nb(ma)};${m.march?m.march.fournisseur:''};${nb(tot)}\n`;
+  });
+  const blob=new Blob(['\uFEFF'+csv],{type:'text/csv;charset=utf-8'});
+  const url=URL.createObjectURL(blob);const a=document.createElement('a');
+  a.href=url;a.download='charges_par_dossier.csv';a.click();URL.revokeObjectURL(url);
+}
+let RESUME_VUE=''; // '' = synthese, 'recettes' ou 'charges' = detail par dossier
 function renderComptaResume(){
   const eur=n=>(n||0).toLocaleString('fr-FR',{maximumFractionDigits:2})+' €';
   const T=comptaTotaux();
   if(RESUME_VUE==='recettes')return renderDetailRecettes(T,eur);
+  if(RESUME_VUE==='charges')return renderDetailCharges(T,eur);
   const {recs,rows,totRecettes,totCharges,totMarge,margePct,byPoseur,byCc,byVt,byAud,byOp,tvaModesByFam,sumPoseur,sumCc,sumVt,sumAud,NONE_KEY}=T;
   const ttcHt=n=>eur(n)+`<span style="display:block;font-size:.64rem;font-weight:500;color:var(--text-mut)">HT ${eur(htOf(n))}</span>`;
   // Helper : sous-texte KPI selon mode TVA dominant
@@ -3624,8 +3705,8 @@ function renderComptaResume(){
   };
   let h=opFilterBar('renderComptaResume');
   h+=`<p class="muted" style="font-size:.72rem;margin-bottom:.5rem">💶 Montants TTC — TVA ${tvaRate()}% déduite automatiquement (taux : Paramètres ▸ Société).</p><div class="kpis">
-    <div class="kpi" onclick="RESUME_VUE='recettes';renderComptaResume()" style="cursor:pointer"><div class="kico">💶</div><div class="klab">Recettes totales</div><div class="kval">${eur(totRecettes)}</div><div class="ksub">HT ${eur(htOf(totRecettes))} · ${recs.length} dossier${recs.length>1?'s':''} chiffré${recs.length>1?'s':''} <span style="color:var(--blue);font-weight:700">→</span></div></div>
-    <div class="kpi"><div class="kico">📤</div><div class="klab">Charges totales</div><div class="kval">${eur(totCharges)}</div><div class="ksub">HT ${eur(htOf(totCharges))} · poseurs + call center + VT + audits + produits + faux frais</div></div>
+    <div class="kpi" onclick="RESUME_VUE='recettes';renderComptaResume()" style="cursor:pointer"><div class="kico">💶</div><div class="klab">CA TTC</div><div class="kval">${eur(totRecettes)}</div><div class="ksub">HT ${eur(htOf(totRecettes))} · ${recs.length} dossier${recs.length>1?'s':''} chiffré${recs.length>1?'s':''} <span style="color:var(--blue);font-weight:700">→</span></div></div>
+    <div class="kpi" onclick="RESUME_VUE='charges';renderComptaResume()" style="cursor:pointer"><div class="kico">📤</div><div class="klab">Charges variables TTC</div><div class="kval">${eur(totCharges)}</div><div class="ksub">HT ${eur(htOf(totCharges))} · poseurs, call center, VT, audits, marchandise <span style="color:var(--blue);font-weight:700">→</span></div></div>
     <div class="kpi accent"><div class="kico">📈</div><div class="klab">Marge brute</div><div class="kval">${eur(totMarge)}</div><div class="ksub">HT ${eur(htOf(totMarge))}${totRecettes>0?' · '+margePct.toFixed(1)+'% de marge':''}</div></div>
   </div>`;
   // par opération
