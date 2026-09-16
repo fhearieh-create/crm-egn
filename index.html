@@ -1737,7 +1737,7 @@ async function genererEtudePdf(recId){
     <div class="ph"><span>${esc(r.dossier||'')} — Étude technique</span><span>${esc(s.company||'')}</span></div>
     <h1 class="pt">Récapitulatif financier</h1>
     <table class="et"><thead><tr><th>Désignation</th><th style="text-align:right">Montant HT</th><th style="text-align:right">TVA (${tvaRate()}%)</th><th style="text-align:right">Montant TTC</th></tr></thead><tbody>
-      <tr><td>Montant du devis</td><td style="text-align:right">${eur(htOf(devisTTC))}</td><td style="text-align:right">${eur(tvaOf(devisTTC))}</td><td style="text-align:right">${eur(devisTTC)}</td></tr>
+      <tr><td>Marge du dossier</td><td style="text-align:right">${eur(htOf(devisTTC))}</td><td style="text-align:right">${eur(tvaOf(devisTTC))}</td><td style="text-align:right">${eur(devisTTC)}</td></tr>
       <tr><td>Prime CEE${deleg?' — '+esc(deleg.name):''}${deal.type?' ('+(deal.type==='precaire'?'Précaire':'Classique')+')':''}</td><td style="text-align:right">− ${eur(htOf(primeCEE))}</td><td style="text-align:right">− ${eur(tvaOf(primeCEE))}</td><td style="text-align:right">− ${eur(primeCEE)}</td></tr>
     </tbody></table>
     <div class="finalbox"><div>RESTE À PAYER</div><div class="r">${eur(resteAPayer)}<span class="s">soit ${eur(htOf(resteAPayer))} HT — TVA ${tvaRate()}% incluse</span></div></div>
@@ -2911,7 +2911,7 @@ function poseurCostFor(r){
   else if(rule.mode==='fixe')montant=rule.value||0;
   else if(rule.mode==='jour')montant=(rule.value||0)*(c.jours||0);
   else if(rule.mode==='m2')montant=(rule.value||0)*surfaceFieldValue(r);
-  const detail=rule.mode==='pourcentage'?`${rule.value}% du devis`:rule.mode==='m2'?`${rule.value} €/m²`:rule.mode==='jour'?`${rule.value} €/jour`:`${rule.value} € fixe`;
+  const detail=rule.mode==='pourcentage'?`${rule.value}% de la marge`:rule.mode==='m2'?`${rule.value} €/m²`:rule.mode==='jour'?`${rule.value} €/jour`:`${rule.value} € fixe`;
   return{mode:rule.mode,montant,label:`${fam.name} — ${detail}`};
 }
 function callCenterCostFor(r){
@@ -2926,7 +2926,7 @@ function callCenterCostFor(r){
   if(rule.mode==='rdv')montant=(rule.value||0)*(c.nbRdv||0);
   else if(rule.mode==='m2')montant=(rule.value||0)*surfaceFieldValue(r);
   else if(rule.mode==='pourcentage')montant=(c.devisTTC||0)*(rule.value||0)/100;
-  const detail=rule.mode==='m2'?`${rule.value} €/m²`:rule.mode==='pourcentage'?`${rule.value}% du devis`:`${rule.value} €/RDV`;
+  const detail=rule.mode==='m2'?`${rule.value} €/m²`:rule.mode==='pourcentage'?`${rule.value}% de la marge`:`${rule.value} €/RDV`;
   return{mode:rule.mode,montant,label:`${src.name} — ${detail}`,src};
 }
 /* -- VT (Visite technique) & Auditeur : tarif fixe par opération, ajouté automatiquement selon le statut du dossier -- */
@@ -3019,7 +3019,7 @@ function renderComptaPanel(r){
     <div class="panel-b">
       ${poseurLocked?`<p class="muted" style="font-size:.74rem;color:#B96A0A;margin-bottom:.5rem">🔒 APF Poseur déjà envoyé — devis / poseur / jours verrouillés. Passez le statut à « Annulé » pour les modifier et pouvoir refacturer.</p>`:''}
       <div class="fgrid c3">
-        <div class="fld"><label>Montant du devis (TTC) <span class="muted" style="font-size:.62rem">(sert au calcul de la commission poseur en %)</span></label><input type="number" step="any" id="cp_devis" value="${c.devisTTC||''}" placeholder="0" ${poseurLocked?'disabled':''}></div>
+        <div class="fld"><label>Marge du dossier <span class="muted" style="font-size:.62rem">(sert au calcul de la commission en %)</span></label><input type="number" step="any" id="cp_devis" value="${c.devisTTC||''}" placeholder="0" ${poseurLocked?'disabled':''}></div>
         <div class="fld"><label>Poseur assigné</label><select id="cp_poseur" ${poseurLocked?'disabled':''}><option value="">— Aucun —</option>${poseurs.map(u=>`<option value="${u.id}" ${c.poseurUserId===u.id?'selected':''}>${esc(u.prenom+' '+u.nom)}</option>`).join('')}</select></div>
         <div class="fld"><label>Nombre de jours <span class="muted" style="font-size:.66rem">(si tarif journalier)</span></label><input type="number" step="any" id="cp_jours" value="${c.jours||''}" placeholder="0" ${poseurLocked?'disabled':''}></div>
       </div>
@@ -3048,7 +3048,7 @@ function renderComptaPanel(r){
 
       <div class="sectitle" style="margin-top:1.1rem">Rentabilité du dossier</div>
       <p class="muted" style="font-size:.7rem;margin:.15rem 0 .45rem">Montants saisis <b>TTC</b> — TVA ${tvaRate()}% déduite automatiquement (taux modifiable dans Paramètres ▸ Société).</p>
-      <div class="info-row"><span class="il">Montant du devis <span class="muted" style="font-size:.68rem">(base de calcul commission poseur — non compté en recette)</span></span><span class="iv muted">${ttcHt(c.devisTTC)}</span></div>
+      <div class="info-row"><span class="il">Marge du dossier <span class="muted" style="font-size:.68rem">(sert au calcul de la commission en % — non comptée en recette)</span></span><span class="iv muted">${ttcHt(c.devisTTC)}</span></div>
       <div class="info-row"><span class="il">Prime CEE TTC <span class="muted" style="font-size:.68rem">(recette prise en compte pour la rentabilité)</span></span><span class="iv">${ttcHt(prime)}</span></div>
       <div class="info-row">${ovLine(r,'poseur','Coût poseur'+(pc.mode?` — ${esc(pc.label)}`:''),pc.montant,c)}</div>
       <div class="info-row">${ovLine(r,'callcenter','Coût Call Center'+(ccC.mode?` — ${esc(ccC.label)}`:''),ccC.montant,c)}</div>
@@ -3152,14 +3152,14 @@ function genererRapportCompta(recId){
   <table>
     <thead><tr><th>Désignation</th><th style="text-align:right">Montant HT</th><th style="text-align:right">TVA (${tvaRate()}%)</th><th style="text-align:right">Montant TTC</th></tr></thead>
     <tbody>
-      <tr><td>Montant du devis</td><td style="text-align:right">${eur(htOf(c.devisTTC))}</td><td style="text-align:right">${eur(tvaOf(c.devisTTC))}</td><td style="text-align:right">${eur(c.devisTTC)}</td></tr>
+      <tr><td>Marge du dossier</td><td style="text-align:right">${eur(htOf(c.devisTTC))}</td><td style="text-align:right">${eur(tvaOf(c.devisTTC))}</td><td style="text-align:right">${eur(c.devisTTC)}</td></tr>
       <tr><td>Coût poseur${pc.mode?' — '+esc(pc.label):''}</td><td style="text-align:right">${eur(htOf(pc.montant))}</td><td style="text-align:right">${eur(tvaOf(pc.montant))}</td><td style="text-align:right">${eur(pc.montant)}</td></tr>
       <tr><td>Coût Call Center${ccC.mode?' — '+esc(ccC.label):''}</td><td style="text-align:right">${eur(htOf(ccC.montant))}</td><td style="text-align:right">${eur(tvaOf(ccC.montant))}</td><td style="text-align:right">${eur(ccC.montant)}</td></tr>
       <tr><td>Coût VT — ${esc(m.vtC.label)}</td><td style="text-align:right">${eur(htOf(m.vtC.montant))}</td><td style="text-align:right">${eur(tvaOf(m.vtC.montant))}</td><td style="text-align:right">${eur(m.vtC.montant)}</td></tr>
       <tr><td>Coût Audit — ${esc(m.auditC.label)}</td><td style="text-align:right">${eur(htOf(m.auditC.montant))}</td><td style="text-align:right">${eur(tvaOf(m.auditC.montant))}</td><td style="text-align:right">${eur(m.auditC.montant)}</td></tr>
       <tr><td>Faux frais (société + poseur)</td><td style="text-align:right">${eur(htOf(m.ffTotal))}</td><td style="text-align:right">${eur(tvaOf(m.ffTotal))}</td><td style="text-align:right">${eur(m.ffTotal)}</td></tr>
       <tr class="totrow"><td>Charges totales</td><td style="text-align:right">${eur(htOf(m.charges))}</td><td style="text-align:right">${eur(tvaOf(m.charges))}</td><td style="text-align:right">${eur(m.charges)}</td></tr>
-      <tr class="totrow"><td>Recettes totales (${includeDeal?'prime CEE':'montant du devis'})</td><td style="text-align:right">${eur(htOf(rptRecettes))}</td><td style="text-align:right">${eur(tvaOf(rptRecettes))}</td><td style="text-align:right">${eur(rptRecettes)}</td></tr>
+      <tr class="totrow"><td>Recettes totales (${includeDeal?'prime CEE TTC':'marge du dossier'})</td><td style="text-align:right">${eur(htOf(rptRecettes))}</td><td style="text-align:right">${eur(tvaOf(rptRecettes))}</td><td style="text-align:right">${eur(rptRecettes)}</td></tr>
     </tbody>
   </table>
 
@@ -7596,8 +7596,8 @@ function setSimple(type){
   const isPac=type==='pac';
   const isPriced=isPoseur||isSource||isVt||isAud;
   let h=`<div class="panel"><div class="panel-h"><h3>${cfg.title}</h3><div class="sp"><button class="btn btn-pri btn-sm" onclick="${isPoseur?'openPoseur()':isSource?'openSource()':isVt?'openVt()':isAud?'openAuditeur()':isCoefU?'openCoefU()':isPac?'openPac()':`openCfg('${type}')`}">+ Ajouter</button></div></div><div class="panel-b">`;
-  if(isPoseur)h+=`<p class="muted" style="margin-bottom:.9rem">Une <b>famille de poseurs</b> regroupe une tarification (% du devis, prix fixe, ou tarif journalier — par opération) et un ou plusieurs <b>accès CRM</b> (comptes utilisateurs, rôle Poseur). Plusieurs poseurs peuvent partager la même famille.</p>`;
-  if(isSource)h+=`<p class="muted" style="margin-bottom:.9rem">Chaque <b>source / régie</b> peut avoir sa propre tarification « call center » : prix fixe par RDV, au m² selon la surface habitable, ou % du devis. Cette tarification alimente automatiquement la comptabilité et les appels à facturation des dossiers rattachés à cette source.</p>`;
+  if(isPoseur)h+=`<p class="muted" style="margin-bottom:.9rem">Une <b>famille de poseurs</b> regroupe une tarification (% de la marge, prix fixe, ou tarif journalier — par opération) et un ou plusieurs <b>accès CRM</b> (comptes utilisateurs, rôle Poseur). Plusieurs poseurs peuvent partager la même famille.</p>`;
+  if(isSource)h+=`<p class="muted" style="margin-bottom:.9rem">Chaque <b>source / régie</b> peut avoir sa propre tarification « call center » : prix fixe par RDV, au m² selon la surface habitable, ou % de la marge du dossier. Cette tarification alimente automatiquement la comptabilité et les appels à facturation des dossiers rattachés à cette source.</p>`;
   if(isVt)h+=`<p class="muted" style="margin-bottom:.9rem">Chaque société de visite technique peut avoir un <b>tarif fixe par opération</b>. Le coût s'ajoute automatiquement à la comptabilité du dossier dès que son statut atteint « VT terminé » (ou une étape ultérieure).</p>`;
   if(isAud)h+=`<p class="muted" style="margin-bottom:.9rem">Chaque auditeur peut avoir un <b>tarif fixe par opération</b>. Le coût s'ajoute automatiquement à la comptabilité du dossier dès que son statut atteint « Audit terminé » (ou une étape ultérieure).</p>`;
   if(isCoefU)h+=`<p class="muted" style="margin-bottom:.9rem">Coefficients de transmission thermique <b>U (W/m².K)</b> utilisés dans le calcul des déperditions (méthode NF EN 12831 simplifiée) des études. Crée une entrée par type de paroi que tes techniciens rencontrent sur le terrain (ex : « Mur béton plein 30cm non isolé », « Fenêtre bois double vitrage »…).</p>`;
@@ -7768,7 +7768,7 @@ function saveAuditeur(){
 }
 /* -- éditeur de source / régie : tarification call center (prix par RDV / au m² / % devis) -- */
 let SRCDRAFT=null;
-const SRC_MODES={rdv:'Prix fixe par RDV',m2:'Prix au m² (surface habitable)',pourcentage:'% du montant du devis'};
+const SRC_MODES={rdv:'Prix fixe par RDV',m2:'Prix au m² (surface habitable)',pourcentage:'% de la marge du dossier'};
 function openSource(id){
   const list=load(CFGMAP.sources.key,[]);const x=id?list.find(a=>a.id===id):null;
   SRCDRAFT=x?JSON.parse(JSON.stringify(x)):{id:uid(),name:'',email:'',prices:[]};
@@ -7811,10 +7811,10 @@ function renderSourceEditor(){
         <label style="display:flex;align-items:center;gap:.4rem;cursor:pointer;font-size:.85rem"><input type="radio" name="src_tva" value="sans_tva" ${o.tvaMode==='sans_tva'?'checked':''}>Sans TVA <span class="muted" style="font-size:.72rem">(autoentrepreneur)</span></label>
       </div>
     </div>
-    <div class="sectitle" style="margin-top:.8rem">Tarification call center <span style="font-weight:500;text-transform:none;letter-spacing:0;color:var(--text-mut)">(par opération — prix fixe par RDV, au m² selon la surface habitable, ou % du devis)</span></div>
+    <div class="sectitle" style="margin-top:.8rem">Tarification call center <span style="font-weight:500;text-transform:none;letter-spacing:0;color:var(--text-mut)">(par opération — prix fixe par RDV, au m² selon la surface habitable, ou % de la marge)</span></div>
     <div id="src_rows">${rows}</div>
     <button class="btn btn-ghost btn-sm" style="margin-top:.7rem" onclick="srcCaptureRows();srcAddPrice()">+ Ajouter un tarif</button>
-    <p class="muted" style="margin-top:.6rem;font-size:.74rem">💡 Laissez « Toutes opérations » pour un tarif général, ou choisissez une opération précise. Le mode « au m² » utilise le champ standard <b>Surface (m²)</b> présent sur toutes les fiches. Le mode « % du devis » se base sur le <b>montant du devis</b> saisi dans la Comptabilité du dossier. Le montant se calcule automatiquement sur les dossiers rattachés à cette source.</p>`;
+    <p class="muted" style="margin-top:.6rem;font-size:.74rem">💡 Laissez « Toutes opérations » pour un tarif général, ou choisissez une opération précise. Le mode « au m² » utilise le champ standard <b>Surface (m²)</b> présent sur toutes les fiches. Le mode « % de la marge » se base sur la <b>marge du dossier</b> saisie dans sa Comptabilité. Le montant se calcule automatiquement sur les dossiers rattachés à cette source.</p>`;
   openModal(o.name?'Source — '+esc(o.name):'Nouvelle source / régie',body,`<button class="btn btn-ghost" onclick="closeModal()">Annuler</button><button class="btn btn-pri" onclick="saveSource()">💾 Enregistrer</button>`,'wide');
 }
 function srcAddPrice(){srcCaptureTop();SRCDRAFT.prices.push({id:uid(),opId:'',mode:'rdv',value:0});renderSourceEditor();}
@@ -7829,7 +7829,7 @@ function saveSource(){
 }
 /* -- éditeur de famille de poseurs : tarification (% devis / prix fixe / journée) + accès CRM -- */
 let PZDRAFT=null,PZ_ASSIGN=[];
-const PZ_MODES={pourcentage:'% du montant du devis',fixe:'Prix fixe par installation',jour:'Tarif à la journée',m2:'Prix au m² (métrage du dossier)'};
+const PZ_MODES={pourcentage:'% de la marge du dossier',fixe:'Prix fixe par installation',jour:'Tarif à la journée',m2:'Prix au m² (métrage du dossier)'};
 function openPoseur(id){
   const list=load(CFGMAP.poseurs.key,[]);const x=id?list.find(a=>a.id===id):null;
   PZDRAFT=x?JSON.parse(JSON.stringify(x)):{id:uid(),name:'',prices:[]};
@@ -7882,7 +7882,7 @@ function renderPoseurEditor(){
         <label style="display:flex;align-items:center;gap:.4rem;cursor:pointer;font-size:.85rem"><input type="radio" name="pz_tva" value="sans_tva" ${o.tvaMode==='sans_tva'?'checked':''}>Sans TVA <span class="muted" style="font-size:.72rem">(autoentrepreneur — pas de TVA)</span></label>
       </div>
     </div>
-    <div class="sectitle">Tarification <span style="font-weight:500;text-transform:none;letter-spacing:0;color:var(--text-mut)">(par opération — % du devis, prix fixe, tarif journalier, ou au m²)</span></div>
+    <div class="sectitle">Tarification <span style="font-weight:500;text-transform:none;letter-spacing:0;color:var(--text-mut)">(par opération — % de la marge, prix fixe, tarif journalier, ou au m²)</span></div>
     <div id="pz_rows">${rows}</div>
     <button class="btn btn-ghost btn-sm" style="margin-top:.7rem" onclick="pzCaptureRows();pzAddPrice()">+ Ajouter un tarif</button>
     <p class="muted" style="margin-top:.6rem;font-size:.74rem">💡 Laissez « Toutes opérations » pour un tarif général (journalier ou au m² sur toutes les fiches), ou choisissez une opération précise pour un tarif propre à cette prestation. Le mode « au m² » utilise le champ standard <b>Surface (m²)</b> présent sur toutes les fiches.</p>
