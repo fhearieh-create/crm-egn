@@ -5098,8 +5098,9 @@ function calcPrimeCEE(delegId,type,cumac){
     d,mwhc,valoClient,valoCom,
     primeClient,          // sans TVA
     comHT,comTVA,comTTC,  // commission installateur
-    primeCEE:r2(primeClient+comHT),   // formule retenue : prime client + commission HT
-    totalEncaisse:r2(primeClient+comTTC) // ce que le delegataire vire reellement
+    primeHT:r2(primeClient+comHT),     // base hors TVA
+    primeCEE:r2(primeClient+comTTC),   // prime CEE TTC = ce que le delegataire vire
+    totalEncaisse:r2(primeClient+comTTC)
   };
 }
 function dealRecalc(){
@@ -5135,8 +5136,8 @@ function dealRecalc(){
        +lg('Commission installateur','HT · '+k.valoCom.toString().replace('.',',')+' €/MWhc',k.comHT)
        +lg('TVA sur commission',tvaRate()+' %',k.comTVA,'var(--text-mut)')
        +`<div style="border-top:1px solid var(--border-grey);margin-top:.3rem;padding-top:.3rem">`
-       +lg('<b>Prime CEE</b>','prime client + commission HT',k.primeCEE,'var(--green-deep)')
-       +lg('Virement délégataire attendu','prime client + commission TTC',k.totalEncaisse,'var(--blue)')
+       +lg('Total hors TVA','prime client + commission HT',k.primeHT,'var(--text-mut)')
+       +lg('<b>Prime CEE TTC</b>','virement attendu du délégataire',k.primeCEE,'var(--green-deep)')
        +`</div>`;
     }
   }
@@ -8347,9 +8348,9 @@ function updateCalcResult(){
     h+=lg('TVA '+tvaRate()+' %',eur(k.comTVA));
   }
   h+=`<div style="background:${pret?'#EFF7E8':'var(--bg-soft)'};border-radius:11px;padding:.65rem .85rem;text-align:center;margin-top:.45rem">
-    <div style="font-size:.64rem;font-weight:700;color:var(--text-mut);text-transform:uppercase;letter-spacing:.5px">Prime CEE</div>
+    <div style="font-size:.64rem;font-weight:700;color:var(--text-mut);text-transform:uppercase;letter-spacing:.5px">Prime CEE TTC</div>
     <div style="font-size:1.4rem;font-weight:800;color:${pret?'var(--green-deep)':'var(--text-mut)'};line-height:1.25">${pret?eur(k.primeCEE):'—'}</div>
-    ${pret?`<div style="font-size:.66rem;color:var(--text-mut)">Virement attendu ${eur(k.totalEncaisse)} TTC</div>`
+    ${pret?`<div style="font-size:.66rem;color:var(--text-mut)">dont ${eur(k.primeHT)} hors TVA</div>`
           :`<div style="font-size:.66rem;color:var(--text-mut)">Cumac + délégataire requis</div>`}
   </div>`;
   box.innerHTML=h;
