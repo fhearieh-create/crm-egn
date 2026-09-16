@@ -2850,9 +2850,6 @@ function renderDossier(r){
       <div class="fld"><label>Délégataire</label><select id="deal_deleg" onchange="dealRecalc()"><option value="">— Choisir —</option>${delegs.map(d=>`<option value="${d.id}" ${deal.delegataireId===d.id?'selected':''}>${esc(d.name)}</option>`).join('')}</select></div>
       <div class="fld"><label>Type de prime</label><select id="deal_type" onchange="dealRecalc()"><option value="classique" ${deal.type!=='precaire'?'selected':''}>Classique</option><option value="precaire" ${deal.type==='precaire'?'selected':''}>Précaire</option></select></div>
       <div class="fld"><label>Cumac (kWh cumac)</label><input type="number" id="deal_cumac" value="${deal.cumac!=null&&deal.cumac!==''?deal.cumac:''}" oninput="dealRecalc()" placeholder="ex : 1200000"></div>
-      <div class="fld"><label>Prime CEE (TTC) <span class="muted" style="font-size:.62rem">— saisie libre ou calculée via ⚡</span></label><input type="number" step="any" id="deal_prime_input" value="${deal.prime!=null&&deal.prime!==''?deal.prime:''}" oninput="dealPrimeManual()" placeholder="ex : 30823.20"></div>
-      <div class="fld"><label>Soit HT / TVA (${tvaRate()}%)</label><div id="deal_ht" class="deal-prime" style="font-size:.85rem">—</div></div>
-      <div id="deal_prime_auto_note" class="muted" style="font-size:.72rem;grid-column:1/-1"></div>
       <div style="grid-column:1/-1;background:var(--bg-soft);border-radius:10px;padding:.6rem .85rem;margin-top:.3rem">
         <div style="font-size:.66rem;font-weight:700;color:var(--text-mut);text-transform:uppercase;letter-spacing:.5px;margin-bottom:.3rem">Détail de la prime CEE</div>
         <div id="deal_detail"></div>
@@ -5111,17 +5108,6 @@ function dealRecalc(){
   const eur=n=>(n||0).toLocaleString('fr-FR',{minimumFractionDigits:2,maximumFractionDigits:2})+' €';
   const primeAuto=(cumac&&(k.valoClient||k.valoCom))?k.primeCEE:null;
 
-  // Pre-remplissage de la prime tant qu'aucune saisie manuelle n'a ete faite
-  const pinp=document.getElementById('deal_prime_input');
-  const note=document.getElementById('deal_prime_auto_note');
-  if(note&&primeAuto!=null){
-    const manVal=parseFloat((pinp||{}).value||'')||0;
-    note.textContent=manVal&&Math.abs(manVal-primeAuto)>0.01
-      ? `Calcul automatique = ${eur(primeAuto)} — votre saisie manuelle est conservée`
-      : `Calculé sur ${k.mwhc.toLocaleString('fr-FR',{maximumFractionDigits:2})} MWhc`;
-    if(!manVal&&pinp)pinp.value=primeAuto;
-  }
-
   // Detail du calcul, affiche sous la prime
   const det=document.getElementById('deal_detail');
   if(det){
@@ -5142,39 +5128,19 @@ function dealRecalc(){
     }
   }
 
-  // HT / TVA sous le champ prime
-  const primeVal=parseFloat((pinp||{}).value||'')||0;
-  const hel=document.getElementById('deal_ht');
-  if(hel)hel.textContent=primeVal?`${eur(htOf(primeVal))} HT · TVA ${eur(tvaOf(primeVal))}`:'';
-
   const vl=document.getElementById('deal_valoinfo');
   if(vl)vl.textContent=k.d
     ?`${k.d.name} — client ${k.valoClient.toString().replace('.',',')} €/MWhc · commission ${k.valoCom.toString().replace('.',',')} €/MWhc`
     :'';
 }
-function dealPrimeManual(){
-  // Recalcule juste HT/TVA quand on modifie la prime manuellement
-  const pinp=document.getElementById('deal_prime_input');
-  const primeVal=parseFloat((pinp||{}).value||'')||0;
-  const hel=document.getElementById('deal_ht');
-  if(hel)hel.textContent=primeVal?`${htOf(primeVal).toLocaleString('fr-FR',{minimumFractionDigits:2,maximumFractionDigits:2})} € HT · TVA ${tvaOf(primeVal).toLocaleString('fr-FR',{minimumFractionDigits:2,maximumFractionDigits:2})} €`:'—';
-  const note=document.getElementById('deal_prime_auto_note');
-  if(note)note.textContent='';
-}
 function dealAutoCumac(id){
   const r=recById(id);const c=computeCumac(r);
   if(c==null){toast('Renseignez d\'abord les champs de calcul et les coefficients dans Paramètres ▸ Opérations','err');return;}
   const el=document.getElementById('deal_cumac');if(el){el.value=c;}
-  const prime=computePrimeAuto(r);
-  const pinp=document.getElementById('deal_prime_input');
-  if(prime!=null&&pinp){
-    pinp.value=prime;
-    dealRecalc();
-    toast('Cumac : '+c.toLocaleString('fr-FR')+' kWhc → Prime : '+prime.toLocaleString('fr-FR',{maximumFractionDigits:2})+' € TTC','ok');
-  } else {
-    dealRecalc();
-    toast('Cumac calculé : '+c.toLocaleString('fr-FR')+' kWhc — saisissez ou ajustez la prime','ok');
-  }
+  const k=calcPrimeCEE(dealOf(r).delegataireId,dealOf(r).type,c);
+  dealRecalc();
+  if(k.primeCEE)toast('Cumac : '+c.toLocaleString('fr-FR')+' kWhc → Prime CEE : '+k.primeCEE.toLocaleString('fr-FR',{minimumFractionDigits:2,maximumFractionDigits:2})+' € TTC','ok');
+  else toast('Cumac : '+c.toLocaleString('fr-FR')+' kWhc — renseignez le délégataire pour obtenir la prime','ok');
 }
 async function saveDeal(id){
   const recs=getRecs();const r=recs.find(x=>x.id===id);if(!r)return;
@@ -5182,11 +5148,10 @@ async function saveDeal(id){
   const type=(document.getElementById('deal_type')||{}).value||'classique';
   const cumac=parseFloat((document.getElementById('deal_cumac')||{}).value||'')||0;
   const delegs=getDelegataires();const d=delegs.find(x=>x.id===did);
-  const valo=d?(type==='precaire'?(parseFloat(d.valoPrecaire)||0):(parseFloat(d.valoClassique)||0)):0;
-  // Prime : on lit d'abord la saisie manuelle, sinon on calcule depuis cumac × valo
-  const primeInput=parseFloat((document.getElementById('deal_prime_input')||{}).value||'')||0;
-  const primeAuto=Math.round(cumac/1000*valo*100)/100;
-  const prime=primeInput||primeAuto;
+  // Prime entierement calculee : prime client + commission TTC
+  const k=calcPrimeCEE(did,type,cumac);
+  const valo=k.valoClient;
+  const prime=k.primeCEE;
   Object.assign(dealOf(r),{delegataireId:did,delegataireName:d?d.name:'',type,cumac,valo,prime});
   // Synchroniser r.deal dans localStorage
   r.deal=r.deal||{};
