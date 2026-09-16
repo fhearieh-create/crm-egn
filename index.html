@@ -1270,7 +1270,7 @@ function thermitubePreviewHtml(t){
     <tr><td>Métrage linéaire ${t.manuel?'(saisie manuelle)':'(calculé automatiquement)'}</td><td style="text-align:right;font-weight:700">${t.metrage.toLocaleString('fr-FR')} ml</td></tr>
     <tr><td>Coût calculé (${t.prixMl} €/ml) <span class="muted" style="font-size:.62rem">— indicatif, comparaison uniquement</span></td><td style="text-align:right">${eur(t.coutCalcule)}</td></tr>
     <tr><td>kWh cumac estimé (390 × ${t.surface} m²)</td><td style="text-align:right;font-weight:700;color:var(--green-deep)">${t.cumacEstime.toLocaleString('fr-FR')} kWhc</td></tr>
-    <tr><td><b>Devis présenté dans l'étude</b> <span class="muted" style="font-size:.62rem">(= Prime CEE saisie dans le Deal — reste à payer 0 €)</span></td><td style="text-align:right;font-weight:800;color:#2D5F14">${eur(t.devisEstime)}<span style="display:block;font-size:.64rem;font-weight:500;color:var(--text-mut)">HT ${eur(htOf(t.devisEstime))}</span></td></tr>
+    <tr><td><b>Devis présenté dans l'étude</b> <span class="muted" style="font-size:.62rem">(= Prime CEE TTC du Deal — reste à payer 0 €)</span></td><td style="text-align:right;font-weight:800;color:#2D5F14">${eur(t.devisEstime)}<span style="display:block;font-size:.64rem;font-weight:500;color:var(--text-mut)">HT ${eur(htOf(t.devisEstime))}</span></td></tr>
   </tbody></table></div><p class="muted" style="font-size:.7rem;margin-top:.3rem">💡 Ce devis "présenté" ne sert que dans le document d'étude — la Comptabilité et le reste du dossier restent gérés manuellement comme d'habitude. Pense à renseigner la prime dans le panneau Deal avant de générer le PDF.</p>`;
 }
 function recalcThermitubePreview(recId){
@@ -1597,7 +1597,7 @@ async function genererEtudeThermitubePdf(recId){
     <h1 class="pt" style="margin-top:20px">Récapitulatif financier (estimatif)</h1>
     <table class="et"><thead><tr><th>Désignation</th><th style="text-align:right">Montant HT</th><th style="text-align:right">TVA (${tvaRate()}%)</th><th style="text-align:right">Montant TTC</th></tr></thead><tbody>
       <tr><td>Coût calculé (${t.metrage.toLocaleString('fr-FR')} ml × ${t.prixMl} €/ml) <span style="color:#9aa5b1;font-size:.7rem">— indicatif</span></td><td style="text-align:right;color:#9aa5b1">${eur(htOf(t.coutCalcule))}</td><td style="text-align:right;color:#9aa5b1">${eur(tvaOf(t.coutCalcule))}</td><td style="text-align:right;color:#9aa5b1">${eur(t.coutCalcule)}</td></tr>
-      <tr><td>Devis présenté (= Prime CEE)</td><td style="text-align:right">${eur(htOf(t.devisEstime))}</td><td style="text-align:right">${eur(tvaOf(t.devisEstime))}</td><td style="text-align:right;font-weight:700">${eur(t.devisEstime)}</td></tr>
+      <tr><td>Devis présenté (= Prime CEE TTC)</td><td style="text-align:right">${eur(htOf(t.devisEstime))}</td><td style="text-align:right">${eur(tvaOf(t.devisEstime))}</td><td style="text-align:right;font-weight:700">${eur(t.devisEstime)}</td></tr>
       <tr><td>Prime CEE${deleg?' — '+esc(deleg.name):''}</td><td style="text-align:right">− ${eur(htOf(primeCEE))}</td><td style="text-align:right">− ${eur(tvaOf(primeCEE))}</td><td style="text-align:right">− ${eur(primeCEE)}</td></tr>
     </tbody></table>
     <div class="finalbox"><div>RESTE À PAYER (estimatif)</div><div class="r">${eur(resteAPayer)}<span class="s">soit ${eur(htOf(resteAPayer))} HT — TVA ${tvaRate()}% incluse</span></div></div>
@@ -2638,7 +2638,7 @@ const COLS={
   updated:{label:'Date de modification',val:r=>`<span class="muted">${r.updated?new Date(r.updated).toLocaleDateString('fr-FR'):''}</span>`},
   zone:{label:'Zone climatique',val:r=>{const z=zoneOf(recWorkAddr(r).dept);return z?`<span class="zpill z-${z}">${z}</span>`:'<span class="muted">—</span>';}},
   delegataire:{label:'Délégataire',val:r=>`<span class="muted">${esc(dealOf(r).delegataireName||'')||'—'}</span>`},
-  prime:{label:'Prime (€ TTC)',val:r=>dealOf(r).prime?`<b style="color:var(--green-deep)">${dealOf(r).prime.toLocaleString('fr-FR')} €</b><span style="display:block;font-size:.62rem;color:var(--text-mut)">HT ${htOf(dealOf(r).prime).toLocaleString('fr-FR',{maximumFractionDigits:2})} €</span>`:'<span class="muted">—</span>'},
+  prime:{label:'Prime CEE TTC',val:r=>dealOf(r).prime?`<b style="color:var(--green-deep)">${dealOf(r).prime.toLocaleString('fr-FR')} €</b><span style="display:block;font-size:.62rem;color:var(--text-mut)">HT ${htOf(dealOf(r).prime).toLocaleString('fr-FR',{maximumFractionDigits:2})} €</span>`:'<span class="muted">—</span>'},
   sousstatut:{label:'Sous-statut admin.',val:r=>{
     if(!can('sousstatut_view'))return '';
     const subs=load('egncrm_sousstatuts',[]);
@@ -3049,8 +3049,8 @@ function renderComptaPanel(r){
       <div class="sectitle" style="margin-top:1.1rem">Rentabilité du dossier</div>
       <p class="muted" style="font-size:.7rem;margin:.15rem 0 .45rem">Montants saisis <b>TTC</b> — TVA ${tvaRate()}% déduite automatiquement (taux modifiable dans Paramètres ▸ Société).</p>
       <div class="info-row"><span class="il">Montant du devis <span class="muted" style="font-size:.68rem">(base de calcul commission poseur — non compté en recette)</span></span><span class="iv muted">${ttcHt(c.devisTTC)}</span></div>
-      <div class="info-row"><span class="il">Prime CEE <span class="muted" style="font-size:.68rem">(recette prise en compte pour la rentabilité)</span></span><span class="iv">${ttcHt(prime)}</span></div>
-      <div class="info-row"><span class="il" style="font-weight:700">Recettes totales (= prime CEE)</span><span class="iv" style="font-weight:700">${ttcHt(recettes)}</span></div>
+      <div class="info-row"><span class="il">Prime CEE TTC <span class="muted" style="font-size:.68rem">(recette prise en compte pour la rentabilité)</span></span><span class="iv">${ttcHt(prime)}</span></div>
+      <div class="info-row"><span class="il" style="font-weight:700">Recettes totales (= prime CEE TTC)</span><span class="iv" style="font-weight:700">${ttcHt(recettes)}</span></div>
       <div class="info-row">${ovLine(r,'poseur','Coût poseur'+(pc.mode?` — ${esc(pc.label)}`:''),pc.montant,c)}</div>
       <div class="info-row">${ovLine(r,'callcenter','Coût Call Center'+(ccC.mode?` — ${esc(ccC.label)}`:''),ccC.montant,c)}</div>
       <div class="info-row">${ovLine(r,'vt','Coût VT — '+esc(vtC.label),vtC.montant,c)}</div>
@@ -7115,7 +7115,7 @@ const DOC_PLACEHOLDER_LABELS={
   tel:'Téléphone',email:'Email',nom_site:'Nom du site',
   adresse:'Adresse',cp:'Code postal',ville:'Ville',adresse_travaux:'Adresse des travaux',
   dossier:'N° Dossier',operation:'Opération',zone:'Zone climatique',
-  delegataire:'Délégataire',type_prime:'Type de prime',cumac:'Cumac (kWhc)',prime:'Prime CEE',
+  delegataire:'Délégataire',type_prime:'Type de prime',cumac:'Cumac (kWhc)',prime:'Prime CEE TTC',
   date_rdv:'Date du prochain RDV',heure_rdv:'Heure du RDV',type_rdv:'Type de RDV',intervenant_rdv:'Intervenant RDV',
   moi:'Mon nom (utilisateur connecté)',ma_societe:'Nom de la société',mon_email:'Email de la société',date_jour:'Date du jour'
 };
