@@ -162,6 +162,8 @@ table.tbl tr:last-child td{border-bottom:none}
 table.tbl tbody tr{transition:.1s}table.tbl tbody tr:hover{background:#f8fbf4}
 .dossier-tag{font-family:monospace;font-size:.76rem;background:#eef3ff;color:#3358b8;border-radius:6px;padding:.12rem .45rem;font-weight:700}
 .tbl-name{font-weight:700;color:var(--navy)}
+.lien-dossier{cursor:pointer}
+.lien-dossier:hover{text-decoration:underline;color:var(--green-deep)}
 .row-act{display:flex;gap:.35rem;justify-content:flex-end}
 .iconbtn{background:#f0f3ee;border:none;border-radius:7px;width:30px;height:30px;cursor:pointer;font-size:.85rem;color:var(--text-soft);transition:.12s;display:inline-flex;align-items:center;justify-content:center}
 .iconbtn:hover{background:var(--green);color:#fff}
@@ -2634,8 +2636,8 @@ function runExport(){
 function prodNameById(id){return (getAllProducts().find(p=>p.id===id)||{}).name||'';}
 function srcNameById(id){return (getSources().find(s=>s.id===id)||{}).name||'';}
 const COLS={
-  dossier:{label:'N° Dossier',val:r=>`<span class="dossier-tag">${esc(r.dossier||'—')}</span>`},
-  name:{label:'Nom / Raison sociale',val:r=>{const rd=nextRdvOf(r);return `<span class="tbl-name">${esc(recName(r))}</span>`+(rd?`<div class="rdv-mini">📅 ${fmtDate(rd.date)}${rd.heure?' '+rd.heure:''} · ${esc(rd.type||'RDV')}</div>`:'');}},
+  dossier:{label:'N° Dossier',val:r=>`<span class="dossier-tag lien-dossier" onclick="ouvrirLigne(event,'${r.id}')" title="Ouvrir le dossier">${esc(r.dossier||'—')}</span>`},
+  name:{label:'Nom / Raison sociale',val:r=>{const rd=nextRdvOf(r);return `<span class="tbl-name lien-dossier" onclick="ouvrirLigne(event,'${r.id}')" title="Ouvrir le dossier">${esc(recName(r))}</span>`+(rd?`<div class="rdv-mini">📅 ${fmtDate(rd.date)}${rd.heure?' '+rd.heure:''} · ${esc(rd.type||'RDV')}</div>`:'');}},
   tel:{label:'Téléphone mobile',val:r=>esc(r.tel||'')||'—'},
   telFixe:{label:'Téléphone fixe',val:r=>esc(r.telFixe||'')||'—'},
   email:{label:'Email',val:r=>esc(r.email||'')||'—'},
