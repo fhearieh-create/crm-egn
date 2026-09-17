@@ -645,8 +645,7 @@ const PERM_GROUPS=[
     {k:'compta_facturation',l:'Appels à facturation'},
     {k:'compta_paiements',l:'Suivi des paiements'},
     {k:'compta_delegataires',l:'Suivi des encaissements'},
-    {k:'compta_tva_payer',l:'TVA à payer'},
-    {k:'compta_tva_recup',l:'TVA à récupérer'},
+    {k:'compta_tva_payer',l:'TVA (collectée et déductible)'},
     {k:'compta_fournisseurs',l:'Paiements fournisseurs'},
     {k:'compta_historique',l:'Historique des factures'},
     {k:'compta_apf_create',l:'Générer des APF'},
@@ -2201,8 +2200,7 @@ async function renderDashGlobal(){
     h+=`<div class="sectitle" style="font-size:.66rem">Encaissements & TVA</div><div class="kpis">`;
     h+=gCard({ic:'🏦',lab:'Encaissements délégataires attendus',val:eur(totDelegAttente),sub:`${delegAttente.length} APF en attente`,col:'#B96A0A',go:"dashGo('compta',{comptaTab:'delegataires'})"});
     h+=gCard({ic:'💳',lab:'APF non soldés',val:eur(totApfDus),sub:`${apfDus.length} appel${apfDus.length>1?'s':''} à facturation`,go:"dashGo('compta',{comptaTab:'paiements'})"});
-    h+=gCard({ic:'🏛️',lab:'TVA à payer',val:'Voir',sub:'sur primes encaissées',go:"dashGo('compta',{comptaTab:'tva_payer'})"});
-    h+=gCard({ic:'✅',lab:'TVA à récupérer',val:'Voir',sub:'sur charges et achats HT',go:"dashGo('compta',{comptaTab:'tva_recup'})"});
+    h+=gCard({ic:'🏛️',lab:'TVA',val:'Voir',sub:'collectée, déductible et solde',go:"dashGo('compta',{comptaTab:'tva'})"});
     h+=`</div>`;
   }
 
@@ -3456,7 +3454,7 @@ async function renderComptaGlobal(){
   renderComptaTabs();
 }
 function renderComptaTabs(){
-  const tabs=[['resume','Résumé global','compta_resume'],['facturation','Appels à facturation','compta_facturation'],['paiements','Suivi des paiements','compta_paiements'],['delegataires','Suivi des encaissements','compta_delegataires'],['tva_payer','TVA à payer','compta_tva_payer'],['tva_recup','TVA à récupérer','compta_tva_recup'],['fournisseurs','Paiements fournisseurs','compta_fournisseurs'],['historique','Historique des factures','compta_historique']].filter(t=>can(t[2]));
+  const tabs=[['resume','Résumé global','compta_resume'],['facturation','Appels à facturation','compta_facturation'],['paiements','Suivi des paiements','compta_paiements'],['delegataires','Suivi des encaissements','compta_delegataires'],['tva','TVA','compta_tva_payer'],['fournisseurs','Paiements fournisseurs','compta_fournisseurs'],['historique','Historique des factures','compta_historique']].filter(t=>can(t[2]));
   if(!tabs.length){document.getElementById('content').innerHTML=`<div class="empty"><div class="big">🔒</div>Aucun onglet de comptabilité ne vous est accessible.</div>`;return;}
   if(!tabs.some(t=>t[0]===COMPTA_TAB))COMPTA_TAB=tabs[0][0];
   let h=segBanner();
@@ -3466,8 +3464,7 @@ function renderComptaTabs(){
   else if(COMPTA_TAB==='facturation')renderComptaFacturation();
   else if(COMPTA_TAB==='paiements')renderComptaPaiements();
   else if(COMPTA_TAB==='delegataires')renderComptaDelegataires();
-  else if(COMPTA_TAB==='tva_payer')renderComptaTvaPayer();
-  else if(COMPTA_TAB==='tva_recup')renderComptaTvaRecup();
+  else if(COMPTA_TAB==='tva')renderComptaTva();
   else if(COMPTA_TAB==='fournisseurs')renderComptaFournisseurs();
   else renderComptaHistorique();
 }
@@ -4809,192 +4806,123 @@ function exportFournCSV(){
   a.href=url;a.download='paiements_fournisseurs_egn.csv';a.click();URL.revokeObjectURL(url);
 }
 
-function renderComptaTvaPayer(){
-  const recs=segRecs().filter(hasComptaData);
-  const eur=n=>(n||0).toLocaleString('fr-FR',{maximumFractionDigits:2})+' €';
-  const tva=tvaRate();
-  // Construire l'index des dossiers dont le virement délégataire est reçu
-  const apfsDeleg=segApfDeleg();
-  const recIdsVirementRecu=new Set(
-    apfsDeleg.filter(a=>a.statut==='recu').flatMap(a=>a.recIds||[])
-  );
-  let totTTC=0,totHT=0,totTVA=0;
-  const rows=recs.map(r=>{
-    const prime=primeOf(r)||0;
-    const deal=dealOf(r);
-    // Inclure seulement si virement délégataire reçu (ou pas de délégataire)
-    const hasDelegataire=!!deal.delegataireId;
-    const virementRecu=recIdsVirementRecu.has(r.id);
-    if(hasDelegataire&&!virementRecu)return null;
-    const ht=htOf(prime);const tvaM=tvaOf(prime);
-    totTTC+=prime;totHT+=ht;totTVA+=tvaM;
-    const op=getAllProducts().find(o=>o.id===r.productId);
-    return{r,prime,ht,tvaM,op,hasDelegataire,virementRecu};
-  }).filter(x=>x&&x.prime>0).sort((a,b)=>(b.r.updated||0)-(a.r.updated||0));
-  // Versements déjà effectués
-  const tvaSettings=load('egncrm_tva_settings',{});
-  const dejaVerse=parseFloat(tvaSettings.tva_payer_verse||0)||0;
-  const solde=totTVA-dejaVerse;
-  let h=`<p class="muted" style="font-size:.72rem;margin-bottom:.8rem">🏛️ TVA collectée sur les primes CEE au taux de <b>${tva}%</b>. Pour les dossiers avec délégataire, seuls les virements <b>reçus</b> sont comptabilisés.</p>`;
-  h+=`<div class="kpis">
-    <div class="kpi"><div class="kico">💶</div><div class="klab">Recettes TTC totales</div><div class="kval">${eur(totTTC)}</div><div class="ksub">${rows.length} dossier${rows.length>1?'s':''}</div></div>
-    <div class="kpi"><div class="kico">📊</div><div class="klab">Base HT</div><div class="kval">${eur(totHT)}</div><div class="ksub">Taux ${tva}%</div></div>
-    <div class="kpi" style="border:1.5px solid rgba(230,57,70,.3)"><div class="kico">🏛️</div><div class="klab">TVA collectée totale</div><div class="kval" style="color:var(--coral)">${eur(totTVA)}</div><div class="ksub">À reverser au fisc</div></div>
-    <div class="kpi" style="border:1.5px solid rgba(45,125,210,.3)"><div class="kico">✅</div><div class="klab">Déjà versé</div><div class="kval" style="color:var(--blue)">${eur(dejaVerse)}</div><div class="ksub">Saisi manuellement</div></div>
-    <div class="kpi" style="border:1.5px solid ${solde>0?'rgba(230,57,70,.4)':'rgba(91,186,84,.4)'}"><div class="kico">${solde>0?'⚠️':'✅'}</div><div class="klab">Solde restant à payer</div><div class="kval" style="color:${solde>0?'var(--coral)':'var(--green-deep)'}">${eur(Math.abs(solde))}${solde<0?' (excédent)':''}</div><div class="ksub">= Collectée − Versée</div></div>
-  </div>`;
-  // Panneau saisie du montant versé
-  h+=`<div class="panel" style="border:1.5px solid rgba(45,125,210,.2)"><div class="panel-h"><h3>💳 Montant déjà versé à l'administration fiscale</h3></div><div class="panel-b">
-    <p class="muted" style="font-size:.78rem;margin-bottom:.8rem">Saisissez le total des acomptes et déclarations TVA déjà versés. Le CRM déduit automatiquement ce montant pour afficher le solde restant dû.</p>
-    <div style="display:flex;align-items:center;gap:.8rem;flex-wrap:wrap">
-      <div class="fld" style="flex:1;min-width:200px"><label>Montant total versé (€)</label><input type="number" step="any" id="tva_payer_inp" value="${dejaVerse||''}" placeholder="0" style="font-size:1.1rem;font-weight:700"></div>
-      <button class="btn btn-pri" style="margin-top:1.2rem" onclick="saveTvaVerse()">💾 Enregistrer</button>
-      ${dejaVerse>0?`<button class="btn btn-ghost" style="margin-top:1.2rem;color:var(--coral)" onclick="if(confirm('Remettre à zéro ?')){saveTvaVerseVal(0);}">✕ Remettre à zéro</button>`:''}
-    </div>
-  </div></div>`;
-  h+=`<div class="panel"><div class="panel-h"><h3>Détail par dossier</h3><div class="sp"><span class="muted">${rows.length} dossier${rows.length>1?'s':''}</span></div></div><div class="panel-b">`;
-  if(!rows.length)h+=`<div class="empty"><div class="big">🏛️</div>Aucun dossier avec prime CEE renseignée.</div>`;
-  else{
-    h+=`<div class="tbl-wrap"><table class="tbl">
-      <thead><tr><th>N° Dossier</th><th>Client</th><th>Opération</th><th>Délégataire</th><th class="r">Prime TTC</th><th class="r">Base HT</th><th class="r" style="color:var(--coral)">TVA collectée</th></tr></thead><tbody>`;
-    rows.forEach(({r,prime,ht,tvaM,op})=>{
-      const deal=dealOf(r);
-      const delegBadge=deal.delegataireId
-        ?`<span style="font-size:.68rem;background:#E6F7F0;color:#0F6E56;border-radius:5px;padding:1px 6px">✅ Virement reçu</span>`
-        :`<span class="muted" style="font-size:.72rem">—</span>`;
-      h+=`<tr>
-        <td><span class="dossier-tag" style="cursor:pointer" onclick="openDossier('${r.id}')">${esc(r.dossier||'—')}</span></td>
-        <td>${esc(clientNameOf(r))}</td>
-        <td class="muted">${op?esc(op.name):'—'}</td>
-        <td>${esc(deal.delegataireName||'—')} ${delegBadge}</td>
-        <td style="text-align:right;font-weight:700">${eur(prime)}</td>
-        <td style="text-align:right">${eur(ht)}</td>
-        <td style="text-align:right;font-weight:700;color:var(--coral)">${eur(tvaM)}</td>
-      </tr>`;
-    });
-    h+=`<tr style="background:#f8faf5;font-weight:800"><td colspan="4">Total</td><td style="text-align:right">${eur(totTTC)}</td><td style="text-align:right">${eur(totHT)}</td><td style="text-align:right;color:var(--coral)">${eur(totTVA)}</td></tr>`;
-    h+=`</tbody></table></div>`;
-  }
-  h+=`</div></div>`;
-  document.getElementById('comptaBody').innerHTML=h;
-}
-function saveTvaVerse(){
-  const inp=document.getElementById('tva_payer_inp');
-  const val=parseFloat(String((inp?inp.value:0)||'0').replace(',','.'))||0;
-  saveTvaVerseVal(val);
-}
-function saveTvaVerseVal(val){
-  const s=load('egncrm_tva_settings',{});s.tva_payer_verse=val;
-  save('egncrm_tva_settings',s);toast('Montant versé enregistré ✓','ok');renderComptaTvaPayer();
-}
-function saveTvaRecup(){
-  const inp=document.getElementById('tva_recup_inp');
-  const val=parseFloat(String((inp?inp.value:0)||'0').replace(',','.'))||0;
-  saveTvaRecupVal(val);
-}
-function saveTvaRecupVal(val){
-  const s=load('egncrm_tva_settings',{});s.tva_recup_recu=val;
-  save('egncrm_tva_settings',s);toast('Montant récupéré enregistré ✓','ok');renderComptaTvaRecup();
-}
 /* ============================================================
-   TVA À RÉCUPÉRER — TVA déductible sur les charges payées HT
+   TVA — collectee sur le chiffre d'affaires, deductible sur les
+   charges, et solde a payer (ou credit si negatif).
    ============================================================ */
-function renderComptaTvaRecup(){
-  const recs=segRecs().filter(hasComptaData);
+function renderComptaTva(){
   const eur=n=>(n||0).toLocaleString('fr-FR',{maximumFractionDigits:2})+' €';
-  const KEYS=['poseur','callcenter','vt','audit'];
-  const LABELS={poseur:'Poseur',callcenter:'Call Center',vt:'Visite Technique',audit:'Audit'};
-  let totRecup=0;
-  const byKey={};KEYS.forEach(k=>{byKey[k]={montantHT:0,tvaRecup:0,nb:0};});
-  // TVA récupérable sur achats de stock
-  const mvts=getMvts();
-  const mats=getMats();
-  const tvaStock=mvts.filter(v=>['entree','reception'].includes(v.sens)).reduce((s,v)=>s+(v.tvaRecup||0)+(v.tvaFrais||0),0);
-  const totalHtStock=mvts.filter(v=>['entree','reception'].includes(v.sens)).reduce((s,v)=>s+(v.totalHT||0)+(v.totalFraisHT||0),0);
-  totRecup+=tvaStock;
-  const rows=[];
+  const T=comptaTotaux();
+  const recs=T.recs;
+  let caTTC=0,caHT=0,chTTC=0,chHT=0;
+  const detail=[];
   recs.forEach(r=>{
+    const k=primeDetailOf(r);
     const m=recordComptaMetrics(r);
-    const montants={poseur:m.pc.montant,callcenter:m.ccC.montant,vt:m.vtC.montant,audit:m.auditC.montant};
-    let rowTva=0;const details=[];
-    KEYS.forEach(k=>{
-      const montant=montants[k]||0;if(!montant)return;
-      const tl=tvaLine(r,k,montant);
-      if(tl.tvaRecup>0){
-        // Récupérer le nom du sous-traitant selon le type
-        let sousTraitant='—';
-        const c=comptaOf(r);
-        if(k==='poseur'){const fam=load('egncrm_poseurs',[]).find(f=>(f.userIds||[]).includes(c.poseurUserId));sousTraitant=fam?fam.name:'—';}
-        else if(k==='callcenter'){const src=getSources().find(s=>s.id===r.sourceId);sousTraitant=src?src.name:'—';}
-        else if(k==='vt'){const vt=load('egncrm_vt',[]).find(v=>v.id===c.vtSubId)||subAssignedFor(r,'vt');sousTraitant=vt?vt.name:'—';}
-        else if(k==='audit'){const aud=load('egncrm_auditeurs',[]).find(a=>a.id===c.auditSubId)||subAssignedFor(r,'auditeur');sousTraitant=aud?aud.name:'—';}
-        byKey[k].montantHT+=tl.paye;byKey[k].tvaRecup+=tl.tvaRecup;byKey[k].nb++;
-        rowTva+=tl.tvaRecup;totRecup+=tl.tvaRecup;
-        details.push({label:LABELS[k],montantHT:tl.ht,tvaRecup:tl.tvaRecup,sousTraitant});
-      }
-    });
-    if(rowTva>0)rows.push({r,rowTva,details});
+    const cTTC=k.primeCEE||0;
+    const cHT=k.estime?htOf(cTTC):(k.primeHT||0);
+    // Charges : chaque ligne selon son propre regime de TVA
+    let lTTC=0,lHT=0;
+    [['poseur',m.aPayerPoseur],['callcenter',m.aPayerCallCenter],['vt',m.aPayerVt],['audit',m.aPayerAudit]]
+      .forEach(([key,montant])=>{const t=tvaLine(r,key,montant||0);lTTC+=t.ttc;lHT+=t.ht;});
+    if(m.march){lTTC+=m.march.ttc||0;lHT+=m.march.ht||0;}
+    caTTC+=cTTC;caHT+=cHT;chTTC+=lTTC;chHT+=lHT;
+    if(cTTC||lTTC)detail.push({r,cTTC,cHT,tvaC:cTTC-cHT,lTTC,lHT,tvaD:lTTC-lHT});
   });
-  let h=`<p class="muted" style="font-size:.72rem;margin-bottom:.8rem">🟢 TVA déductible sur les charges payées en mode <b>HT</b>. Ces montants sont récupérables sur votre déclaration TVA.</p>`;
-  // Montants déjà récupérés
-  const tvaSettings=load('egncrm_tva_settings',{});
-  const dejaRecup=parseFloat(tvaSettings.tva_recup_recu||0)||0;
-  const solde=totRecup-dejaRecup;
-  h+=`<div class="kpis">`;
-  KEYS.forEach(k=>{if(byKey[k].nb>0)h+=`<div class="kpi"><div class="kico">${k==='poseur'?'🔧':k==='callcenter'?'📞':k==='vt'?'🧰':'📝'}</div><div class="klab">TVA récup. — ${LABELS[k]}</div><div class="kval" style="color:var(--green-deep)">${eur(byKey[k].tvaRecup)}</div><div class="ksub">Base HT ${eur(byKey[k].montantHT)} · ${byKey[k].nb} dossier${byKey[k].nb>1?'s':''}</div></div>`;});
-  if(totRecup>0)h+=`<div class="kpi" style="border:1.5px solid rgba(91,186,84,.4)"><div class="kico">✅</div><div class="klab">Total TVA récupérable</div><div class="kval" style="color:var(--green-deep)">${eur(totRecup)}</div><div class="ksub">Sur toutes les charges HT</div></div>`;
-  if(tvaStock>0)h+=`<div class="kpi" style="border:1.5px solid rgba(45,125,210,.3)"><div class="kico">📦</div><div class="klab">TVA sur achats stock</div><div class="kval" style="color:var(--blue)">${eur(tvaStock)}</div><div class="ksub">Base HT ${eur(totalHtStock)}</div></div>`;
-  if(dejaRecup>0)h+=`<div class="kpi" style="border:1.5px solid rgba(45,125,210,.3)"><div class="kico">💳</div><div class="klab">Déjà récupéré</div><div class="kval" style="color:var(--blue)">${eur(dejaRecup)}</div><div class="ksub">Saisi manuellement</div></div>`;
-  if(totRecup>0)h+=`<div class="kpi" style="border:1.5px solid ${solde>0?'rgba(91,186,84,.4)':'rgba(45,125,210,.3)'}"><div class="kico">${solde>0?'⏳':'✅'}</div><div class="klab">Solde à récupérer</div><div class="kval" style="color:${solde>0?'var(--green-deep)':'var(--blue)'}">${eur(Math.abs(solde))}${solde<0?' (tout récupéré)':''}</div><div class="ksub">= Récupérable − Récupéré</div></div>`;
-  h+=`</div>`;
-  // Panneau saisie
-  h+=`<div class="panel" style="border:1.5px solid rgba(91,186,84,.3)"><div class="panel-h"><h3>💳 Montant déjà récupéré auprès du fisc</h3></div><div class="panel-b">
-    <p class="muted" style="font-size:.78rem;margin-bottom:.8rem">Saisissez le total des montants de TVA déjà remboursés par l'administration. Le CRM calcule automatiquement le solde restant à récupérer.</p>
-    <div style="display:flex;align-items:center;gap:.8rem;flex-wrap:wrap">
-      <div class="fld" style="flex:1;min-width:200px"><label>Montant total récupéré (€)</label><input type="number" step="any" id="tva_recup_inp" value="${dejaRecup||''}" placeholder="0" style="font-size:1.1rem;font-weight:700"></div>
-      <button class="btn btn-pri" style="margin-top:1.2rem" onclick="saveTvaRecup()">💾 Enregistrer</button>
-      ${dejaRecup>0?`<button class="btn btn-ghost" style="margin-top:1.2rem;color:var(--coral)" onclick="if(confirm('Remettre à zéro ?')){saveTvaRecupVal(0);}">✕ Remettre à zéro</button>`:''}
+  const tvaCollectee=Math.round((caTTC-caHT)*100)/100;
+  const tvaDeductible=Math.round((chTTC-chHT)*100)/100;
+  const solde=Math.round((tvaCollectee-tvaDeductible)*100)/100;
+  // Montants deja regles / recuperes, saisis par l'utilisateur
+  const s=getSettings();
+  const dejaVerse=parseFloat(s.tvaDejaVerse)||0;
+  const resteDu=Math.round((solde-dejaVerse)*100)/100;
+
+  let h=opFilterBar('renderComptaTva');
+  h+=`<div class="kpis">
+    <div class="kpi"><div class="kico">💶</div><div class="klab">CA TTC</div><div class="kval">${eur(caTTC)}</div><div class="ksub">HT ${eur(caHT)}</div></div>
+    <div class="kpi" style="border:1.5px solid rgba(230,57,70,.25)"><div class="kico">🏛️</div><div class="klab">TVA collectée</div><div class="kval" style="color:var(--coral)">${eur(tvaCollectee)}</div><div class="ksub">sur le chiffre d'affaires</div></div>
+    <div class="kpi"><div class="kico">📤</div><div class="klab">Charges variables TTC</div><div class="kval">${eur(chTTC)}</div><div class="ksub">HT ${eur(chHT)}</div></div>
+    <div class="kpi" style="border:1.5px solid rgba(45,125,210,.25)"><div class="kico">✅</div><div class="klab">TVA déductible</div><div class="kval" style="color:var(--blue)">${eur(tvaDeductible)}</div><div class="ksub">sur les charges et la marchandise</div></div>
+  </div>`;
+
+  // Solde
+  const crediteur=solde<0;
+  h+=`<div style="background:${crediteur?'rgba(45,125,210,.08)':'rgba(230,57,70,.07)'};border:1.5px solid ${crediteur?'rgba(45,125,210,.35)':'rgba(230,57,70,.3)'};border-radius:14px;padding:1.1rem 1.3rem;margin-bottom:1rem">
+    <div style="display:flex;align-items:center;gap:1.2rem;flex-wrap:wrap">
+      <div style="font-size:2rem">${crediteur?'💙':'🏛️'}</div>
+      <div style="flex:1;min-width:230px">
+        <div style="font-size:.7rem;font-weight:700;color:var(--text-mut);text-transform:uppercase;letter-spacing:.5px">${crediteur?'Crédit de TVA en votre faveur':'TVA à payer'}</div>
+        <div style="font-size:2rem;font-weight:800;color:${crediteur?'var(--blue)':'var(--coral)'};line-height:1.15">${eur(Math.abs(solde))}</div>
+        <div class="muted" style="font-size:.76rem">${eur(tvaCollectee)} collectée − ${eur(tvaDeductible)} déductible</div>
+      </div>
+      <div style="display:flex;flex-direction:column;gap:.25rem;min-width:190px">
+        <label style="font-size:.68rem;font-weight:700;color:var(--text-mut);text-transform:uppercase;letter-spacing:.4px">Déjà versé au Trésor</label>
+        <input type="number" step="any" value="${s.tvaDejaVerse||''}" placeholder="0" onchange="saveTvaDejaVerse(this.value)" style="font-family:'Saira',sans-serif;font-size:.9rem;font-weight:700;border:1.5px solid var(--border-grey);border-radius:9px;padding:.4rem .7rem;outline:none">
+        <span style="font-size:.74rem;font-weight:700;color:${resteDu>0?'var(--coral)':'var(--green-deep)'}">${resteDu>0?'Reste à payer '+eur(resteDu):(resteDu<0?'Trop versé '+eur(Math.abs(resteDu)):'Soldé ✓')}</span>
+      </div>
     </div>
-  </div></div>`;
-  if(!rows.length&&!tvaStock){
-    h+=`<div class="empty"><div class="big">🟢</div>Aucune TVA récupérable pour le moment.<br><span class="muted" style="font-size:.8rem">Configurez le mode HT dans Paramètres ▸ Poseurs / Sources / VT / Auditeurs, ou ajoutez des entrées de stock avec un prix.</span></div>`;
-  } else {
-    h+=`<div class="panel"><div class="panel-h"><h3>Détail</h3><div class="sp"><span class="muted">${rows.length} dossier${rows.length>1?'s':''} · ${tvaStock>0?'+ achats stock':''}</span></div></div><div class="panel-b">`;
-    h+=`<div class="tbl-wrap"><table class="tbl">
-      <thead><tr><th>N° Dossier</th><th>Détail</th><th>Poste</th><th>Sous-traitant</th><th class="r">Montant HT</th><th class="r" style="color:var(--green-deep)">TVA récupérable</th></tr></thead><tbody>`;
-    rows.forEach(({r,rowTva,details})=>{
-      details.forEach((d,i)=>{
-        h+=`<tr>
-          ${i===0?`<td rowspan="${details.length}" style="vertical-align:top"><span class="dossier-tag" style="cursor:pointer" onclick="openDossier('${r.id}')">${esc(r.dossier||'—')}</span></td>
-          <td rowspan="${details.length}" style="vertical-align:top">${esc(clientNameOf(r))}</td>`:''}
-          <td>${d.label}</td>
-          <td class="muted">${esc(d.sousTraitant||'—')}</td>
-          <td style="text-align:right">${eur(d.montantHT)}</td>
-          <td style="text-align:right;font-weight:700;color:var(--green-deep)">${eur(d.tvaRecup)}</td>
-        </tr>`;
-      });
-    });
-    // Lignes d'achats de stock
-    if(tvaStock>0){
-      const stockRows=mvts.filter(v=>['entree','reception'].includes(v.sens)&&v.tvaRecup>0);
-      h+=`<tr style="background:#f0f6ff"><td colspan="6" style="font-weight:700;color:var(--blue);padding:.5rem .9rem">📦 Achats de matériels (stock)</td></tr>`;
-      stockRows.forEach(v=>{
-        const mat=mats.find(m=>m.id===v.materielId);
-        h+=`<tr>
-          <td><span class="dossier-tag" style="background:rgba(45,125,210,.1);color:var(--blue)">${new Date(v.date).toLocaleDateString('fr-FR')}</span></td>
-          <td>${mat?esc(mat.nom):'—'}<div class="muted" style="font-size:.68rem">${v.notes?esc(v.notes):''}</div></td>
-          <td>Achat stock</td>
-          <td class="muted" style="font-size:.78rem">${v.qte||'—'} ${mat?esc(mat.unite||'unités'):''} × ${eur(v.prixUnitaireHT||0)} HT/u${v.frais&&v.frais.length?`<div style="font-size:.65rem;color:var(--purple)">${v.frais.map(f=>esc(f.label)+': '+eur(f.ht)).join(' · ')}</div>`:''}</td>
-          <td style="text-align:right;font-weight:700">${eur(v.totalHT||0)}</td>
-          <td style="text-align:right;font-weight:700;color:var(--green-deep)">${eur(v.tvaRecup)}</td>
-        </tr>`;
-      });
-    }
-    h+=`<tr style="background:#f8faf5;font-weight:800"><td colspan="4">Total</td><td style="text-align:right">—</td><td style="text-align:right;color:var(--green-deep)">${eur(totRecup)}</td></tr>`;
-    h+=`</tbody></table></div></div></div>`;
+  </div>`;
+
+  // Detail par dossier
+  if(!detail.length){
+    h+=`<div class="empty"><div class="big">🏛️</div>Aucun dossier chiffré sur ce périmètre.</div>`;
+    document.getElementById('comptaBody').innerHTML=h;return;
   }
+  detail.sort((a,b)=>(b.tvaC-b.tvaD)-(a.tvaC-a.tvaD));
+  h+=`<div class="panel"><div class="panel-h"><h3>Détail par dossier</h3><div class="sp"><span class="muted">${detail.length} dossier${detail.length>1?'s':''}</span><button class="btn btn-navy btn-sm" onclick="exportTvaCSV()">📤 Exporter</button></div></div><div class="panel-b">
+    <div class="tbl-wrap"><table class="tbl"><thead><tr>
+      <th>N° Dossier</th><th>Client</th><th>Opération</th>
+      <th class="r">CA TTC</th><th class="r">TVA collectée</th>
+      <th class="r">Charges TTC</th><th class="r">TVA déductible</th><th class="r">Solde</th>
+    </tr></thead><tbody>`;
+  detail.forEach(d=>{
+    const op=getAllProducts().find(o=>o.id===d.r.productId);
+    const sd=Math.round((d.tvaC-d.tvaD)*100)/100;
+    h+=`<tr style="cursor:pointer" onclick="openDossier('${d.r.id}')">
+      <td><span class="dossier-tag">${esc(d.r.dossier||'—')}</span></td>
+      <td style="font-weight:700">${esc(clientNameOf(d.r))}</td>
+      <td class="muted">${op?esc(op.name):'—'}</td>
+      <td style="text-align:right">${eur(d.cTTC)}<div class="muted" style="font-size:.64rem">HT ${eur(d.cHT)}</div></td>
+      <td style="text-align:right;color:var(--coral);font-weight:700">${eur(d.tvaC)}</td>
+      <td style="text-align:right">${eur(d.lTTC)}<div class="muted" style="font-size:.64rem">HT ${eur(d.lHT)}</div></td>
+      <td style="text-align:right;color:var(--blue);font-weight:700">${eur(d.tvaD)}</td>
+      <td style="text-align:right;font-weight:800;color:${sd>=0?'var(--coral)':'var(--blue)'}">${eur(sd)}</td>
+    </tr>`;
+  });
+  h+=`<tr style="background:#f8faf5;font-weight:800">
+    <td colspan="3">Total</td>
+    <td style="text-align:right">${eur(caTTC)}</td>
+    <td style="text-align:right;color:var(--coral)">${eur(tvaCollectee)}</td>
+    <td style="text-align:right">${eur(chTTC)}</td>
+    <td style="text-align:right;color:var(--blue)">${eur(tvaDeductible)}</td>
+    <td style="text-align:right;color:${solde>=0?'var(--coral)':'var(--blue)'}">${eur(solde)}</td>
+  </tr></tbody></table></div></div></div>`;
   document.getElementById('comptaBody').innerHTML=h;
 }
+function saveTvaDejaVerse(v){
+  const s=getSettings();s.tvaDejaVerse=parseFloat(v)||0;save(K.set,s);
+  renderComptaTva();toast('Montant enregistré ✓','ok');
+}
+function exportTvaCSV(){
+  const T=comptaTotaux();
+  const nb=n=>(n||0).toLocaleString('fr-FR',{minimumFractionDigits:2,maximumFractionDigits:2});
+  let csv='N Dossier;Client;Operation;CA TTC;CA HT;TVA collectee;Charges TTC;Charges HT;TVA deductible;Solde\n';
+  T.recs.forEach(r=>{
+    const k=primeDetailOf(r),m=recordComptaMetrics(r);
+    const cTTC=k.primeCEE||0,cHT=k.estime?htOf(cTTC):(k.primeHT||0);
+    let lTTC=0,lHT=0;
+    [['poseur',m.aPayerPoseur],['callcenter',m.aPayerCallCenter],['vt',m.aPayerVt],['audit',m.aPayerAudit]]
+      .forEach(([key,montant])=>{const t=tvaLine(r,key,montant||0);lTTC+=t.ttc;lHT+=t.ht;});
+    if(m.march){lTTC+=m.march.ttc||0;lHT+=m.march.ht||0;}
+    if(!cTTC&&!lTTC)return;
+    const op=getAllProducts().find(o=>o.id===r.productId);
+    csv+=`${r.dossier||''};${clientNameOf(r)};${op?op.name:''};${nb(cTTC)};${nb(cHT)};${nb(cTTC-cHT)};${nb(lTTC)};${nb(lHT)};${nb(lTTC-lHT)};${nb((cTTC-cHT)-(lTTC-lHT))}\n`;
+  });
+  const blob=new Blob(['\uFEFF'+csv],{type:'text/csv;charset=utf-8'});
+  const url=URL.createObjectURL(blob);const a=document.createElement('a');
+  a.href=url;a.download='tva_par_dossier.csv';a.click();URL.revokeObjectURL(url);
+}
+
 function renderComptaHistorique(){
   const factures=segFactures();
   const eur=n=>(n||0).toLocaleString('fr-FR',{maximumFractionDigits:2})+' €';
