@@ -4313,25 +4313,38 @@ function renderVirements(statut){
     document.getElementById('comptaBody').innerHTML=h;return;
   }
   h+=`<div class="tbl-wrap"><table class="tbl"><thead><tr>
-    <th>N° APF</th><th>Délégataire</th><th>Date</th><th class="r">Dossiers</th><th class="r">Montant TTC</th><th>Justificatif</th><th style="width:130px">Statut</th>
+    <th>N° APF</th><th>Délégataire</th><th>Date</th><th class="r">Dossiers</th><th class="r">Prime client HT</th><th class="r">Commission installateur</th><th class="r">Montant TTC</th><th>Justificatif</th><th style="width:130px">Statut</th><th style="width:125px">Reçu le</th>
   </tr></thead><tbody>`;
   apfs.forEach(a=>{
     const m=montantDe(a);
     const recu=a.statut==='recu';
+    const dd=(a.recIds||[]).map(id=>recById(id)).filter(Boolean).map(primeDetailOf);
+    const kc=dd.reduce((s,k)=>s+(k.primeClient||0),0);
+    const kt=dd.reduce((s,k)=>s+(k.comTTC||0),0);
+    const kh=dd.reduce((s,k)=>s+(k.comHT||0),0);
     h+=`<tr>
       <td><span class="dossier-tag" style="cursor:pointer" onclick="voirApfDeleg('${a.id}')">${esc(a.numApf||'—')} 👁️</span></td>
       <td style="font-weight:700">${esc(nomDe(a.delegId))}</td>
       <td class="muted">${new Date(a.date).toLocaleDateString('fr-FR')}</td>
       <td style="text-align:right"><button class="btn btn-ghost btn-sm" style="font-size:.74rem" onclick="voirApfDeleg('${a.id}')">${(a.recIds||[]).length} ›</button></td>
+      <td style="text-align:right">${kc?eur(kc):'<span class="muted">—</span>'}</td>
+      <td style="text-align:right">${kt?`${eur(kt)}<div class="muted" style="font-size:.64rem">HT ${eur(kh)}</div>`:'<span class="muted">—</span>'}</td>
       <td style="text-align:right;font-weight:800">${eur(m)}</td>
       <td>${a.fileUrl||a.filePath?attachLink(a.filePath,a.fileName||'Voir',a.fileUrl):'<span class="muted" style="font-size:.72rem">—</span>'}</td>
       <td><select onchange="saveApfDelegStatut('${a.id}',this.value)" style="font-family:'Saira',sans-serif;font-size:.74rem;font-weight:700;border:none;border-radius:7px;padding:3px 7px;cursor:pointer;width:100%;${recu?'background:#E6F7F0;color:#0F6E56':'background:#FFF4E5;color:#B96A0A'}">
         <option value="attente" ${!recu?'selected':''}>⏳ En attente</option>
         <option value="recu" ${recu?'selected':''}>✅ Virement reçu</option>
       </select></td>
+      <td>${recu
+        ?`<input type="date" value="${esc(a.dateVirement||'')}" onchange="saveApfDelegDate('${a.id}',this.value)" style="font-family:'Saira',sans-serif;font-size:.76rem;border:1.5px solid var(--border-grey);border-radius:7px;padding:3px 5px;width:100%;outline:none">`
+        :`<span class="muted" style="font-size:.72rem">—</span>`}</td>
     </tr>`;
   });
-  h+=`<tr style="background:#f8faf5;font-weight:800"><td colspan="4">Total</td><td style="text-align:right">${eur(total)}</td><td colspan="2"></td></tr>`;
+  const tt=apfs.flatMap(a=>(a.recIds||[]).map(id=>recById(id)).filter(Boolean).map(primeDetailOf));
+  h+=`<tr style="background:#f8faf5;font-weight:800"><td colspan="4">Total</td>
+    <td style="text-align:right">${eur(tt.reduce((s,k)=>s+(k.primeClient||0),0))}</td>
+    <td style="text-align:right">${eur(tt.reduce((s,k)=>s+(k.comTTC||0),0))}</td>
+    <td style="text-align:right">${eur(total)}</td><td colspan="3"></td></tr>`;
   h+=`</tbody></table></div>`;
   document.getElementById('comptaBody').innerHTML=h;
 }
@@ -4427,10 +4440,12 @@ function renderComptaDelegataires(){
       <thead><tr>
         <th style="width:36px"><input type="checkbox" id="deleg_chk_all" onchange="delegToggleAll(this.checked)"></th>
         <th>N° Dossier</th><th>Client</th><th>Opération</th>
-        <th class="r">Prime TTC</th><th>APF délégataire</th>
+        <th class="r">Prime client HT</th><th class="r">Commission installateur</th>
+        <th class="r">Prime CEE TTC</th><th>APF délégataire</th>
       </tr></thead><tbody>`;
     filtered.forEach(r=>{
       const deal=dealOf(r);const op=getAllProducts().find(o=>o.id===r.productId);
+      const k=primeDetailOf(r);
       const apfLie=myApfs.find(a=>(a.recIds||[]).includes(r.id));
       const apfBadge=apfLie
         ?`<span style="font-size:.72rem;font-weight:700;background:${apfLie.statut==='recu'?'#E6F7F0':'#FFF4E5'};color:${apfLie.statut==='recu'?'#0F6E56':'#B96A0A'};border-radius:6px;padding:2px 8px">${esc(apfLie.numApf||'—')} · ${apfLie.statut==='recu'?'✅ Reçu':'⏳ En attente'}</span>`
@@ -4440,7 +4455,9 @@ function renderComptaDelegataires(){
         <td><span class="dossier-tag" style="cursor:pointer" onclick="openDossier('${r.id}')">${esc(r.dossier||'—')}</span></td>
         <td>${esc(clientNameOf(r))}</td>
         <td class="muted">${op?esc(op.name):'—'}</td>
-        <td style="text-align:right;font-weight:700">${eur(primeOf(r)||0)}<div class="muted" style="font-size:.65rem">HT ${eur(htOf(primeOf(r)||0))}</div></td>
+        <td style="text-align:right">${k.estime?'<span class="muted">—</span>':eur(k.primeClient)}</td>
+        <td style="text-align:right">${k.estime?'<span class="muted">—</span>':`${eur(k.comTTC)}<div class="muted" style="font-size:.64rem">HT ${eur(k.comHT)}</div>`}</td>
+        <td style="text-align:right;font-weight:800">${eur(primeOf(r)||0)}</td>
         <td>${apfBadge}</td>
       </tr>`;
     });
@@ -4454,9 +4471,13 @@ function renderComptaDelegataires(){
   if(myApfs.length){
     h+=`<div class="panel"><div class="panel-h"><h3>APF délégataires — ${esc(deleg.name)}</h3></div><div class="panel-b">
       <div class="tbl-wrap"><table class="tbl">
-        <thead><tr><th>N° APF délégataire</th><th>Date</th><th>Dossiers</th><th class="r">Total prime</th><th>Statut</th><th>Pièce jointe</th><th class="r">Actions</th></tr></thead><tbody>`;
+        <thead><tr><th>N° APF délégataire</th><th>Date</th><th>Dossiers</th><th class="r">Prime client HT</th><th class="r">Commission installateur</th><th class="r">Total prime TTC</th><th>Statut</th><th style="width:125px">Reçu le</th><th>Pièce jointe</th><th class="r">Actions</th></tr></thead><tbody>`;
     myApfs.forEach(a=>{
       const tot=(a.recIds||[]).reduce((s,rid)=>{const r=recById(rid);return s+(r?primeOf(r)||0:0);},0);
+      const det=(a.recIds||[]).map(rid=>recById(rid)).filter(Boolean).map(primeDetailOf);
+      const totClient=det.reduce((s,k)=>s+(k.primeClient||0),0);
+      const totComTTC=det.reduce((s,k)=>s+(k.comTTC||0),0);
+      const totComHT=det.reduce((s,k)=>s+(k.comHT||0),0);
       const statSel=`<select onchange="saveApfDelegStatut('${a.id}',this.value)" style="font-family:'Saira',sans-serif;font-size:.75rem;font-weight:700;border:none;border-radius:7px;padding:3px 8px;cursor:pointer;${a.statut==='recu'?'background:#E6F7F0;color:#0F6E56':'background:#FFF4E5;color:#B96A0A'}">
         <option value="attente" ${a.statut!=='recu'?'selected':''}>⏳ En attente de virement</option>
         <option value="recu" ${a.statut==='recu'?'selected':''}>✅ Virement reçu</option>
@@ -4468,8 +4489,13 @@ function renderComptaDelegataires(){
         <td><span class="dossier-tag" style="cursor:pointer" onclick="voirApfDeleg('${a.id}')" title="Voir les dossiers de cet APF">${esc(a.numApf||'—')} 👁️</span></td>
         <td class="muted">${new Date(a.date).toLocaleDateString('fr-FR')}</td>
         <td><button class="btn btn-ghost btn-sm" style="font-size:.74rem" onclick="voirApfDeleg('${a.id}')">${(a.recIds||[]).length} dossier${(a.recIds||[]).length>1?'s':''} ›</button></td>
-        <td style="text-align:right;font-weight:700">${eur(tot)}</td>
+        <td style="text-align:right">${totClient?eur(totClient):'<span class="muted">—</span>'}</td>
+        <td style="text-align:right">${totComTTC?`${eur(totComTTC)}<div class="muted" style="font-size:.64rem">HT ${eur(totComHT)}</div>`:'<span class="muted">—</span>'}</td>
+        <td style="text-align:right;font-weight:800">${eur(tot)}</td>
         <td>${statSel}</td>
+        <td>${a.statut==='recu'
+          ?`<input type="date" value="${esc(a.dateVirement||'')}" onchange="saveApfDelegDate('${a.id}',this.value)" style="font-family:'Saira',sans-serif;font-size:.76rem;border:1.5px solid var(--border-grey);border-radius:7px;padding:3px 5px;width:100%;outline:none">`
+          :`<span class="muted" style="font-size:.72rem">—</span>`}</td>
         <td>${pjCell}</td>
         <td style="text-align:right"><button class="iconbtn del" onclick="supprimerApfDeleg('${a.id}')" title="Supprimer">🗑️</button></td>
       </tr>`;
@@ -4545,11 +4571,22 @@ function creerApfDeleg(delegId,recIds){
   logActivity('action',`📄 APF délégataire créé : ${num} — ${recIds.length} dossier${recIds.length>1?'s':''}`);
   renderComptaDelegataires();
 }
+/* Date du virement recu, modifiable independamment du statut */
+async function saveApfDelegDate(apfId,date){
+  const apfs=load('egncrm_apf_deleg',[]);
+  const apf=apfs.find(a=>a.id===apfId);if(!apf)return;
+  apf.dateVirement=date||'';
+  save('egncrm_apf_deleg',apfs);
+  toast(date?'Date de virement enregistrée ✓':'Date retirée','ok');
+  renderComptaDelegataires();
+}
 async function saveApfDelegStatut(apfId,statut){
   const apfs=load('egncrm_apf_deleg',[]);
   const apf=apfs.find(a=>a.id===apfId);if(!apf)return;
   apf.statut=statut;
+  if(statut!=='recu')delete apf.dateVirement;
   if(statut==='recu'){
+    if(!apf.dateVirement)apf.dateVirement=new Date().toISOString().slice(0,10);
     // Trouver le sous-statut administratif "Payé"
     const sousStatuts=load('egncrm_sousstatuts',[]);
     const payeSS=sousStatuts.find(s=>s.name&&s.name.toLowerCase().includes('pay'));
@@ -4586,27 +4623,35 @@ function voirApfDeleg(apfId){
     <div><span class="muted" style="font-size:.7rem;display:block">Dossiers</span><b>${lignes.length}</b></div>
     <div><span class="muted" style="font-size:.7rem;display:block">Total prime TTC</span><b style="color:var(--green-deep)">${eur(tot)}</b></div>
     <div><span class="muted" style="font-size:.7rem;display:block">Statut</span><b style="color:${recu?'#0F6E56':'#B96A0A'}">${recu?'✅ Virement reçu':'⏳ En attente'}</b></div>
+    ${recu&&a.dateVirement?`<div><span class="muted" style="font-size:.7rem;display:block">Reçu le</span><b>${new Date(a.dateVirement+'T12:00:00').toLocaleDateString('fr-FR')}</b></div>`:''}
   </div>`;
   if(!lignes.length)b+=`<div class="empty"><div class="big">📋</div>Aucun dossier rattaché — ils ont peut-être été supprimés.</div>`;
   else{
     b+=`<div class="tbl-wrap"><table class="tbl"><thead><tr>
       <th>N° Dossier</th><th>Client</th><th>Opération</th><th>Statut</th>
-      <th class="r">Cumac</th><th class="r">Prime TTC</th>
+      <th class="r">Cumac</th><th class="r">Prime client HT</th><th class="r">Commission installateur</th><th class="r">Prime CEE TTC</th>
     </tr></thead><tbody>`;
     lignes.forEach(r=>{
       const op=getAllProducts().find(o=>o.id===r.productId);
       const st=statById(r.statusId);
       const d=dealOf(r);
+      const k=primeDetailOf(r);
       b+=`<tr style="cursor:pointer" onclick="closeModal();openDossier('${r.id}')">
         <td><span class="dossier-tag">${esc(r.dossier||'—')}</span></td>
         <td style="font-weight:700">${esc(clientNameOf(r))}${r.ville?`<div class="muted" style="font-size:.68rem">${esc(r.ville)}</div>`:''}</td>
         <td class="muted">${op?esc(op.name):'—'}</td>
         <td>${st?`<span style="background:${st.color||'#ddd'}22;color:${st.color||'#666'};border-radius:5px;padding:1px 7px;font-size:.72rem;font-weight:700">${esc(st.name)}</span>`:'—'}</td>
         <td style="text-align:right" class="muted">${d.cumac?Number(d.cumac).toLocaleString('fr-FR'):'—'}</td>
+        <td style="text-align:right">${k.estime?'<span class="muted">—</span>':eur(k.primeClient)}</td>
+        <td style="text-align:right">${k.estime?'<span class="muted">—</span>':`${eur(k.comTTC)}<div class="muted" style="font-size:.64rem">HT ${eur(k.comHT)}</div>`}</td>
         <td style="text-align:right;font-weight:800">${eur(primeOf(r)||0)}</td>
       </tr>`;
     });
-    b+=`<tr style="background:#f8faf5;font-weight:800"><td colspan="5">Total</td><td style="text-align:right">${eur(tot)}</td></tr>`;
+    const dt=lignes.map(primeDetailOf);
+    b+=`<tr style="background:#f8faf5;font-weight:800"><td colspan="5">Total</td>
+      <td style="text-align:right">${eur(dt.reduce((s,k)=>s+(k.primeClient||0),0))}</td>
+      <td style="text-align:right">${eur(dt.reduce((s,k)=>s+(k.comTTC||0),0))}</td>
+      <td style="text-align:right">${eur(tot)}</td></tr>`;
     b+=`</tbody></table></div><p class="muted" style="font-size:.75rem;margin-top:.6rem">Cliquez sur une ligne pour ouvrir le dossier.</p>`;
   }
   openModal('🏦 APF '+esc(a.numApf||''),b,`<button class="btn btn-ghost" onclick="closeModal()">Fermer</button>`,'wide');
