@@ -649,7 +649,6 @@ const PERM_GROUPS=[
     {k:'compta_paiements',l:'Suivi des paiements'},
     {k:'compta_delegataires',l:'Suivi des encaissements'},
     {k:'compta_tva_payer',l:'TVA (collectée et déductible)'},
-    {k:'compta_fournisseurs',l:'Paiements fournisseurs'},
     {k:'compta_historique',l:'Historique des factures'},
     {k:'compta_apf_create',l:'Générer des APF'},
     {k:'compta_apf_delete',l:'Supprimer des APF'},
@@ -3628,7 +3627,7 @@ async function renderComptaGlobal(){
   renderComptaTabs();
 }
 function renderComptaTabs(){
-  const tabs=[['resume','Résumé global','compta_resume'],['facturation','Appels à facturation','compta_facturation'],['paiements','Suivi des paiements','compta_paiements'],['delegataires','Suivi des encaissements','compta_delegataires'],['tva','TVA','compta_tva_payer'],['fournisseurs','Paiements fournisseurs','compta_fournisseurs'],['historique','Historique des factures','compta_historique']].filter(t=>can(t[2]));
+  const tabs=[['resume','Résumé global','compta_resume'],['facturation','Appels à facturation','compta_facturation'],['paiements','Suivi des paiements','compta_paiements'],['delegataires','Suivi des encaissements','compta_delegataires'],['tva','TVA','compta_tva_payer'],['historique','Historique des factures','compta_historique']].filter(t=>can(t[2]));
   if(!tabs.length){document.getElementById('content').innerHTML=`<div class="empty"><div class="big">🔒</div>Aucun onglet de comptabilité ne vous est accessible.</div>`;return;}
   if(!tabs.some(t=>t[0]===COMPTA_TAB))COMPTA_TAB=tabs[0][0];
   let h=segBanner();
@@ -3639,7 +3638,6 @@ function renderComptaTabs(){
   else if(COMPTA_TAB==='paiements')renderComptaPaiements();
   else if(COMPTA_TAB==='delegataires')renderComptaDelegataires();
   else if(COMPTA_TAB==='tva')renderComptaTva();
-  else if(COMPTA_TAB==='fournisseurs')renderComptaFournisseurs();
   else renderComptaHistorique();
 }
 /* Liste les dossiers dont une charge n'a pas d'intervenant assigné */
@@ -4329,7 +4327,6 @@ function renderComptaPaiements(){
   if(fournFactures.length){
     h+=`<div class="panel" style="margin-top:1rem"><div class="panel-h"><h3>🧾 Factures fournisseurs</h3><div class="sp">
       <span class="muted">${fourVisibles.length} sur ${fournFactures.length}</span>
-      <button class="btn btn-ghost btn-sm" style="font-size:.72rem" onclick="COMPTA_TAB='fournisseurs';renderComptaTabs()">Gérer →</button>
     </div></div><div class="panel-b">`;
     if(!fourVisibles.length)h+=`<div class="empty" style="padding:1rem"><div class="big" style="font-size:1.5rem">🔍</div>Aucune facture fournisseur pour ces filtres.</div>`;
     else{
@@ -4904,143 +4901,6 @@ function supprimerApfDeleg(apfId){
     closeModal();renderComptaDelegataires();toast('APF supprimé ✓','ok');
   });
 }
-/* ============================================================
-   SUIVI DES PAIEMENTS FOURNISSEURS
-   Une ligne par entrée de stock = une facture fournisseur
-   ============================================================ */
-const FOURN_F={q:'',fourn:'',statut:'',du:'',au:''};
-let FOURN_FOCUS=null;
-function setFournF(key,el){
-  FOURN_F[key]=el.value;
-  FOURN_FOCUS=(el.tagName==='INPUT'&&el.type==='text')?(el.selectionStart||0):null;
-  renderComptaFournisseurs();
-  if(FOURN_FOCUS!==null){const i=document.getElementById('fourn_q');if(i){i.focus();try{i.setSelectionRange(FOURN_FOCUS,FOURN_FOCUS);}catch(e){}}FOURN_FOCUS=null;}
-}
-function resetFournF(){Object.keys(FOURN_F).forEach(k=>FOURN_F[k]='');renderComptaFournisseurs();}
-function renderComptaFournisseurs(){
-  const mvts=getMvts().filter(v=>['entree','reception'].includes(v.sens));
-  const mats=getMats();
-  const eur=n=>(n||0).toLocaleString('fr-FR',{maximumFractionDigits:2})+' €';
-  const tva=tvaRate();
-  const ttcOf=ht=>ht*(1+tva/100);
-  const fournNames=[...new Set(mvts.map(v=>v.fournisseurNom).filter(Boolean))].sort();
-  // Filtrage
-  let rows=mvts.filter(v=>{
-    const mat=mats.find(m=>m.id===v.materielId);
-    const p=v.paiement||{};
-    if(FOURN_F.fourn&&v.fournisseurNom!==FOURN_F.fourn)return false;
-    if(FOURN_F.statut==='paye'&&p.statut!=='paye')return false;
-    if(FOURN_F.statut==='attente'&&p.statut==='paye')return false;
-    if(FOURN_F.du&&v.date<new Date(FOURN_F.du+'T00:00:00').getTime())return false;
-    if(FOURN_F.au&&v.date>new Date(FOURN_F.au+'T23:59:59').getTime())return false;
-    if(FOURN_F.q){
-      const q=FOURN_F.q.toLowerCase();
-      if(![v.fournisseurNom,mat?mat.nom:'',v.notes,p.ref,v.factureNom].join(' ').toLowerCase().includes(q))return false;
-    }
-    return true;
-  }).sort((a,b)=>b.date-a.date);
-  // KPIs
-  const totHT=rows.reduce((s,v)=>s+(v.totalHT||0),0);
-  const payeHT=rows.filter(v=>(v.paiement||{}).statut==='paye').reduce((s,v)=>s+(v.totalHT||0),0);
-  const duHT=totHT-payeHT;
-  const nbDu=rows.filter(v=>(v.paiement||{}).statut!=='paye').length;
-  const sansFacture=rows.filter(v=>!v.factureUrl).length;
-  let h=`<div class="kpis">
-    <div class="kpi"><div class="kico">🧾</div><div class="klab">Factures fournisseurs</div><div class="kval">${rows.length}</div><div class="ksub">${eur(totHT)} HT · ${eur(ttcOf(totHT))} TTC</div></div>
-    <div class="kpi" style="${duHT>0?'border:1.5px solid rgba(230,148,57,.35)':''}"><div class="kico">⏳</div><div class="klab">Reste à payer</div><div class="kval" style="color:#B96A0A">${eur(ttcOf(duHT))}</div><div class="ksub">TTC · ${eur(duHT)} HT · ${nbDu} facture${nbDu>1?'s':''}</div></div>
-    <div class="kpi accent"><div class="kico">✅</div><div class="klab">Déjà payé</div><div class="kval">${eur(ttcOf(payeHT))}</div><div class="ksub">TTC · ${eur(payeHT)} HT</div></div>
-    <div class="kpi" style="${sansFacture?'border:1.5px solid rgba(230,57,70,.3)':''}"><div class="kico">${sansFacture?'⚠️':'📎'}</div><div class="klab">Sans facture jointe</div><div class="kval" style="${sansFacture?'color:var(--coral)':''}">${sansFacture}</div><div class="ksub">${sansFacture?'à récupérer auprès du fournisseur':'Tout est justifié'}</div></div>
-  </div>`;
-  // Filtres
-  const fs="font-family:'Saira',sans-serif;font-size:.8rem;border:1.5px solid var(--border-grey);border-radius:8px;padding:.35rem .65rem;background:#fff;outline:none";
-  h+=`<div style="display:flex;gap:.5rem;flex-wrap:wrap;align-items:center;margin-bottom:.9rem">
-    <input id="fourn_q" type="text" value="${esc(FOURN_F.q)}" placeholder="🔍 Fournisseur, matériel, n° de facture…" oninput="setFournF('q',this)" style="${fs};flex:1;min-width:180px">
-    <select onchange="setFournF('fourn',this)" style="${fs}"><option value="">Tous les fournisseurs</option>${fournNames.map(f=>`<option value="${esc(f)}" ${FOURN_F.fourn===f?'selected':''}>${esc(f)}</option>`).join('')}</select>
-    <select onchange="setFournF('statut',this)" style="${fs}"><option value="">Tous les statuts</option>
-      <option value="attente" ${FOURN_F.statut==='attente'?'selected':''}>⏳ À payer</option>
-      <option value="paye" ${FOURN_F.statut==='paye'?'selected':''}>✅ Payée</option></select>
-    <label style="font-size:.72rem;color:var(--text-mut);font-weight:600">Du</label><input type="date" value="${esc(FOURN_F.du)}" onchange="setFournF('du',this)" style="${fs}">
-    <label style="font-size:.72rem;color:var(--text-mut);font-weight:600">Au</label><input type="date" value="${esc(FOURN_F.au)}" onchange="setFournF('au',this)" style="${fs}">
-    ${Object.values(FOURN_F).some(v=>v)?`<button class="btn btn-ghost btn-sm" style="font-size:.72rem" onclick="resetFournF()">✕ Réinitialiser</button>`:''}
-  </div>`;
-  if(!rows.length){h+=`<div class="empty"><div class="big">🧾</div>Aucune facture fournisseur.<br><span class="muted" style="font-size:.8rem">Les entrées de stock avec un prix alimentent automatiquement ce suivi.</span></div>`;document.getElementById('comptaBody').innerHTML=h;return;}
-  // Récapitulatif par fournisseur
-  const parFourn={};
-  rows.forEach(v=>{const k=v.fournisseurNom||'— Non renseigné —';parFourn[k]=parFourn[k]||{ht:0,du:0,nb:0};parFourn[k].ht+=v.totalHT||0;parFourn[k].nb++;if((v.paiement||{}).statut!=='paye')parFourn[k].du+=v.totalHT||0;});
-  h+=`<div class="panel"><div class="panel-h"><h3>Par fournisseur</h3></div><div class="panel-b"><div class="tbl-wrap"><table class="tbl">
-    <thead><tr><th>Fournisseur</th><th class="r">Factures</th><th class="r">Total HT</th><th class="r">Total TTC</th><th class="r">Reste à payer TTC</th></tr></thead><tbody>`;
-  Object.entries(parFourn).sort((a,b)=>b[1].du-a[1].du).forEach(([nom,x])=>{
-    h+=`<tr>
-      <td style="font-weight:700"><span style="color:var(--purple)">${esc(nom)}</span></td>
-      <td style="text-align:right">${x.nb}</td>
-      <td style="text-align:right">${eur(x.ht)}</td>
-      <td style="text-align:right;font-weight:700">${eur(ttcOf(x.ht))}</td>
-      <td style="text-align:right;font-weight:800;color:${x.du>0?'#B96A0A':'var(--green-deep)'}">${x.du>0?eur(ttcOf(x.du)):'Soldé ✓'}</td>
-    </tr>`;
-  });
-  h+=`</tbody></table></div></div></div>`;
-  // Détail des factures
-  h+=`<div class="panel"><div class="panel-h"><h3>Détail des factures</h3><div class="sp"><span class="muted">${rows.length} ligne${rows.length>1?'s':''}</span></div></div><div class="panel-b"><div class="tbl-wrap"><table class="tbl">
-    <thead><tr><th>Date</th><th>Fournisseur</th><th>Matériel</th><th class="r">Qté</th><th class="r">HT</th><th class="r">TVA</th><th class="r">TTC</th><th>Facture</th><th style="width:150px">Réf. paiement</th><th style="width:120px">Payée le</th><th style="width:110px">Statut</th></tr></thead><tbody>`;
-  rows.forEach(v=>{
-    const mat=mats.find(m=>m.id===v.materielId);
-    const p=v.paiement||{};
-    const paye=p.statut==='paye';
-    const ht=v.totalHT||0;
-    h+=`<tr style="${paye?'background:#F6FBF4':''}">
-      <td class="muted">${new Date(v.date).toLocaleDateString('fr-FR')}</td>
-      <td style="font-weight:700;color:var(--purple)">${esc(v.fournisseurNom||'—')}</td>
-      <td>${mat?esc(mat.nom):'—'}${v.totalFraisHT?`<div class="muted" style="font-size:.65rem">dont ${eur(v.totalFraisHT)} de frais</div>`:''}${v.remise?`<div style="font-size:.65rem;color:var(--coral)">−${eur(v.remise)} remise</div>`:''}</td>
-      <td style="text-align:right">${v.qte||'—'}</td>
-      <td style="text-align:right">${eur(ht)}</td>
-      <td style="text-align:right;color:var(--text-mut)">${eur(ht*tva/100)}</td>
-      <td style="text-align:right;font-weight:800">${eur(ttcOf(ht))}</td>
-      <td>${v.factureUrl?`${attachLink(v.facturePath,'Voir',v.factureUrl)}`:`<span style="font-size:.68rem;color:var(--coral);font-weight:700">⚠️ Manquante</span>`}</td>
-      <td><input type="text" value="${esc(p.ref||'')}" placeholder="Virement, chèque…" onchange="saveFournPaiement('${v.id}','ref',this.value)" style="font-family:'Saira',sans-serif;font-size:.76rem;border:1.5px solid var(--border-grey);border-radius:7px;padding:3px 7px;width:100%;outline:none"></td>
-      <td><input type="date" value="${esc(p.date||'')}" onchange="saveFournPaiement('${v.id}','date',this.value)" style="font-family:'Saira',sans-serif;font-size:.76rem;border:1.5px solid var(--border-grey);border-radius:7px;padding:3px 5px;width:100%;outline:none"></td>
-      <td><select onchange="saveFournPaiement('${v.id}','statut',this.value)" style="font-family:'Saira',sans-serif;font-size:.74rem;font-weight:700;border:none;border-radius:7px;padding:3px 7px;cursor:pointer;width:100%;${paye?'background:#E6F7F0;color:#0F6E56':'background:#FFF4E5;color:#B96A0A'}">
-        <option value="attente" ${!paye?'selected':''}>⏳ À payer</option>
-        <option value="paye" ${paye?'selected':''}>✅ Payée</option>
-      </select></td>
-    </tr>`;
-  });
-  h+=`<tr style="background:#f8faf5;font-weight:800">
-    <td colspan="4">Total</td>
-    <td style="text-align:right">${eur(totHT)}</td>
-    <td style="text-align:right">${eur(totHT*tva/100)}</td>
-    <td style="text-align:right">${eur(ttcOf(totHT))}</td>
-    <td colspan="4" style="text-align:right;color:#B96A0A">Reste à payer : ${eur(ttcOf(duHT))} TTC</td>
-  </tr>`;
-  h+=`</tbody></table></div>
-    <div style="display:flex;justify-content:flex-end;margin-top:.6rem"><button class="btn btn-navy btn-sm" onclick="exportFournCSV()">📤 Exporter CSV</button></div>
-  </div></div>`;
-  document.getElementById('comptaBody').innerHTML=h;
-}
-async function saveFournPaiement(mvtId,key,val){
-  const mvts=getMvts();const v=mvts.find(x=>x.id===mvtId);if(!v)return;
-  v.paiement=v.paiement||{};
-  v.paiement[key]=val;
-  // Marquer payée renseigne la date du jour si elle est vide
-  if(key==='statut'&&val==='paye'&&!v.paiement.date)v.paiement.date=new Date().toISOString().slice(0,10);
-  save('egncrm_stock_mvt',mergeSeg(getAllMvts(),mvts));
-  toast(key==='statut'?(val==='paye'?'Facture marquée payée ✅':'Remise à payer ⏳'):'Enregistré ✓','ok');
-  // Rafraichir l'onglet en cours : ces factures apparaissent aussi dans le suivi des paiements
-  if(COMPTA_TAB==='paiements')renderComptaPaiements();else renderComptaFournisseurs();
-}
-function exportFournCSV(){
-  const mvts=getMvts().filter(v=>['entree','reception'].includes(v.sens));
-  const mats=getMats();const tva=tvaRate();
-  const nb=n=>(n||0).toLocaleString('fr-FR',{minimumFractionDigits:2,maximumFractionDigits:2});
-  let csv='Date;Fournisseur;Materiel;Quantite;Remise HT;Frais HT;Total HT;TVA;Total TTC;Facture jointe;Statut;Reference paiement;Date paiement\n';
-  mvts.forEach(v=>{
-    const mat=mats.find(m=>m.id===v.materielId);const p=v.paiement||{};
-    const ht=v.totalHT||0;
-    csv+=`${new Date(v.date).toLocaleDateString('fr-FR')};${v.fournisseurNom||''};${mat?mat.nom:''};${v.qte||''};${nb(v.remise)};${nb(v.totalFraisHT)};${nb(ht)};${nb(ht*tva/100)};${nb(ht*(1+tva/100))};${v.factureUrl?'Oui':'Non'};${p.statut==='paye'?'Payee':'A payer'};${p.ref||''};${p.date||''}\n`;
-  });
-  const blob=new Blob(['\uFEFF'+csv],{type:'text/csv;charset=utf-8'});
-  const url=URL.createObjectURL(blob);const a=document.createElement('a');
-  a.href=url;a.download='paiements_fournisseurs_egn.csv';a.click();URL.revokeObjectURL(url);
-}
 
 /* ============================================================
    TVA — collectee sur le chiffre d'affaires, deductible sur les
@@ -5110,6 +4970,40 @@ function collecterEcrituresTva(){
   return{retenues,attente};
 }
 
+/* Statut de reglement d'une facture fournisseur (mouvement de stock chiffre) */
+async function saveFournPaiement(mvtId,key,val){
+  const mvts=getMvts();const v=mvts.find(x=>x.id===mvtId);if(!v)return;
+  v.paiement=v.paiement||{};
+  v.paiement[key]=val;
+  // Marquer payee renseigne la date du jour si elle est vide
+  if(key==='statut'&&val==='paye'&&!v.paiement.date)v.paiement.date=new Date().toISOString().slice(0,10);
+  save('egncrm_stock_mvt',mergeSeg(getAllMvts(),mvts));
+  toast(key==='statut'?(val==='paye'?'Facture marquée payée ✅':'Remise à payer ⏳'):'Enregistré ✓','ok');
+  if(COMPTA_TAB==='paiements')renderComptaPaiements();
+}
+/* Date saisie (AAAA-MM-JJ) ramenee a un horodatage */
+function jourDe(d){
+  if(!d)return null;
+  const t=new Date(String(d).length<=10?d+'T12:00:00':d).getTime();
+  return isNaN(t)?null:t;
+}
+/* TVA deductible sur les achats de materiel : factures fournisseurs reglees */
+function ecrituresTvaStock(){
+  const t=tvaRate()/100;
+  const mats=getMats();
+  return getMvts()
+    .filter(v=>['entree','reception'].includes(v.sens)&&(v.totalHT||0)>0)
+    .map(v=>{
+      const p=v.paiement||{};
+      const paye=p.statut==='paye';
+      const mat=mats.find(m=>m.id===v.materielId);
+      const ht=v.totalHT||0, tva=Math.round(ht*t*100)/100;
+      return{sens:'charge',stock:true,ttc:Math.round((ht+tva)*100)/100,ht,tva,
+             p:paye?periodeDe(jourDe(p.date)||v.date):null,
+             piece:(v.fournisseurNom||'')+(mat?' — '+mat.nom:''),
+             attente:paye?'':'facture fournisseur non payée'};
+    });
+}
 function renderComptaTva(){
   const eur=n=>(n||0).toLocaleString('fr-FR',{maximumFractionDigits:2})+' €';
   const T=comptaTotaux();
