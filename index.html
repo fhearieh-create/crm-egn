@@ -649,7 +649,6 @@ const PERM_GROUPS=[
     {k:'compta_paiements',l:'Suivi des paiements'},
     {k:'compta_delegataires',l:'Suivi des encaissements'},
     {k:'compta_tva_payer',l:'TVA (collectée et déductible)'},
-    {k:'compta_historique',l:'Historique des factures'},
     {k:'compta_apf_create',l:'Générer des APF'},
     {k:'compta_apf_delete',l:'Supprimer des APF'},
   ]},
@@ -3627,7 +3626,7 @@ async function renderComptaGlobal(){
   renderComptaTabs();
 }
 function renderComptaTabs(){
-  const tabs=[['resume','Résumé global','compta_resume'],['facturation','Appels à facturation','compta_facturation'],['paiements','Suivi des paiements','compta_paiements'],['delegataires','Suivi des encaissements','compta_delegataires'],['tva','TVA','compta_tva_payer'],['historique','Historique des factures','compta_historique']].filter(t=>can(t[2]));
+  const tabs=[['resume','Résumé global','compta_resume'],['facturation','Appels à facturation','compta_facturation'],['paiements','Suivi des paiements','compta_paiements'],['delegataires','Suivi des encaissements','compta_delegataires'],['tva','TVA','compta_tva_payer']].filter(t=>can(t[2]));
   if(!tabs.length){document.getElementById('content').innerHTML=`<div class="empty"><div class="big">🔒</div>Aucun onglet de comptabilité ne vous est accessible.</div>`;return;}
   if(!tabs.some(t=>t[0]===COMPTA_TAB))COMPTA_TAB=tabs[0][0];
   let h=segBanner();
@@ -3638,7 +3637,6 @@ function renderComptaTabs(){
   else if(COMPTA_TAB==='paiements')renderComptaPaiements();
   else if(COMPTA_TAB==='delegataires')renderComptaDelegataires();
   else if(COMPTA_TAB==='tva')renderComptaTva();
-  else renderComptaHistorique();
 }
 /* Liste les dossiers dont une charge n'a pas d'intervenant assigné */
 function openNonAssignes(label,recIds){
@@ -5137,32 +5135,6 @@ function exportTvaCSV(){
 
 
 
-function renderComptaHistorique(){
-  const factures=segFactures();
-  const eur=n=>(n||0).toLocaleString('fr-FR',{maximumFractionDigits:2})+' €';
-  let h=`<div class="panel"><div class="panel-h"><h3>Historique des appels à facturation</h3><div class="sp"><span class="muted">${factures.length} document${factures.length>1?'s':''}</span></div></div><div class="panel-b">`;
-  if(!factures.length)h+=`<div class="empty"><div class="big">📄</div>Aucun appel à facturation généré pour l'instant.</div>`;
-  else{
-    h+=`<div class="tbl-wrap"><table class="tbl"><thead><tr><th>N° APF</th><th>Date</th><th>Type</th><th>Bénéficiaire</th><th>Dossiers</th><th style="text-align:right">Total</th><th>Généré par</th><th style="text-align:right">Actions</th></tr></thead><tbody>`;
-    factures.forEach(f=>{const at=AGENT_TYPES[f.type||'poseur'];h+=`<tr><td><span class="dossier-tag">${esc(f.apfNum||'—')}</span></td><td>${new Date(f.date).toLocaleDateString('fr-FR')}</td><td>${at.icon} ${at.label}</td><td>${esc(f.poseurName)}</td><td>${(f.lignes||[]).length}</td><td style="text-align:right;font-weight:700">${eur(f.total)}<span style="display:block;font-size:.64rem;font-weight:500;color:var(--text-mut)">HT ${eur(htOf(f.total))}</span></td><td class="muted">${esc(f.user||'')}</td><td><div class="row-act"><button class="iconbtn" title="Revoir / réimprimer" onclick="revoirFacture('${f.id}')">👁️</button><button class="iconbtn del" title="Supprimer de l'historique" onclick="delFacture('${f.id}')">🗑️</button></div></td></tr>`;});
-    h+=`</tbody></table></div>`;
-  }
-  h+=`</div></div>`;
-  document.getElementById('comptaBody').innerHTML=h;
-}
-function revoirFacture(id){
-  const f=(FACTURES_CACHE||[]).find(x=>x.id===id);if(!f)return;
-  const w=window.open('','_blank');
-  if(!w){toast('Autorisez les fenêtres pop-up pour afficher le document','err');return;}
-  w.document.write(f.html);w.document.close();
-}
-function delFacture(id){
-  modalConfirm('Supprimer ce document de l\'historique ?','Le statut de facturation déjà appliqué aux dossiers concernés ne sera pas modifié.',async()=>{
-    await deleteFactureRemote(id);
-    if(FACTURES_CACHE)FACTURES_CACHE=FACTURES_CACHE.filter(x=>x.id!==id);
-    closeModal();renderComptaTabs();toast('Document supprimé','ok');
-  });
-}
 function toggleWaEnabled(v){
   const s=getSettings();s.waEnabled=!!v;save(K.set,s);
   toast(v?'Notifications WhatsApp activées ✓':'Notifications WhatsApp désactivées','ok');
