@@ -644,7 +644,7 @@ const PERM_GROUPS=[
     {k:'compta_resume',l:'Résumé global (marges, rentabilité)'},
     {k:'compta_facturation',l:'Appels à facturation'},
     {k:'compta_paiements',l:'Suivi des paiements'},
-    {k:'compta_delegataires',l:'Encaissements délégataires'},
+    {k:'compta_delegataires',l:'Suivi des encaissements'},
     {k:'compta_tva_payer',l:'TVA à payer'},
     {k:'compta_tva_recup',l:'TVA à récupérer'},
     {k:'compta_fournisseurs',l:'Paiements fournisseurs'},
@@ -3456,7 +3456,7 @@ async function renderComptaGlobal(){
   renderComptaTabs();
 }
 function renderComptaTabs(){
-  const tabs=[['resume','Résumé global','compta_resume'],['facturation','Appels à facturation','compta_facturation'],['paiements','Suivi des paiements','compta_paiements'],['delegataires','Encaissements délégataires','compta_delegataires'],['tva_payer','TVA à payer','compta_tva_payer'],['tva_recup','TVA à récupérer','compta_tva_recup'],['fournisseurs','Paiements fournisseurs','compta_fournisseurs'],['historique','Historique des factures','compta_historique']].filter(t=>can(t[2]));
+  const tabs=[['resume','Résumé global','compta_resume'],['facturation','Appels à facturation','compta_facturation'],['paiements','Suivi des paiements','compta_paiements'],['delegataires','Suivi des encaissements','compta_delegataires'],['tva_payer','TVA à payer','compta_tva_payer'],['tva_recup','TVA à récupérer','compta_tva_recup'],['fournisseurs','Paiements fournisseurs','compta_fournisseurs'],['historique','Historique des factures','compta_historique']].filter(t=>can(t[2]));
   if(!tabs.length){document.getElementById('content').innerHTML=`<div class="empty"><div class="big">🔒</div>Aucun onglet de comptabilité ne vous est accessible.</div>`;return;}
   if(!tabs.some(t=>t[0]===COMPTA_TAB))COMPTA_TAB=tabs[0][0];
   let h=segBanner();
@@ -4037,7 +4037,6 @@ function renderComptaPaiements(){
   const nbPaye=factures.filter(f=>(f.paiements||{}).statut_apf==='paye').length;
   const nbAttente=factures.length-nbPaye;
   let h=`<div class="kpis">
-    <div class="kpi" onclick="filtrerPaiements('')" style="cursor:pointer"><div class="kico">💳</div><div class="klab">Total APF</div><div class="kval">${factures.length}</div><div class="ksub">${eur(tot)} engagés</div></div>
     <div class="kpi" onclick="filtrerPaiements('attente')" style="cursor:pointer;border:1.5px solid rgba(230,148,57,.3)"><div class="kico">⏳</div><div class="klab">En attente de paiement</div><div class="kval" style="color:#B96A0A">${eur(totAttente)}</div><div class="ksub">${nbAttente} APF</div></div>
     <div class="kpi accent" onclick="filtrerPaiements('paye')" style="cursor:pointer"><div class="kico">✅</div><div class="klab">Payé</div><div class="kval">${eur(totPaye)}</div><div class="ksub">${nbPaye} APF</div></div>
   </div>`;
