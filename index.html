@@ -4335,9 +4335,7 @@ function renderVirements(statut){
         <option value="attente" ${!recu?'selected':''}>⏳ En attente</option>
         <option value="recu" ${recu?'selected':''}>✅ Virement reçu</option>
       </select></td>
-      <td>${recu
-        ?`<input type="date" value="${esc(a.dateVirement||'')}" onchange="saveApfDelegDate('${a.id}',this.value)" style="font-family:'Saira',sans-serif;font-size:.76rem;border:1.5px solid var(--border-grey);border-radius:7px;padding:3px 5px;width:100%;outline:none">`
-        :`<span class="muted" style="font-size:.72rem">—</span>`}</td>
+      <td><input type="date" value="${esc(a.dateVirement||'')}" title="Saisir la date marque le virement comme reçu" onchange="saveApfDelegDate('${a.id}',this.value)" style="font-family:'Saira',sans-serif;font-size:.76rem;border:1.5px solid ${recu?'var(--green)':'var(--border-grey)'};border-radius:7px;padding:3px 5px;width:100%;outline:none;background:${recu?'#F0FBF0':'#fff'}"></td>
     </tr>`;
   });
   const tt=apfs.flatMap(a=>(a.recIds||[]).map(id=>recById(id)).filter(Boolean).map(primeDetailOf));
@@ -4493,9 +4491,7 @@ function renderComptaDelegataires(){
         <td style="text-align:right">${totComTTC?`${eur(totComTTC)}<div class="muted" style="font-size:.64rem">HT ${eur(totComHT)}</div>`:'<span class="muted">—</span>'}</td>
         <td style="text-align:right;font-weight:800">${eur(tot)}</td>
         <td>${statSel}</td>
-        <td>${a.statut==='recu'
-          ?`<input type="date" value="${esc(a.dateVirement||'')}" onchange="saveApfDelegDate('${a.id}',this.value)" style="font-family:'Saira',sans-serif;font-size:.76rem;border:1.5px solid var(--border-grey);border-radius:7px;padding:3px 5px;width:100%;outline:none">`
-          :`<span class="muted" style="font-size:.72rem">—</span>`}</td>
+        <td><input type="date" value="${esc(a.dateVirement||'')}" title="Saisir la date marque le virement comme reçu" onchange="saveApfDelegDate('${a.id}',this.value)" style="font-family:'Saira',sans-serif;font-size:.76rem;border:1.5px solid ${a.statut==='recu'?'var(--green)':'var(--border-grey)'};border-radius:7px;padding:3px 5px;width:100%;outline:none;background:${a.statut==='recu'?'#F0FBF0':'#fff'}"></td>
         <td>${pjCell}</td>
         <td style="text-align:right"><button class="iconbtn del" onclick="supprimerApfDeleg('${a.id}')" title="Supprimer">🗑️</button></td>
       </tr>`;
@@ -4575,6 +4571,17 @@ function creerApfDeleg(delegId,recIds){
 async function saveApfDelegDate(apfId,date){
   const apfs=load('egncrm_apf_deleg',[]);
   const apf=apfs.find(a=>a.id===apfId);if(!apf)return;
+  // Saisir une date vaut reception du virement ; l'effacer remet l'APF en attente
+  if(date&&apf.statut!=='recu'){
+    apf.dateVirement=date;
+    save('egncrm_apf_deleg',apfs);
+    return saveApfDelegStatut(apfId,'recu');
+  }
+  if(!date&&apf.statut==='recu'){
+    apf.dateVirement='';
+    save('egncrm_apf_deleg',apfs);
+    return saveApfDelegStatut(apfId,'attente');
+  }
   apf.dateVirement=date||'';
   save('egncrm_apf_deleg',apfs);
   toast(date?'Date de virement enregistrée ✓':'Date retirée','ok');
