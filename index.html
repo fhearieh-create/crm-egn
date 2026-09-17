@@ -3577,7 +3577,7 @@ function renderDetailRecettes(T,eur){
   }
   h+=`<div class="tbl-wrap"><table class="tbl"><thead><tr>
     <th>N° Dossier</th><th>Client</th><th>Opération</th>
-    <th class="r">Prime client TTC</th><th class="r">Commission installateur TTC</th><th class="r">Prime CEE TTC</th>
+    <th class="r">Prime client HT</th><th class="r">Commission installateur TTC</th><th class="r">Prime CEE TTC</th>
   </tr></thead><tbody>`;
   lignes.forEach(({r,k})=>{
     const op=getAllProducts().find(o=>o.id===r.productId);
@@ -3602,7 +3602,7 @@ function renderDetailRecettes(T,eur){
 function exportRecettesCSV(){
   const T=comptaTotaux();
   const nb=n=>(n||0).toLocaleString('fr-FR',{minimumFractionDigits:2,maximumFractionDigits:2});
-  let csv='N Dossier;Client;Ville;Operation;Prime client TTC;Commission installateur HT;Commission installateur TTC;Prime CEE TTC\n';
+  let csv='N Dossier;Client;Ville;Operation;Prime client HT;Commission installateur HT;Commission installateur TTC;Prime CEE TTC\n';
   T.recs.map(r=>({r,k:primeDetailOf(r)})).filter(x=>x.k.primeCEE>0)
     .sort((a,b)=>b.k.primeCEE-a.k.primeCEE)
     .forEach(({r,k})=>{
@@ -5437,13 +5437,17 @@ function calcPrimeCEE(delegId,type,cumac){
   const brutCom=d?(precaire?d.valoComPrecaire:d.valoComClassique):null;
   const valoCom=(brutCom===undefined||brutCom===null||brutCom==='')?valoClient:n(brutCom);
   const r2=v=>Math.round(v*100)/100;
-  const primeClient=r2(mwhc*valoClient);
+  // La prime client est negociee en TTC, mais la TVA ayant deja ete recuperee
+  // sur la facture client, elle est comptabilisee en HT.
+  const primeClientBrut=r2(mwhc*valoClient);
+  const primeClient=r2(primeClientBrut/(1+t));
   const comHT=r2(mwhc*valoCom);
   const comTVA=r2(comHT*tvaRate()/100);
   const comTTC=r2(comHT+comTVA);
   return{
     d,mwhc,valoClient,valoCom,
-    primeClient,          // sans TVA
+    primeClientBrut,      // base negociee, TTC
+    primeClient,          // comptabilisee en HT
     comHT,comTVA,comTTC,  // commission installateur
     primeHT:r2(primeClient+comHT),     // base hors TVA
     primeCEE:r2(primeClient+comTTC),   // prime CEE TTC = ce que le delegataire vire
@@ -5494,7 +5498,7 @@ function dealRecalc(){
         <span style="flex:1;font-size:.78rem">${lib}<span class="muted" style="font-size:.66rem;display:block">${sous}</span></span>
         <span style="font-weight:700;font-size:.82rem;${coul?'color:'+coul:''}">${eur(montant)}</span></div>`;
       det.innerHTML=
-        lg('Prime client','sans TVA · '+k.valoClient.toString().replace('.',',')+' €/MWhc',k.primeClient)
+        lg('Prime client','HT · '+k.valoClient.toString().replace('.',',')+' €/MWhc',k.primeClient)
        +lg('Commission installateur','HT · '+k.valoCom.toString().replace('.',',')+' €/MWhc',k.comHT)
        +lg('TVA sur commission',tvaRate()+' %',k.comTVA,'var(--text-mut)')
        +`<div style="border-top:1px solid var(--border-grey);margin-top:.3rem;padding-top:.3rem">`
@@ -8684,7 +8688,7 @@ function updateCalcResult(){
     <span style="font-weight:${gras?800:700};font-size:.8rem;${coul?'color:'+coul:''}">${montant}</span></div>`;
   let h=lg('Cumac',cumac?cumac.toLocaleString('fr-FR')+' kWhc':'—');
   if(pret){
-    h+=lg('Prime client',eur(k.primeClient));
+    h+=lg('Prime client HT',eur(k.primeClient));
     h+=lg('Commission HT',eur(k.comHT));
     h+=lg('TVA '+tvaRate()+' %',eur(k.comTVA));
   }
