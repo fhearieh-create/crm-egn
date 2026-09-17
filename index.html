@@ -7842,12 +7842,28 @@ function renderPdfEditor(){
   const surPage=(d.champs||[]).filter(ch=>ch.page===PDF_PAGE);
   h+=`<div class="sectitle" style="margin-top:1rem">Champs placés — page ${PDF_PAGE+1} <span class="muted" style="font-weight:500;text-transform:none;letter-spacing:0">(${(d.champs||[]).length} au total)</span></div>`;
   if(!surPage.length)h+=`<p class="muted" style="font-size:.8rem">Aucun champ sur cette page.</p>`;
-  else h+=`<div class="cfg-list">`+surPage.map(ch=>`<div class="cfg-item">
-      <span class="nm" style="flex:1">${esc(pdfLibelleChamp(ch.cle))} <span class="muted" style="font-weight:400;font-size:.72rem">— x ${Math.round(ch.x)} · y ${Math.round(ch.y)}</span></span>
+  else{
+    const inp="font-family:'Saira',sans-serif;font-size:.76rem;border:1.5px solid var(--border-grey);border-radius:6px;padding:2px 5px";
+    h+=`<div class="cfg-list">`+surPage.map(ch=>{
+      const{rx,ry}=champRatio(ch);
+      return `<div class="cfg-item" style="flex-wrap:wrap;gap:.45rem">
+      <span class="nm" style="flex:1;min-width:150px">${esc(pdfLibelleChamp(ch.cle))}
+        <span class="muted" style="font-weight:400;font-size:.7rem">— ${Math.round(rx*100)} % / ${Math.round(ry*100)} %</span></span>
+      <label style="font-size:.72rem;display:flex;align-items:center;gap:.25rem">Largeur
+        <input type="number" min="5" max="100" value="${Math.round((ch.largeur||0.30)*100)}" onchange="majChampPdf('${ch.id}','largeur',this.value/100)" style="width:58px;${inp}"> %</label>
       <label style="font-size:.72rem;display:flex;align-items:center;gap:.25rem">Taille
-        <input type="number" min="5" max="40" value="${ch.taille||11}" onchange="majChampPdf('${ch.id}','taille',this.value)" style="width:56px;font-family:'Saira',sans-serif;font-size:.76rem;border:1.5px solid var(--border-grey);border-radius:6px;padding:2px 5px"></label>
+        <input type="number" min="5" max="40" value="${ch.taille||11}" onchange="majChampPdf('${ch.id}','taille',this.value)" style="width:52px;${inp}"></label>
+      <select onchange="majChampPdf('${ch.id}','align',this.value)" style="${inp};font-weight:700">
+        <option value="left" ${ch.align!=='center'&&ch.align!=='right'?'selected':''}>⬅ Gauche</option>
+        <option value="center" ${ch.align==='center'?'selected':''}>↔ Centré</option>
+        <option value="right" ${ch.align==='right'?'selected':''}>➡ Droite</option>
+      </select>
+      <label style="font-size:.72rem;display:flex;align-items:center;gap:.25rem;cursor:pointer" title="Passer à la ligne au lieu de réduire le texte">
+        <input type="checkbox" ${ch.retour?'checked':''} onchange="majChampPdf('${ch.id}','retour',this.checked)"> Multi-lignes</label>
       <button class="iconbtn del" title="Retirer" onclick="retirerChampPdf('${ch.id}')">🗑️</button>
-    </div>`).join('')+`</div>`;
+    </div>`;}).join('')+`</div>
+    <p class="muted" style="font-size:.74rem;margin-top:.4rem">Le texte est réduit automatiquement pour tenir dans la largeur. Cochez <b>Multi-lignes</b> pour qu'il passe à la ligne à la place — utile pour une adresse.</p>`;
+  }
   box.innerHTML=h;
   if(PDF_DOC)dessinerPagePdf();
 }
@@ -7895,11 +7911,18 @@ async function dessinerPagePdf(){
 }
 function dessinerChampsPdf(){
   const ov=document.getElementById('pdfOverlay');if(!ov)return;
-  ov.innerHTML=(PDFDRAFT.champs||[]).filter(ch=>ch.page===PDF_PAGE).map(ch=>`
-    <div style="position:absolute;left:${ch.x*PDF_ECHELLE}px;top:${ch.y*PDF_ECHELLE}px;transform:translateY(-100%);
-      background:rgba(124,194,66,.18);border:1px solid var(--green);border-radius:3px;padding:0 3px;
-      font-size:${(ch.taille||11)*PDF_ECHELLE}px;font-weight:700;color:var(--green-deep);white-space:nowrap">
-      ${esc(pdfLibelleChamp(ch.cle))}</div>`).join('');
+  const cv=document.getElementById('pdfCanvas');if(!cv)return;
+  ov.innerHTML=(PDFDRAFT.champs||[]).filter(ch=>ch.page===PDF_PAGE).map(ch=>{
+    const{rx,ry}=champRatio(ch);
+    const larg=(ch.largeur||0.30)*cv.width;
+    const aligne=ch.align==='center'?'center':(ch.align==='right'?'right':'left');
+    return `<div style="position:absolute;left:${rx*cv.width}px;top:${ry*cv.height}px;width:${larg}px;
+      transform:translateY(-100%);box-sizing:border-box;
+      background:rgba(124,194,66,.15);border:1px dashed var(--green);border-radius:3px;padding:0 2px;
+      font-size:${(ch.taille||11)*PDF_ECHELLE}px;font-weight:700;color:var(--green-deep);
+      text-align:${aligne};overflow:hidden;${ch.retour?'':'white-space:nowrap'}">
+      ${esc(pdfLibelleChamp(ch.cle))}</div>`;
+  }).join('');
 }
 function pdfPage(d){
   if(!PDF_DOC)return;
@@ -7912,19 +7935,31 @@ function placerChampPdf(ev){
   if(!cle){toast('Choisissez un champ','err');return;}
   const cv=ev.currentTarget;
   const r=cv.getBoundingClientRect();
-  const x=(ev.clientX-r.left)/PDF_ECHELLE*(cv.width/r.width);
-  const y=(ev.clientY-r.top)/PDF_ECHELLE*(cv.height/r.height);
+  // Proportions de la page (0 a 1) : independantes de l'echelle d'affichage
+  const rx=Math.min(1,Math.max(0,(ev.clientX-r.left)/r.width));
+  const ry=Math.min(1,Math.max(0,(ev.clientY-r.top)/r.height));
   PDFDRAFT.champs=PDFDRAFT.champs||[];
-  PDFDRAFT.champs.push({id:uid(),cle,page:PDF_PAGE,x,y,taille:11});
+  PDFDRAFT.champs.push({id:uid(),cle,page:PDF_PAGE,rx,ry,largeur:0.30,taille:11,align:'left',retour:false});
   PDF_CHAMP=cle;
   renderPdfEditor();
+}
+/* Anciens champs enregistres en points : convertis a la volee */
+function champRatio(ch){
+  if(ch.rx!=null)return{rx:ch.rx,ry:ch.ry};
+  const cv=document.getElementById('pdfCanvas');
+  if(!cv||!cv.width)return{rx:0,ry:0};
+  return{rx:(ch.x*PDF_ECHELLE)/cv.width,ry:(ch.y*PDF_ECHELLE)/cv.height};
 }
 function retirerChampPdf(id){
   PDFDRAFT.champs=(PDFDRAFT.champs||[]).filter(c=>c.id!==id);renderPdfEditor();
 }
 function majChampPdf(id,cle,val){
   const ch=(PDFDRAFT.champs||[]).find(c=>c.id===id);if(!ch)return;
-  ch[cle]=parseFloat(val)||11;renderPdfEditor();
+  if(cle==='align')ch.align=val;
+  else if(cle==='retour')ch.retour=!!val;
+  else if(cle==='largeur')ch.largeur=Math.min(1,Math.max(0.05,parseFloat(val)||0.30));
+  else ch.taille=Math.min(40,Math.max(5,parseFloat(val)||11));
+  renderPdfEditor();
 }
 function enregistrerModelePdf(){
   if(!PDFDRAFT.nom||!PDFDRAFT.nom.trim()){toast('Donnez un nom au modèle','err');return;}
@@ -7960,11 +7995,42 @@ async function genererPdfDepuisModele(tplId,recId){
     const pages=pdf.getPages();
     (t.champs||[]).forEach(ch=>{
       const page=pages[ch.page];if(!page)return;
-      const texte=String(v[ch.cle]??'');
+      const texte=String(v[ch.cle]??'').trim();
       if(!texte)return;
-      const h=page.getSize().height;
-      // Le clic est mesure depuis le haut, pdf-lib ecrit depuis le bas
-      page.drawText(texte,{x:ch.x,y:h-ch.y,size:ch.taille||11,font:police,color:rgb(0,0,0)});
+      const{width:pw,height:ph}=page.getSize();
+      // Position en proportions de la page ; repli sur les anciens champs en points
+      const rx=ch.rx!=null?ch.rx:(ch.x||0)/pw;
+      const ry=ch.ry!=null?ch.ry:(ch.y||0)/ph;
+      const x0=rx*pw, yHaut=ry*ph;
+      const largeur=Math.max(10,(ch.largeur||0.30)*pw);
+      let taille=ch.taille||11;
+      const mesure=(s,t2)=>police.widthOfTextAtSize(s,t2);
+
+      // Decoupe en lignes si le mode multi-lignes est actif
+      let lignes=[texte];
+      if(ch.retour){
+        lignes=[];let courante='';
+        texte.split(/\s+/).forEach(mot=>{
+          const essai=courante?courante+' '+mot:mot;
+          if(mesure(essai,taille)<=largeur||!courante)courante=essai;
+          else{lignes.push(courante);courante=mot;}
+        });
+        if(courante)lignes.push(courante);
+      }else{
+        // Sinon on reduit la taille jusqu'a tenir dans la largeur
+        while(taille>5&&mesure(texte,taille)>largeur)taille-=0.5;
+      }
+
+      const interligne=taille*1.18;
+      lignes.forEach((ligne,i)=>{
+        const l=mesure(ligne,taille);
+        let x=x0;
+        if(ch.align==='center')x=x0+(largeur-l)/2;
+        else if(ch.align==='right')x=x0+largeur-l;
+        // Le clic marque le bas du texte ; pdf-lib ecrit depuis le bas de page
+        const y=ph-yHaut-(i*interligne);
+        page.drawText(ligne,{x,y,size:taille,font:police,color:rgb(0,0,0)});
+      });
     });
     const out=await pdf.save();
     const blob=new Blob([out],{type:'application/pdf'});
