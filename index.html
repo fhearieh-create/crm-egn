@@ -4819,43 +4819,67 @@ function periodeDe(ts){
   if(isNaN(d.getTime()))return null;
   return{annee:d.getFullYear(),mois:d.getMonth()};
 }
-/* Ecritures de TVA d'un dossier, chacune datee de la piece qui la genere :
-   - CA  : date de l'APF delegataire qui porte le dossier
-   - Charges : date de l'APF agent correspondant
-   - Marchandise : date d'installation du dossier */
-function ecrituresTva(r){
-  const out=[];
-  const k=primeDetailOf(r);
-  const m=recordComptaMetrics(r);
-  const cTTC=k.primeCEE||0;
-  if(cTTC){
-    const apf=segApfDeleg().find(a=>(a.recIds||[]).includes(r.id));
-    const cHT=k.estime?htOf(cTTC):(k.primeHT||0);
-    out.push({sens:'ca',ttc:cTTC,ht:cHT,tva:Math.round((cTTC-cHT)*100)/100,
-              p:periodeDe(apf?apf.date:null),piece:apf?apf.numApf:null});
-  }
-  const c=comptaOf(r);
-  [['poseur',m.aPayerPoseur],['callcenter',m.aPayerCallCenter],['vt',m.aPayerVt],['audit',m.aPayerAudit]]
-    .forEach(([key,montant])=>{
-      const t=tvaLine(r,key,montant||0);
-      if(!t.ttc)return;
-      const type=key==='audit'?'auditeur':key;
-      const f=c[AGENT_TYPES[type].factureField];
-      out.push({sens:'charge',ttc:t.ttc,ht:t.ht,tva:Math.round((t.ttc-t.ht)*100)/100,
-                p:periodeDe(f?f.date:null),piece:f?f.apfNum:null});
+/* Ecritures de TVA — regime sur encaissements et decaissements.
+   Une piece n'entre dans la TVA que lorsqu'elle est reellement reglee :
+     - Entree  : APF delegataire en « virement recu »   -> date du virement
+     - Sortie  : APF agent en « paye »                   -> date de paiement
+     - Sortie  : facture fournisseur en « payee »        -> date de paiement
+   Les pieces en attente sont comptees a part, sans etre rattachees a un mois. */
+function collecterEcrituresTva(){
+  const retenues=[],attente=[];
+  const t=tvaRate()/100;
+  const r2=v=>Math.round(v*100)/100;
+
+  // --- Entrees : APF delegataires ---
+  segApfDeleg().forEach(a=>{
+    const recu=a.statut==='recu';
+    const ts=recu?(a.dateVirement?new Date(a.dateVirement+'T12:00:00').getTime():a.date):null;
+    (a.recIds||[]).forEach(id=>{
+      const r=recById(id);if(!r)return;
+      const k=primeDetailOf(r);
+      const ttc=k.primeCEE||0;if(!ttc)return;
+      const ht=k.estime?htOf(ttc):(k.primeHT||0);
+      const e={sens:'ca',r,ttc,ht,tva:r2(ttc-ht),piece:a.numApf||'APF délégataire',p:periodeDe(ts)};
+      (recu&&e.p?retenues:attente).push(e);
     });
-  if(m.march&&m.march.ttc){
-    out.push({sens:'charge',ttc:m.march.ttc,ht:m.march.ht,tva:m.march.tva,
-              p:periodeDe(tsInstallation(r)),piece:m.march.fournisseur});
-  }
-  return out;
+  });
+
+  // --- Sorties : APF agents (poseurs, call center, VT, auditeurs) ---
+  segFactures().forEach(f=>{
+    const pm=f.paiements||{};
+    const paye=pm.statut_apf==='paye';
+    const ts=paye?(pm.datePaiement?new Date(pm.datePaiement+'T12:00:00').getTime():f.date):null;
+    (f.lignes||[]).forEach(l=>{
+      const r=recById(l.recId);if(!r)return;
+      const ttc=l.montant||0;if(!ttc)return;
+      const ht=(l.ht!=null)?l.ht:(l.tvaMode==='sans_tva'?ttc:htOf(ttc));
+      const e={sens:'charge',r,ttc,ht,tva:r2(ttc-ht),piece:f.apfNum||'APF',p:periodeDe(ts)};
+      (paye&&e.p?retenues:attente).push(e);
+    });
+  });
+
+  // --- Sorties : factures fournisseurs (achats de stock) ---
+  getMvts().filter(v=>['entree','reception'].includes(v.sens)).forEach(v=>{
+    const pm=v.paiement||{};
+    const paye=pm.statut==='paye';
+    const ht=v.totalHT||0;if(!ht)return;
+    const tva=v.tvaRecup!=null?v.tvaRecup:r2(ht*t);
+    const ts=paye?(pm.date?new Date(pm.date+'T12:00:00').getTime():v.date):null;
+    const mat=getMats().find(m=>m.id===v.materielId);
+    const e={sens:'charge',r:null,ttc:r2(ht+tva),ht,tva,
+             piece:(v.fournisseurNom||'Fournisseur')+(mat?' — '+mat.nom:''),p:periodeDe(ts)};
+    (paye&&e.p?retenues:attente).push(e);
+  });
+
+  return{retenues,attente};
 }
+
 function renderComptaTva(){
   const eur=n=>(n||0).toLocaleString('fr-FR',{maximumFractionDigits:2})+' €';
   const T=comptaTotaux();
-  // Toutes les ecritures, puis filtrage sur la periode choisie
-  const toutes=[];
-  T.recs.forEach(r=>ecrituresTva(r).forEach(e=>toutes.push({...e,r})));
+  // Pieces reglees uniquement, filtrees ensuite sur la periode choisie
+  const{retenues:toutes,attente:nonDatees}=collecterEcrituresTva();
+  const opOk=e=>!COMPTA_OP||(e.r&&e.r.productId===COMPTA_OP)||(!e.r&&!COMPTA_OP);
   const annees=[...new Set(toutes.filter(e=>e.p).map(e=>e.p.annee))].sort((a,b)=>b-a);
   if(annees.length&&!annees.includes(TVA_ANNEE))TVA_ANNEE=annees[0];
   const dansPeriode=e=>{
@@ -4863,8 +4887,7 @@ function renderComptaTva(){
     if(e.p.annee!==TVA_ANNEE)return false;
     return TVA_MOIS===''||e.p.mois===TVA_MOIS;
   };
-  const retenues=toutes.filter(dansPeriode);
-  const nonDatees=toutes.filter(e=>!e.p);
+  const retenues=toutes.filter(e=>dansPeriode(e)&&opOk(e));
   const som=(arr,sens,champ)=>Math.round(arr.filter(e=>e.sens===sens).reduce((s,e)=>s+(e[champ]||0),0)*100)/100;
   const caTTC=som(retenues,'ca','ttc'), caHT=som(retenues,'ca','ht');
   const chTTC=som(retenues,'charge','ttc'), chHT=som(retenues,'charge','ht');
@@ -4883,7 +4906,7 @@ function renderComptaTva(){
   h+=`<div style="display:flex;gap:.3rem;align-items:center;flex-wrap:wrap;margin-bottom:.9rem">
     ${btn('Année entière',TVA_MOIS==='',`setTvaPeriode(${TVA_ANNEE},'')`)}
     ${MOIS_FR.map((lib,i)=>{
-      const n=toutes.filter(e=>e.p&&e.p.annee===TVA_ANNEE&&e.p.mois===i).length;
+      const n=toutes.filter(e=>e.p&&e.p.annee===TVA_ANNEE&&e.p.mois===i&&opOk(e)).length;
       return btn(lib,TVA_MOIS===i,`setTvaPeriode(${TVA_ANNEE},${i})`,n?`${n} écriture${n>1?'s':''}`:'aucune écriture');
     }).join('')}
   </div>`;
@@ -4907,10 +4930,12 @@ function renderComptaTva(){
   </div>`;
 
   if(nonDatees.length){
-    const mt=Math.round(nonDatees.reduce((s,e)=>s+(e.sens==='ca'?e.tva:-e.tva),0)*100)/100;
+    const tvaEnt=Math.round(nonDatees.filter(e=>e.sens==='ca').reduce((s,e)=>s+e.tva,0)*100)/100;
+    const tvaSor=Math.round(nonDatees.filter(e=>e.sens==='charge').reduce((s,e)=>s+e.tva,0)*100)/100;
     h+=`<div style="background:#FFF7ED;border:1.5px solid #F0C486;border-radius:10px;padding:.6rem 1rem;margin-bottom:.9rem;font-size:.8rem">
-      ⚠️ <b>${nonDatees.length} écriture${nonDatees.length>1?'s':''} sans date</b> — ${eur(Math.abs(mt))} de TVA non rattachée à un mois.
-      <span class="muted">Une entrée est datée par son APF délégataire, une charge par son appel à facturation, la marchandise par la date d'installation.</span>
+      ⏳ <b>${nonDatees.length} pièce${nonDatees.length>1?'s':''} non réglée${nonDatees.length>1?'s':''}</b> — hors TVA tant que le règlement n'est pas enregistré :
+      ${eur(tvaEnt)} collectée en attente d'encaissement, ${eur(tvaSor)} déductible en attente de paiement.
+      <span class="muted" style="display:block;margin-top:.15rem">La TVA est calculée sur les encaissements et décaissements réels : APF délégataire reçu, APF agent payé, facture fournisseur payée.</span>
     </div>`;
   }
 
@@ -4919,7 +4944,7 @@ function renderComptaTva(){
     <thead><tr><th>Mois</th><th class="r">CA TTC</th><th class="r">TVA collectée</th><th class="r">Charges TTC</th><th class="r">TVA déductible</th><th class="r">Solde</th></tr></thead><tbody>`;
   let cumul=0;
   MOIS_FR.forEach((lib,i)=>{
-    const e=toutes.filter(x=>x.p&&x.p.annee===TVA_ANNEE&&x.p.mois===i);
+    const e=toutes.filter(x=>x.p&&x.p.annee===TVA_ANNEE&&x.p.mois===i&&opOk(x));
     if(!e.length)return;
     const col=som(e,'ca','tva'), ded=som(e,'charge','tva'), sd=Math.round((col-ded)*100)/100;
     cumul+=sd;
@@ -4933,10 +4958,10 @@ function renderComptaTva(){
     </tr>`;
   });
   h+=`<tr style="background:#f8faf5;font-weight:800"><td>Total ${TVA_ANNEE}</td>
-    <td style="text-align:right">${eur(som(toutes.filter(e=>e.p&&e.p.annee===TVA_ANNEE),'ca','ttc'))}</td>
-    <td style="text-align:right;color:var(--coral)">${eur(som(toutes.filter(e=>e.p&&e.p.annee===TVA_ANNEE),'ca','tva'))}</td>
-    <td style="text-align:right">${eur(som(toutes.filter(e=>e.p&&e.p.annee===TVA_ANNEE),'charge','ttc'))}</td>
-    <td style="text-align:right;color:var(--blue)">${eur(som(toutes.filter(e=>e.p&&e.p.annee===TVA_ANNEE),'charge','tva'))}</td>
+    <td style="text-align:right">${eur(som(toutes.filter(e=>e.p&&e.p.annee===TVA_ANNEE&&opOk(e)),'ca','ttc'))}</td>
+    <td style="text-align:right;color:var(--coral)">${eur(som(toutes.filter(e=>e.p&&e.p.annee===TVA_ANNEE&&opOk(e)),'ca','tva'))}</td>
+    <td style="text-align:right">${eur(som(toutes.filter(e=>e.p&&e.p.annee===TVA_ANNEE&&opOk(e)),'charge','ttc'))}</td>
+    <td style="text-align:right;color:var(--blue)">${eur(som(toutes.filter(e=>e.p&&e.p.annee===TVA_ANNEE&&opOk(e)),'charge','tva'))}</td>
     <td style="text-align:right;color:${cumul>=0?'var(--coral)':'var(--blue)'}">${eur(cumul)}</td>
   </tr></tbody></table></div></div></div>`;
 
@@ -4946,10 +4971,10 @@ function renderComptaTva(){
       <thead><tr><th>Sens</th><th>N° Dossier</th><th>Client</th><th>Pièce</th><th class="r">TTC</th><th class="r">HT</th><th class="r">TVA</th></tr></thead><tbody>`;
     retenues.sort((a,b)=>b.tva-a.tva).forEach(e=>{
       const ca=e.sens==='ca';
-      h+=`<tr style="cursor:pointer" onclick="openDossier('${e.r.id}')">
+      h+=`<tr ${e.r?`style="cursor:pointer" onclick="openDossier('${e.r.id}')"`:''}>
         <td><span style="font-size:.7rem;font-weight:700;border-radius:5px;padding:1px 7px;background:${ca?'#FEE8E8':'#E8F0FE'};color:${ca?'#A32D2D':'#1A5FD4'}">${ca?'Entrée':'Sortie'}</span></td>
-        <td><span class="dossier-tag">${esc(e.r.dossier||'—')}</span></td>
-        <td style="font-weight:700">${esc(clientNameOf(e.r))}</td>
+        <td>${e.r?`<span class="dossier-tag">${esc(e.r.dossier||'—')}</span>`:'<span class="muted" style="font-size:.72rem">achat stock</span>'}</td>
+        <td style="font-weight:700">${e.r?esc(clientNameOf(e.r)):'<span class="muted" style="font-weight:400">—</span>'}</td>
         <td class="muted" style="font-size:.75rem">${esc(e.piece||'—')}</td>
         <td style="text-align:right">${eur(e.ttc)}</td>
         <td style="text-align:right" class="muted">${eur(e.ht)}</td>
@@ -4964,22 +4989,22 @@ function renderComptaTva(){
 }
 
 function exportTvaCSV(){
-  const T=comptaTotaux();
   const nb=n=>(n||0).toLocaleString('fr-FR',{minimumFractionDigits:2,maximumFractionDigits:2});
   const lib=TVA_MOIS===''?String(TVA_ANNEE):`${MOIS_FR[TVA_MOIS]}_${TVA_ANNEE}`;
+  const{retenues}=collecterEcrituresTva();
   let csv='Sens;N Dossier;Client;Operation;Piece;Mois;TTC;HT;TVA\n';
-  T.recs.forEach(r=>{
-    const op=getAllProducts().find(o=>o.id===r.productId);
-    ecrituresTva(r).forEach(e=>{
-      if(!e.p||e.p.annee!==TVA_ANNEE)return;
-      if(TVA_MOIS!==''&&e.p.mois!==TVA_MOIS)return;
-      csv+=`${e.sens==='ca'?'Entree':'Sortie'};${r.dossier||''};${clientNameOf(r)};${op?op.name:''};${e.piece||''};${MOIS_FR[e.p.mois]} ${e.p.annee};${nb(e.ttc)};${nb(e.ht)};${nb(e.tva)}\n`;
-    });
+  retenues.forEach(e=>{
+    if(!e.p||e.p.annee!==TVA_ANNEE)return;
+    if(TVA_MOIS!==''&&e.p.mois!==TVA_MOIS)return;
+    if(COMPTA_OP&&(!e.r||e.r.productId!==COMPTA_OP))return;
+    const op=e.r?getAllProducts().find(o=>o.id===e.r.productId):null;
+    csv+=`${e.sens==='ca'?'Entree':'Sortie'};${e.r?e.r.dossier||'':''};${e.r?clientNameOf(e.r):''};${op?op.name:''};${e.piece||''};${MOIS_FR[e.p.mois]} ${e.p.annee};${nb(e.ttc)};${nb(e.ht)};${nb(e.tva)}\n`;
   });
   const blob=new Blob(['\uFEFF'+csv],{type:'text/csv;charset=utf-8'});
   const url=URL.createObjectURL(blob);const a=document.createElement('a');
   a.href=url;a.download='tva_'+lib+'.csv';a.click();URL.revokeObjectURL(url);
 }
+
 
 
 function renderComptaHistorique(){
