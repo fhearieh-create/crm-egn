@@ -5534,6 +5534,12 @@ function delDoc(recId,fid){
 }
 /* ---- DEAL / délégataires ---- */
 const getDelegataires=()=>load('egncrm_delegataires',[]);
+/* Valeur d'un critere de calcul.
+   __zone__ est un pseudo-champ : la zone climatique H1/H2/H3 deduite du code postal. */
+function critereValue(r,fieldId){
+  if(fieldId==='__zone__')return zoneClimatiqueOf(r)||'';
+  return (r.opFields&&r.opFields[fieldId])||'';
+}
 function computeCumac(r){
   const op=getAllProducts().find(p=>p.id===r.productId);
   if(!op||!op.cumac)return null;
@@ -5542,7 +5548,7 @@ function computeCumac(r){
     const fv=parseFloat((r.opFields&&r.opFields[c.field])||'')||0;
     if(!fv)return null;
     let coef=0;
-    if(c.byField){const choice=(r.opFields&&r.opFields[c.byField])||'';coef=parseFloat((c.coefs&&c.coefs[choice])||0)||0;}
+    if(c.byField){const choice=critereValue(r,c.byField);coef=parseFloat((c.coefs&&c.coefs[choice])||0)||0;}
     else coef=parseFloat(c.coef||0)||0;
     if(!coef)return null;
     return Math.round(coef*fv);
@@ -5555,8 +5561,8 @@ function computeCumac(r){
       let v=0;
       if(f.type==='fixed')v=parseFloat(f.value)||0;
       else if(f.type==='field')v=parseFloat((r.opFields&&r.opFields[f.field])||'')||0;
-      else if(f.type==='table1d'){const ch=(r.opFields&&r.opFields[f.field])||'';v=parseFloat((f.table&&f.table[ch])||0)||0;}
-      else if(f.type==='table2d'){const c1=(r.opFields&&r.opFields[f.field1])||'';const c2=(r.opFields&&r.opFields[f.field2])||'';v=parseFloat((f.table&&f.table[c1+'|'+c2])||0)||0;}
+      else if(f.type==='table1d'){const ch=critereValue(r,f.field);v=parseFloat((f.table&&f.table[ch])||0)||0;}
+      else if(f.type==='table2d'){const c1=critereValue(r,f.field1);const c2=critereValue(r,f.field2);v=parseFloat((f.table&&f.table[c1+'|'+c2])||0)||0;}
       if(!v)return null;
       product*=v;
     }
@@ -8870,7 +8876,10 @@ function computePrimeAuto(r){
 function cumacEditorHtml(){
   const o=OPDRAFT;const c=o.cumac||{mode:'manuel'};
   const numFields=o.fields.filter(f=>f.type==='number'&&f.label&&f.label.trim());
-  const choiceFields=o.fields.filter(f=>(f.type==='select'||f.type==='bool')&&f.label&&f.label.trim());
+  // La zone climatique est un critere disponible sans avoir a creer de champ :
+  // elle est deduite du code postal du dossier.
+  const ZONE_CRITERE={id:'__zone__',label:'🌡️ Zone climatique (H1 / H2 / H3)',type:'select',options:['H1','H2','H3']};
+  const choiceFields=[ZONE_CRITERE].concat(o.fields.filter(f=>(f.type==='select'||f.type==='bool')&&f.label&&f.label.trim()));
   let h=`<div class="sectitle">Calcul automatique du cumac <span style="font-weight:500;text-transform:none;letter-spacing:0;color:var(--text-mut)">(optionnel — alimente le bouton « Calculer le cumac » de l'onglet Deal)</span></div>
   <div class="fld"><label>Mode de calcul</label><select id="cum_mode" onchange="opCumacMode(this.value)">
     <option value="manuel" ${(c.mode!=='coef'&&c.mode!=='multi')?'selected':''}>Aucun — saisie manuelle du cumac</option>
@@ -8884,7 +8893,7 @@ function cumacEditorHtml(){
       <div class="fld"><label>Le coefficient dépend d'un champ ?</label><select id="cum_byfield" onchange="opCumacField('byField',this.value)"><option value="">Non — coefficient fixe</option>${choiceFields.map(f=>`<option value="${f.id}" ${c.byField===f.id?'selected':''}>${esc(f.label)}</option>`).join('')}</select></div>
     </div>`;
     if(c.byField){
-      const bf=o.fields.find(f=>f.id===c.byField);
+      const bf=c.byField==='__zone__'?ZONE_CRITERE:o.fields.find(f=>f.id===c.byField);
       const opts=bf?(bf.type==='bool'?['Oui','Non']:(bf.options||[])):[];
       h+=`<div class="fgrid" style="margin-top:.5rem">`+(opts.length?opts.map(op=>`<div class="fld"><label>Coefficient pour « ${esc(op)} » (kWhc / unité)</label><input type="number" step="any" data-opt="${esc(op)}" value="${(c.coefs&&c.coefs[op]!=null&&c.coefs[op]!==0)?c.coefs[op]:''}" onchange="opCumacCoef(this.dataset.opt,this.value)" placeholder="coef. fiche"></div>`).join(''):`<p class="muted">Ce champ « choix » n'a pas encore d'options.</p>`)+`</div>`;
     } else {
@@ -8915,7 +8924,11 @@ function opAddFactor(){opCaptureName();const c=opEnsureCumac();CUMFACTOR_IDX=c.f
 function opEditFactor(i){opCaptureName();CUMFACTOR_IDX=i;renderFactorEditor();}
 function opDelFactor(i){opCaptureName();opEnsureCumac().factors.splice(i,1);renderOpEditor();}
 function fieldPickerHtml(idPrefix,kind,selectedId){
-  const fields=kind==='number'?OPDRAFT.fields.filter(x=>x.type==='number'&&x.label&&x.label.trim()):OPDRAFT.fields.filter(x=>(x.type==='select'||x.type==='bool')&&x.label&&x.label.trim());
+  const ZONE_CRITERE={id:'__zone__',label:'🌡️ Zone climatique (H1 / H2 / H3)'};
+  const base=kind==='number'
+    ?OPDRAFT.fields.filter(x=>x.type==='number'&&x.label&&x.label.trim())
+    :OPDRAFT.fields.filter(x=>(x.type==='select'||x.type==='bool')&&x.label&&x.label.trim());
+  const fields=kind==='choice'?[ZONE_CRITERE].concat(base):base;
   return `<div class="fld"><label>Champ existant</label><select id="${idPrefix}_sel"><option value="">— Aucun (créer un nouveau champ ci-dessous) —</option>${fields.map(x=>`<option value="${x.id}" ${selectedId===x.id?'selected':''}>${esc(x.label)}</option>`).join('')}</select></div>
   <div class="fld"><label>Ou créer un nouveau champ ${kind==='choice'?'(liste déroulante)':'(nombre)'}</label><input id="${idPrefix}_new" placeholder="${kind==='choice'?'Ex : Zone climatique':'Ex : Surface totale chauffée (m²)'}"></div>
   ${kind==='choice'?`<div class="fld"><label>Options du nouveau champ — une par ligne <span class="muted" style="font-size:.66rem">(ignoré si tu choisis un champ existant)</span></label><textarea id="${idPrefix}_newopts" rows="3" placeholder="H1&#10;H2&#10;H3"></textarea></div>`:''}`;
@@ -8944,7 +8957,7 @@ function renderFactorTypeBody(f){
     let h=`<div style="margin-top:.5rem">${fieldPickerHtml('cf_t1','choice',f.field)}</div>
     <button class="btn btn-ghost btn-sm" style="margin-top:.5rem" onclick="cfGenerateTable1d()">→ Générer la grille de valeurs</button>`;
     if(f.field){
-      const bf=OPDRAFT.fields.find(x=>x.id===f.field);
+      const bf=f.field==='__zone__'?{type:'select',options:['H1','H2','H3']}:OPDRAFT.fields.find(x=>x.id===f.field);
       const opts=bf?(bf.type==='bool'?['Oui','Non']:(bf.options||[])):[];
       if(opts.length)h+=`<div class="fgrid" style="margin-top:.6rem">`+opts.map(o=>`<div class="fld"><label>${esc(o)}</label><input type="number" step="any" data-opt="${esc(o)}" class="cf-t1-val" value="${f.table&&f.table[o]!=null?f.table[o]:''}" placeholder="0"></div>`).join('')+`</div>`;
     }
@@ -8955,7 +8968,9 @@ function renderFactorTypeBody(f){
     <div style="margin-top:.5rem">${fieldPickerHtml('cf_t2b','choice',f.field2)}</div>
     <button class="btn btn-ghost btn-sm" style="margin-top:.5rem" onclick="cfGenerateTable2d()">→ Générer la grille croisée</button>`;
     if(f.field1&&f.field2){
-      const bf1=OPDRAFT.fields.find(x=>x.id===f.field1),bf2=OPDRAFT.fields.find(x=>x.id===f.field2);
+      const zc={id:'__zone__',label:'Zone climatique',type:'select',options:['H1','H2','H3']};
+      const bf1=f.field1==='__zone__'?zc:OPDRAFT.fields.find(x=>x.id===f.field1),
+            bf2=f.field2==='__zone__'?zc:OPDRAFT.fields.find(x=>x.id===f.field2);
       const opts1=bf1?(bf1.type==='bool'?['Oui','Non']:(bf1.options||[])):[];
       const opts2=bf2?(bf2.type==='bool'?['Oui','Non']:(bf2.options||[])):[];
       if(opts1.length&&opts2.length)h+=`<div class="tbl-wrap" style="margin-top:.6rem;overflow-x:auto"><table class="tbl"><thead><tr><th>${esc(bf1.label)} \\ ${esc(bf2.label)}</th>${opts2.map(o2=>`<th>${esc(o2)}</th>`).join('')}</tr></thead><tbody>${opts1.map(o1=>`<tr><td style="font-weight:700">${esc(o1)}</td>${opts2.map(o2=>{const k=o1+'|'+o2;return `<td><input type="number" step="any" class="cf-t2-val" data-key="${esc(k)}" value="${f.table&&f.table[k]!=null?f.table[k]:''}" style="width:80px" placeholder="0"></td>`;}).join('')}</tr>`).join('')}</tbody></table></div>`;
