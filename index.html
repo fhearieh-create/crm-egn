@@ -5437,12 +5437,13 @@ function calcPrimeCEE(delegId,type,cumac){
   const brutCom=d?(precaire?d.valoComPrecaire:d.valoComClassique):null;
   const valoCom=(brutCom===undefined||brutCom===null||brutCom==='')?valoClient:n(brutCom);
   const r2=v=>Math.round(v*100)/100;
+  const t=tvaRate()/100;
   // La prime client est negociee en TTC, mais la TVA ayant deja ete recuperee
   // sur la facture client, elle est comptabilisee en HT.
   const primeClientBrut=r2(mwhc*valoClient);
   const primeClient=r2(primeClientBrut/(1+t));
   const comHT=r2(mwhc*valoCom);
-  const comTVA=r2(comHT*tvaRate()/100);
+  const comTVA=r2(comHT*t);
   const comTTC=r2(comHT+comTVA);
   return{
     d,mwhc,valoClient,valoCom,
