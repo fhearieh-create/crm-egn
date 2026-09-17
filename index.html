@@ -3970,19 +3970,31 @@ function renderComptaResume(){
 }
 function renderComptaFacturation(){
   const eur=n=>(n||0).toLocaleString('fr-FR',{maximumFractionDigits:2})+' €';
-  // Restant a verser par famille d'intervenant — meme source de calcul que le resume
+  // Reste a facturer : ce qui n'a pas encore d'APF. Generer l'APF le deduit.
   const T=comptaTotaux();
-  const nb=o=>Object.keys(o).filter(k=>k!==T.NONE_KEY).length;
-  const carte=(ic,lab,montant,n,unite,type)=>`<div class="kpi" onclick="FACT_TYPE='${type}';FACT_AGENT='';renderComptaTabs()" style="cursor:pointer;${FACT_TYPE===type?'border:1.5px solid var(--green)':''}">
-    <div class="kico">${ic}</div><div class="klab">${lab}</div>
-    <div class="kval" style="${montant>0?'color:#B96A0A':'color:var(--green-deep)'}">${eur(montant)}</div>
-    <div class="ksub">HT ${eur(htOf(montant))} · ${n} ${unite}${n>1?'s':''} <span style="color:var(--blue);font-weight:700">→</span></div>
-  </div>`;
+  const aCreer={poseur:0,callcenter:0,vt:0,auditeur:0};
+  const nbDossiers={poseur:0,callcenter:0,vt:0,auditeur:0};
+  T.recs.forEach(r=>{
+    const m=recordComptaMetrics(r);
+    const montants={poseur:m.aPayerPoseur,callcenter:m.aPayerCallCenter,vt:m.aPayerVt,auditeur:m.aPayerAudit};
+    ['poseur','callcenter','vt','auditeur'].forEach(t=>{
+      const d=resteDu(r,t,montants[t]);
+      if(d.aFacturer>0){aCreer[t]+=d.aFacturer;nbDossiers[t]++;}
+    });
+  });
+  const carte=(ic,lab,type)=>{
+    const montant=aCreer[type], n=nbDossiers[type];
+    return `<div class="kpi" onclick="FACT_TYPE='${type}';FACT_AGENT='';renderComptaTabs()" style="cursor:pointer;${FACT_TYPE===type?'border:1.5px solid var(--green)':''}">
+      <div class="kico">${ic}</div><div class="klab">${lab}</div>
+      <div class="kval" style="${montant>0?'color:#B96A0A':'color:var(--green-deep)'}">${eur(montant)}</div>
+      <div class="ksub">${n?`HT ${eur(htOf(montant))} · ${n} dossier${n>1?'s':''} <span style="color:var(--blue);font-weight:700">→</span>`:'Tout est facturé ✓'}</div>
+    </div>`;
+  };
   let h=`<div class="kpis">
-    ${carte('🔧','À verser aux poseurs',T.sumPoseur,nb(T.byPoseur),'poseur','poseur')}
-    ${carte('📞','À verser au call center',T.sumCc,nb(T.byCc),'source','callcenter')}
-    ${carte('🧰','À verser aux VT',T.sumVt,nb(T.byVt),'société','vt')}
-    ${carte('📝','À verser aux auditeurs',T.sumAud,nb(T.byAud),'auditeur','auditeur')}
+    ${carte('🔧','APF à créer — poseurs','poseur')}
+    ${carte('📞','APF à créer — call center','callcenter')}
+    ${carte('🧰','APF à créer — VT','vt')}
+    ${carte('📝','APF à créer — auditeurs','auditeur')}
   </div>`;
   h+=`<div class="panel"><div class="panel-h"><h3>Créer un appel à facturation</h3></div><div class="panel-b">
     <div class="fgrid">
