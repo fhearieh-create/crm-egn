@@ -4037,15 +4037,30 @@ function filtrerPaiements(statut){PAY_STAT=statut;renderComptaPaiements();}
 function renderComptaPaiements(){
   const factures=segFactures();
   const eur=n=>(n||0).toLocaleString('fr-FR',{maximumFractionDigits:2})+' €';
-  // KPIs
-  const tot=factures.reduce((s,f)=>s+f.total,0);
-  const totPaye=factures.filter(f=>(f.paiements||{}).statut_apf==='paye').reduce((s,f)=>s+f.total,0);
-  const totAttente=tot-totPaye;
-  const nbPaye=factures.filter(f=>(f.paiements||{}).statut_apf==='paye').length;
-  const nbAttente=factures.length-nbPaye;
+  // Factures fournisseurs : tout mouvement de stock chiffre (entree, reception, sortie)
+  const tvaT=tvaRate()/100;
+  const fournFactures=can('stock_view')
+    ? getMvts().filter(v=>['entree','reception','sortie'].includes(v.sens)&&(v.totalHT||0)>0)
+        .map(v=>({...v,ttc:Math.round((v.totalHT||0)*(1+tvaT)*100)/100,paye:(v.paiement||{}).statut==='paye'}))
+        .sort((a,b)=>b.date-a.date)
+    : [];
+  const fTot=fournFactures.reduce((s,v)=>s+v.ttc,0);
+  const fPaye=fournFactures.filter(v=>v.paye).reduce((s,v)=>s+v.ttc,0);
+  const fAttente=fTot-fPaye;
+  const fNbPaye=fournFactures.filter(v=>v.paye).length;
+  const fNbAttente=fournFactures.length-fNbPaye;
+  // KPIs — APF agents et factures fournisseurs cumules
+  const totApf=factures.reduce((s,f)=>s+f.total,0);
+  const payeApf=factures.filter(f=>(f.paiements||{}).statut_apf==='paye').reduce((s,f)=>s+f.total,0);
+  const nbPayeApf=factures.filter(f=>(f.paiements||{}).statut_apf==='paye').length;
+  const nbAttenteApf=factures.length-nbPayeApf;
+  const totPaye=payeApf+fPaye;
+  const totAttente=(totApf-payeApf)+fAttente;
+  const nbPaye=nbPayeApf+fNbPaye;
+  const nbAttente=nbAttenteApf+fNbAttente;
   let h=`<div class="kpis">
-    <div class="kpi" onclick="filtrerPaiements('attente')" style="cursor:pointer;border:1.5px solid rgba(230,148,57,.3)"><div class="kico">⏳</div><div class="klab">En attente de paiement</div><div class="kval" style="color:#B96A0A">${eur(totAttente)}</div><div class="ksub">${nbAttente} APF</div></div>
-    <div class="kpi accent" onclick="filtrerPaiements('paye')" style="cursor:pointer"><div class="kico">✅</div><div class="klab">Payé</div><div class="kval">${eur(totPaye)}</div><div class="ksub">${nbPaye} APF</div></div>
+    <div class="kpi" onclick="filtrerPaiements('attente')" style="cursor:pointer;border:1.5px solid rgba(230,148,57,.3)"><div class="kico">⏳</div><div class="klab">En attente de paiement</div><div class="kval" style="color:#B96A0A">${eur(totAttente)}</div><div class="ksub">${nbAttenteApf} APF${fNbAttente?` · ${fNbAttente} facture${fNbAttente>1?'s':''} fournisseur`:''}</div></div>
+    <div class="kpi accent" onclick="filtrerPaiements('paye')" style="cursor:pointer"><div class="kico">✅</div><div class="klab">Payé</div><div class="kval">${eur(totPaye)}</div><div class="ksub">${nbPayeApf} APF${fNbPaye?` · ${fNbPaye} facture${fNbPaye>1?'s':''} fournisseur`:''}</div></div>
   </div>`;
   // Filtres
   const fsty="font-family:'Saira',sans-serif;font-size:.8rem;border:1.5px solid var(--border-grey);border-radius:8px;padding:.35rem .65rem;background:#fff;outline:none";
@@ -4137,6 +4152,52 @@ function renderComptaPaiements(){
     </tr>`;
   });
   h+=`</tbody></table></div>`;
+  // ---- Factures fournisseurs issues des mouvements de stock ----
+  const fourVisibles=fournFactures.filter(v=>{
+    if(filStat==='paye'&&!v.paye)return false;
+    if(filStat==='attente'&&v.paye)return false;
+    if(filSearch){
+      const mat=getMats().find(m=>m.id===v.materielId);
+      if(![v.fournisseurNom,mat?mat.nom:'',v.factureNom,(v.paiement||{}).ref].join(' ').toLowerCase().includes(filSearch))return false;
+    }
+    return true;
+  });
+  if(fournFactures.length){
+    h+=`<div class="panel" style="margin-top:1rem"><div class="panel-h"><h3>🧾 Factures fournisseurs</h3><div class="sp">
+      <span class="muted">${fourVisibles.length} sur ${fournFactures.length}</span>
+      <button class="btn btn-ghost btn-sm" style="font-size:.72rem" onclick="COMPTA_TAB='fournisseurs';renderComptaTabs()">Gérer →</button>
+    </div></div><div class="panel-b">`;
+    if(!fourVisibles.length)h+=`<div class="empty" style="padding:1rem"><div class="big" style="font-size:1.5rem">🔍</div>Aucune facture fournisseur pour ces filtres.</div>`;
+    else{
+      h+=`<div class="tbl-wrap"><table class="tbl"><thead><tr>
+        <th>Date</th><th>Fournisseur</th><th>Matériel</th><th class="r">Qté</th>
+        <th class="r">Montant TTC</th><th style="width:130px">Statut</th>
+        <th style="width:150px">Réf. paiement</th><th style="width:125px">Payée le</th><th>Facture</th>
+      </tr></thead><tbody>`;
+      fourVisibles.forEach(v=>{
+        const mat=getMats().find(m=>m.id===v.materielId);
+        const p=v.paiement||{};
+        h+=`<tr style="${v.paye?'background:#F6FBF4':''}">
+          <td class="muted">${new Date(v.date).toLocaleDateString('fr-FR')}</td>
+          <td style="font-weight:700;color:var(--purple)">${esc(v.fournisseurNom||'—')}</td>
+          <td>${mat?esc(mat.nom):'—'}</td>
+          <td style="text-align:right">${v.qte||'—'}</td>
+          <td style="text-align:right;font-weight:800">${eur(v.ttc)}<div class="muted" style="font-size:.64rem">HT ${eur(v.totalHT)}</div></td>
+          <td><select onchange="saveFournPaiement('${v.id}','statut',this.value)" style="font-family:'Saira',sans-serif;font-size:.74rem;font-weight:700;border:none;border-radius:7px;padding:3px 7px;cursor:pointer;width:100%;${v.paye?'background:#E6F7F0;color:#0F6E56':'background:#FFF4E5;color:#B96A0A'}">
+            <option value="attente" ${!v.paye?'selected':''}>⏳ À payer</option>
+            <option value="paye" ${v.paye?'selected':''}>✅ Payée</option>
+          </select></td>
+          <td><input type="text" value="${esc(p.ref||'')}" placeholder="Virement, chèque…" onchange="saveFournPaiement('${v.id}','ref',this.value)" style="font-family:'Saira',sans-serif;font-size:.76rem;border:1.5px solid var(--border-grey);border-radius:7px;padding:3px 7px;width:100%;outline:none"></td>
+          <td><input type="date" value="${esc(p.date||'')}" onchange="saveFournPaiement('${v.id}','date',this.value)" style="font-family:'Saira',sans-serif;font-size:.76rem;border:1.5px solid var(--border-grey);border-radius:7px;padding:3px 5px;width:100%;outline:none"></td>
+          <td>${v.factureUrl||v.facturePath?attachLink(v.facturePath,v.factureNom||'Voir',v.factureUrl):'<span style="font-size:.68rem;color:var(--coral);font-weight:700">⚠️ Manquante</span>'}</td>
+        </tr>`;
+      });
+      const stt=fourVisibles.reduce((s,v)=>s+v.ttc,0);
+      h+=`<tr style="background:#f8faf5;font-weight:800"><td colspan="4">Total</td><td style="text-align:right">${eur(stt)}</td><td colspan="4"></td></tr>`;
+      h+=`</tbody></table></div>`;
+    }
+    h+=`</div></div>`;
+  }
   h+=`<div style="display:flex;justify-content:flex-end;gap:.5rem;margin-top:.5rem"><button class="btn btn-ghost btn-sm" onclick="testStorage()">🔧 Test storage</button><button class="btn btn-navy btn-sm" onclick="exportPaiementsCSV()">📤 Exporter CSV</button></div>`;
   document.getElementById('comptaBody').innerHTML=h;
 }
@@ -4799,7 +4860,8 @@ async function saveFournPaiement(mvtId,key,val){
   if(key==='statut'&&val==='paye'&&!v.paiement.date)v.paiement.date=new Date().toISOString().slice(0,10);
   save('egncrm_stock_mvt',mergeSeg(getAllMvts(),mvts));
   toast(key==='statut'?(val==='paye'?'Facture marquée payée ✅':'Remise à payer ⏳'):'Enregistré ✓','ok');
-  renderComptaFournisseurs();
+  // Rafraichir l'onglet en cours : ces factures apparaissent aussi dans le suivi des paiements
+  if(COMPTA_TAB==='paiements')renderComptaPaiements();else renderComptaFournisseurs();
 }
 function exportFournCSV(){
   const mvts=getMvts().filter(v=>['entree','reception'].includes(v.sens));
