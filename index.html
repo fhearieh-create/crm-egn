@@ -2705,7 +2705,7 @@ function colApply(){saveColsCfg(COLMODE,COLWORK);closeModal();applyRecFilter(COL
 
 /* ---- page complète d'un dossier ---- */
 let DOSSIER_OPEN=null;
-async /* Ouvre le dossier, sauf si le clic visait un champ de saisie ou un bouton
+/* Ouvre le dossier, sauf si le clic visait un champ de saisie ou un bouton
    place dans la ligne (date, menu deroulant, lien, case a cocher). */
 function ouvrirLigne(ev,id,fermerModal){
   const t=ev&&ev.target;
@@ -2787,7 +2787,7 @@ function renderDossier(r){
   const subs=load('egncrm_sousstatuts',[]);
   const canSub=can('sousstatut_view');
   const curSub=subs.find(s=>s.id===r.sousStatutId);
-  const sousStatutRow=canSub&&subs.length?`<div class="info-row"><span class="il">Sous-statut administratif</span><span class="iv"><select class="status-sel" style="color:${curSub?curSub.color:'#9aa5b1'};background:${curSub?curSub.color+'1a':'#f5f5f5'}" onchange="quickSousStatut('${r.id}',this.value)"><option value="">— Aucun —</option>${subs.map(s=>`<option value="${s.id}" ${r.sousStatutId===s.id?'selected':''}>${esc(s.name)}</option>`).join('')}</select></span></div>`:canSub&&!subs.length?`<div class="info-row"><span class="il">Sous-statut administratif</span><span class="iv muted" style="font-size:.78rem">Aucun sous-statut configuré — <a href="#" onclick="goPage('settings');return false">Paramètres ▸ Statuts</a></span></div>`:'';
+  const sousStatutRow=canSub&&subs.length?`<div class="info-row"><span class="il">Sous-statut administratif</span><span class="iv"><select class="status-sel" style="color:${curSub?curSub.color:'#9aa5b1'};background:${curSub?curSub.color+'1a':'#f5f5f5'}" onchange="quickSousStatut('${r.id}',this.value)"><option value="">— Aucun —</option>${subs.map(s=>`<option value="${s.id}" ${r.sousStatutId===s.id?'selected':''}>${esc(s.name)}</option>`).join('')}</select></span></div>`:canSub&&!subs.length?`<div class="info-row"><span class="il">Sous-statut administratif</span><span class="iv muted" style="font-size:.78rem">Aucun sous-statut configuré — <a href="#" onclick="go('settings');return false">Paramètres ▸ Statuts</a></span></div>`:'';
   let suivi=`<div class="panel"><div class="panel-h"><h3>Suivi commercial</h3></div><div class="panel-b">`
     +`<div class="info-row"><span class="il">Statut</span><span class="iv">${statusInline(r)}</span></div>`
     +sousStatutRow
