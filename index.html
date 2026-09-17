@@ -5450,9 +5450,10 @@ function calcPrimeCEE(delegId,type,cumac){
     primeClientBrut,      // base negociee, TTC
     primeClient,          // comptabilisee en HT
     comHT,comTVA,comTTC,  // commission installateur
-    primeHT:r2(primeClient+comHT),     // base hors TVA
-    primeCEE:r2(primeClient+comTTC),   // prime CEE TTC = ce que le delegataire vire
-    totalEncaisse:r2(primeClient+comTTC)
+    primeHT:r2(primeClient+comHT),          // base comptabilisee hors TVA
+    // Prime CEE TTC = prime client a sa valeur negociee + commission HT
+    primeCEE:r2(primeClientBrut+comHT),
+    totalEncaisse:r2(primeClientBrut+comTTC) // virement reel du delegataire
   };
 }
 /* Prime CEE TTC d'un dossier.
@@ -5499,12 +5500,12 @@ function dealRecalc(){
         <span style="flex:1;font-size:.78rem">${lib}<span class="muted" style="font-size:.66rem;display:block">${sous}</span></span>
         <span style="font-weight:700;font-size:.82rem;${coul?'color:'+coul:''}">${eur(montant)}</span></div>`;
       det.innerHTML=
-        lg('Prime client','HT · '+k.valoClient.toString().replace('.',',')+' €/MWhc',k.primeClient)
+        lg('Prime client','TVA 0 % · '+k.valoClient.toString().replace('.',',')+' €/MWhc',k.primeClientBrut)
+       +lg('<span style="color:var(--text-mut)">dont comptabilisé en HT</span>','TVA déjà récupérée sur la facture client',k.primeClient,'var(--text-mut)')
        +lg('Commission installateur','HT · '+k.valoCom.toString().replace('.',',')+' €/MWhc',k.comHT)
        +lg('TVA sur commission',tvaRate()+' %',k.comTVA,'var(--text-mut)')
        +`<div style="border-top:1px solid var(--border-grey);margin-top:.3rem;padding-top:.3rem">`
-       +lg('Total hors TVA','prime client + commission HT',k.primeHT,'var(--text-mut)')
-       +lg('<b>Prime CEE TTC</b>','virement attendu du délégataire',k.primeCEE,'var(--green-deep)')
+       +lg('<b>Prime CEE TTC</b>','prime client + commission HT',k.primeCEE,'var(--green-deep)')
        +`</div>`;
     }
   }
@@ -8689,14 +8690,14 @@ function updateCalcResult(){
     <span style="font-weight:${gras?800:700};font-size:.8rem;${coul?'color:'+coul:''}">${montant}</span></div>`;
   let h=lg('Cumac',cumac?cumac.toLocaleString('fr-FR')+' kWhc':'—');
   if(pret){
-    h+=lg('Prime client HT',eur(k.primeClient));
+    h+=lg('Prime client',eur(k.primeClientBrut));
+    h+=lg('dont HT comptabilisé',eur(k.primeClient));
     h+=lg('Commission HT',eur(k.comHT));
-    h+=lg('TVA '+tvaRate()+' %',eur(k.comTVA));
   }
   h+=`<div style="background:${pret?'#EFF7E8':'var(--bg-soft)'};border-radius:11px;padding:.65rem .85rem;text-align:center;margin-top:.45rem">
     <div style="font-size:.64rem;font-weight:700;color:var(--text-mut);text-transform:uppercase;letter-spacing:.5px">Prime CEE TTC</div>
     <div style="font-size:1.4rem;font-weight:800;color:${pret?'var(--green-deep)':'var(--text-mut)'};line-height:1.25">${pret?eur(k.primeCEE):'—'}</div>
-    ${pret?`<div style="font-size:.66rem;color:var(--text-mut)">dont ${eur(k.primeHT)} hors TVA</div>`
+    ${pret?`<div style="font-size:.66rem;color:var(--text-mut)">dont ${eur(k.primeHT)} comptabilisé HT</div>`
           :`<div style="font-size:.66rem;color:var(--text-mut)">Cumac + délégataire requis</div>`}
   </div>`;
   box.innerHTML=h;
